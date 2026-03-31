@@ -1,4 +1,5 @@
 import os
+import pathlib
 import sys
 
 import nox
@@ -44,6 +45,29 @@ def test(session):
         "-s",
         "-x",
         "-m",
-        "not slow",
+        "not slow and not mpi",
         *session.posargs,
+    )
+
+
+@nox.session(python=[f"3.{v}" for v in _py_versions])
+def testmpi(session):
+    session.install("-e", ".[mpi]", "--group", "test")
+    session.chdir("tests")
+    py = pathlib.Path(session.bin_paths[0]) / "python"
+    session.run(
+        "mpiexec",
+        "-n",
+        "4",
+        str(py),
+        "-m",
+        "mpi4py.futures",
+        "-m",
+        "pytest",
+        "-s",
+        "-x",
+        "-m",
+        "mpi",
+        *session.posargs,
+        external=True,
     )
