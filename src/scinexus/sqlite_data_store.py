@@ -100,7 +100,9 @@ def open_sqlite_db_ro(path):
         uri=True,
     )
     db.row_factory = sqlite3.Row
-    assert has_valid_schema(db)
+    if not has_valid_schema(db):
+        msg = "database does not have a valid schema"
+        raise ValueError(msg)
     return db
 
 

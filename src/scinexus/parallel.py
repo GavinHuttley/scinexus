@@ -136,7 +136,9 @@ def imap(
     """
 
     if_serial = cast("Literal['raise', 'ignore', 'warn']", if_serial.lower())
-    assert if_serial in ("ignore", "raise", "warn"), f"invalid choice '{if_serial}'"
+    if if_serial not in ("ignore", "raise", "warn"):
+        msg = f"invalid choice '{if_serial}'"
+        raise ValueError(msg)
 
     # If max_workers is not defined, get number of all processes available
     # minus 1 to leave for master process
@@ -176,7 +178,9 @@ def imap(
     else:
         if not max_workers:
             max_workers = multiprocessing.cpu_count() - 1
-        assert max_workers < multiprocessing.cpu_count()
+        if max_workers >= multiprocessing.cpu_count():
+            msg = f"max_workers ({max_workers}) must be less than CPU count ({multiprocessing.cpu_count()})"
+            raise ValueError(msg)
 
         if not chunksize:
             chunksize = (
@@ -269,7 +273,9 @@ def as_completed(
     chunksize: int | None = None,
 ) -> Generator[R]:
     if_serial = cast("Literal['raise', 'ignore', 'warn']", if_serial.lower())
-    assert if_serial in ("ignore", "raise", "warn"), f"invalid choice '{if_serial}'"
+    if if_serial not in ("ignore", "raise", "warn"):
+        msg = f"invalid choice '{if_serial}'"
+        raise ValueError(msg)
     if use_mpi:
         yield from _as_completed_mpi(f, s, max_workers, if_serial, chunksize)
     else:

@@ -519,7 +519,9 @@ class DataStoreDirectory(DataStoreABC):
         data: str,
     ) -> DataMember | None:
         super().write(unique_id=unique_id, data=data)
-        assert suffix, "Must provide suffix"
+        if not suffix:
+            msg = "suffix must be provided"
+            raise ValueError(msg)
         # check suffix compatible with this datastore
         sfx, cmp = get_format_suffixes(unique_id)
         if sfx != suffix:

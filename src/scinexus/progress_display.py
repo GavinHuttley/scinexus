@@ -92,7 +92,9 @@ class ProgressContext:
         if not self.progress_bar:
             self.set_new_progress_bar()
         updated = False
-        assert self.progress_bar is not None
+        if self.progress_bar is None:
+            msg = "progress bar was not initialised"
+            raise ValueError(msg)
         if progress is not None:
             self.progress = min(progress, 1.0)
             self.progress_bar.n = self.progress
@@ -134,7 +136,9 @@ class ProgressContext:
             start = 0.0
         step = (end - start) / count
         if labels:
-            assert len(labels) == count
+            if len(labels) != count:
+                msg = f"length of labels ({len(labels)}) does not match count ({count})"
+                raise ValueError(msg)
         elif count == 1:
             labels = [""]
         else:

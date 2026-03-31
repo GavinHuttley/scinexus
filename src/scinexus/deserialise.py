@@ -33,9 +33,9 @@ class register_deserialiser:
             if not isinstance(type_str, str):
                 msg = f"{type_str!r} is not a string"
                 raise TypeError(msg)
-            assert type_str not in _deserialise_func_map, (
-                f"{type_str!r} already in {list(_deserialise_func_map)}"
-            )
+            if type_str in _deserialise_func_map:
+                msg = f"{type_str!r} already in {list(_deserialise_func_map)}"
+                raise ValueError(msg)
         self._type_str = args
 
     def __call__(self, func: Callable[P, R]) -> Callable[P, R]:
@@ -46,7 +46,11 @@ class register_deserialiser:
 
 def get_class(provenance: str) -> type:
     index = provenance.rfind(".")
-    assert index > 0
+    if index <= 0:
+        msg = (
+            f"invalid provenance string {provenance!r}, expected 'module.class' format"
+        )
+        raise ValueError(msg)
     klass = provenance[index + 1 :]
     nc = "NotCompleted"
     klass = nc if nc in klass else klass

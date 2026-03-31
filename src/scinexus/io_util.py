@@ -60,7 +60,9 @@ def _get_compression_open(
     -------
     function for opening compressed files or None if unknown compression
     """
-    assert path or compression
+    if not (path or compression):
+        msg = "either path or compression argument must be provided"
+        raise ValueError(msg)
     if compression is None:
         _, compression = get_format_suffixes(path)
     return _compression_handlers.get(compression)
