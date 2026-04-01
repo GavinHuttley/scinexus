@@ -194,7 +194,9 @@ class DataStoreSqlite(DataStoreABC):
     def close(self) -> None:
         if getattr(self, "_db", None) is None:
             return
-        assert self._db is not None
+        if self._db is None:
+            msg = "database connection is unexpectedly None"
+            raise RuntimeError(msg)
         with contextlib.suppress(sqlite3.ProgrammingError):
             self._db.close()
         self._open = False
@@ -337,7 +339,9 @@ class DataStoreSqlite(DataStoreABC):
         """if writable, and not locked, locks the database to this pid"""
         if self.mode is READONLY:
             return
-        assert self._db is not None
+        if self._db is None:
+            msg = "database connection is unexpectedly None"
+            raise RuntimeError(msg)
         result = self._db.execute("SELECT state_id,lock_pid FROM state").fetchall()
         locked = result[0]["lock_pid"] if result else None
         if locked and self.mode is OVERWRITE:
@@ -388,7 +392,9 @@ class DataStoreSqlite(DataStoreABC):
             data=data,
             is_completed=True,
         )
-        assert member is not None
+        if member is None:
+            msg = "write to results table failed to produce a member"
+            raise RuntimeError(msg)
         if member not in self._completed:
             self._completed.append(member)
         return member
@@ -420,7 +426,9 @@ class DataStoreSqlite(DataStoreABC):
             data=data,
             is_completed=False,
         )
-        assert member is not None
+        if member is None:
+            msg = "write to results table failed to produce a member"
+            raise RuntimeError(msg)
         self._not_completed.append(member)
         return member
 

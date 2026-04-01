@@ -200,7 +200,9 @@ class DataStoreABC(ABC):
             for line in lines:
                 parts = line.split("\t")[-1].split(" : ", maxsplit=1)
                 if len(parts) == 1:
-                    assert key is not None
+                    if key is None:
+                        msg = "malformed log data: continuation line before any key"
+                        raise ValueError(msg)
                     mapped[key] += parts[0]
                     continue
 

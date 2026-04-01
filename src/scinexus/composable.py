@@ -665,7 +665,9 @@ class WriterApp(ComposableApp[T, R]):
         If run in parallel, this instance spawns workers and aggregates results.
         """
         if self.app_type is WRITER:
-            assert self.input is not None
+            if self.input is None:
+                msg = "writer app has no composed input"
+                raise RuntimeError(msg)
             self.input._source_wrapped = propagate_source(self.input, id_from_source)
             self._source_wrapped = propagate_source(self, id_from_source)
 
@@ -718,13 +720,17 @@ class WriterApp(ComposableApp[T, R]):
             )
             if self.logger:
                 md5 = getattr(member, "md5", None)
-                assert logger is not None
+                if logger is None:
+                    msg = "logger is unexpectedly None"
+                    raise RuntimeError(msg)
                 logger.log_message(str(member), label="output")
                 if md5:
                     logger.log_message(md5, label="output md5sum")
 
         if self.logger:
-            assert logger is not None
+            if logger is None:
+                msg = "logger is unexpectedly None"
+                raise RuntimeError(msg)
             taken = time.time() - start
             logger.log_message(f"{taken}", label="TIME TAKEN")
             log_file_path = Path(logger.log_file_path)

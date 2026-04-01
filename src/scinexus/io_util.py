@@ -64,7 +64,9 @@ def _get_compression_open(
         msg = "either path or compression argument must be provided"
         raise ValueError(msg)
     if compression is None:
-        assert path is not None
+        if path is None:
+            msg = "path is required when compression is None"
+            raise ValueError(msg)
         _, compression = get_format_suffixes(path)
     return None if compression is None else _compression_handlers.get(compression)
 
