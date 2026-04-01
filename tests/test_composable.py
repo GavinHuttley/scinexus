@@ -138,7 +138,7 @@ def test_not_completed_result():
     """should survive roundtripping pickle"""
     err = NotCompleted(NotCompletedType.FAIL, "mytest", "can we roundtrip")
     p = dumps(err)
-    new = loads(p)  # noqa: S301
+    new = loads(p)
     assert err.type == new.type
     assert err.message == new.message
     assert err.source == new.source
@@ -320,14 +320,14 @@ def test_roundtrip_decorated_function():
     """decorated function can be pickled/unpickled"""
 
     sqd = func2app(exponent=2)
-    u = pickle.loads(pickle.dumps(sqd))  # noqa: S301
+    u = pickle.loads(pickle.dumps(sqd))
     assert u(4) == 16
 
 
 def test_roundtrip_composed_app():
     """composed app can be pickled/unpickled"""
     composed = func2app(exponent=2) + float2int()
-    u = pickle.loads(pickle.dumps(composed))  # noqa: S301
+    u = pickle.loads(pickle.dumps(composed))
     assert u(3) == 9
 
 
@@ -1237,7 +1237,7 @@ def test_source_proxy_len():
 
 def test_source_proxy_pickle():
     sp = source_proxy("hello")
-    restored = pickle.loads(pickle.dumps(sp))  # noqa: S301
+    restored = pickle.loads(pickle.dumps(sp))
     assert restored.obj == "hello"
     assert restored.source == "hello"
 

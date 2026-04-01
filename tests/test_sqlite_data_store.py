@@ -312,7 +312,7 @@ def test_pickleable_roundtrip(tmp_dir):
     dstore.write(unique_id="r1", data="d1")
     dstore.close()
     dstore2 = DataStoreSqlite(path, mode=READONLY)
-    re_dstore = loads(dumps(dstore2))  # noqa: S301
+    re_dstore = loads(dumps(dstore2))
     assert re_dstore.read("r1") == "d1"
     re_dstore.close()
     dstore2.close()
@@ -325,7 +325,7 @@ def test_pickleable_member_roundtrip(tmp_dir):
     dstore.close()
     dstore2 = DataStoreSqlite(path, mode=READONLY)
     member = dstore2[0]
-    re_member = loads(dumps(member))  # noqa: S301
+    re_member = loads(dumps(member))
     assert re_member.read() == "d1"
     re_member.data_store.close()
     dstore2.close()

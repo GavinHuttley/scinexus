@@ -56,8 +56,8 @@ def _make_logfile_name(process) -> str:
     return f"{result}-{uid[:8]}.log"
 
 
-def _get_origin(origin):
-    return origin if type(origin) == str else origin.__class__.__name__
+def _get_origin(origin: typing.Any) -> str:  # noqa: ANN401
+    return origin if isinstance(origin, str) else origin.__class__.__name__
 
 
 class NotCompletedType(Enum):
@@ -73,8 +73,15 @@ class NotCompleted(int):
     origin: str
     message: str
     source: str | None
+    _persistent: tuple[tuple, dict]
 
-    def __new__(cls, type, origin, message, source=None):
+    def __new__(
+        cls,
+        type_: NotCompletedType | str,
+        origin: typing.Any,  # noqa: ANN401
+        message: str,
+        source: typing.Any = None,  # noqa: ANN401
+    ):
         """
         Parameters
         ----------
@@ -87,15 +94,15 @@ class NotCompleted(int):
         source : str or instance with .source or .info.source attributes
             the data operated on that led to this result.
         """
-        type = NotCompletedType(type)
+        type_ = NotCompletedType(type_)
         origin = _get_origin(origin)
         try:
             source = get_data_source(source)
         except Exception:
             source = None
-        result = int.__new__(cls, False)
-        result._persistent = (type.value, origin, message), {"source": source}
-        result.type = type
+        result = int.__new__(cls, False)  # noqa: FBT003
+        result._persistent = (type_.value, origin, message), {"source": source}
+        result.type = type_
         result.origin = origin
         result.message = message
         result.source = source
@@ -112,7 +119,7 @@ class NotCompleted(int):
         source = self.source or "Unknown"
         return f'{name}(type={self.type.value}, origin={self.origin}, source="{source}", message="{self.message}")'
 
-    def to_rich_dict(self):
+    def to_rich_dict(self) -> dict:
         """returns components for to_json"""
         return {
             "type": get_object_provenance(self),
@@ -123,7 +130,7 @@ class NotCompleted(int):
             "version": __version__,
         }
 
-    def to_json(self):
+    def to_json(self) -> str:
         """returns json string"""
         return json.dumps(self.to_rich_dict())
 

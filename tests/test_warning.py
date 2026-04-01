@@ -78,7 +78,7 @@ def test_function_deprecated_args_pickled():
         myfunc = changed(x=1, y=2)
         pickled_func = pickle.dumps(myfunc)
         assert isinstance(pickled_func, bytes)
-        unpickled_func = pickle.loads(pickled_func)  # noqa: S301
+        unpickled_func = pickle.loads(pickled_func)
         assert unpickled_func == changed(a=1, b=2)
 
 
@@ -138,7 +138,7 @@ def test_method_deprecated_args_pickled():
     pickled_foo = pickle.dumps(foo_instance)
     assert isinstance(pickled_foo, bytes)
 
-    unpickled_foo = pickle.loads(pickled_foo)  # noqa: S301
+    unpickled_foo = pickle.loads(pickled_foo)
     assert isinstance(unpickled_foo, foo)
     assert unpickled_foo.a == 1
     assert unpickled_foo.b == 2
@@ -179,7 +179,7 @@ def test_method_deprecated_function_pickling(recwarn, func):
     pickled_func = pickle.dumps(func)
     assert isinstance(pickled_func, bytes)
 
-    unpickled_func = pickle.loads(pickled_func)  # noqa: S301
+    unpickled_func = pickle.loads(pickled_func)
 
     assert unpickled_func(20) == func(20)
 
@@ -189,7 +189,7 @@ def test_method_deprecated_method_pickling(recwarn):
     pickled = pickle.dumps(instance)
     assert isinstance(pickled, bytes)
 
-    unpickled = pickle.loads(pickled)  # noqa: S301
+    unpickled = pickle.loads(pickled)
 
     assert unpickled.old_meth(20) == instance.old_meth(20)
     assert unpickled.squared(20) == instance.squared(20)

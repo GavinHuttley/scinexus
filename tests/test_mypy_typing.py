@@ -105,7 +105,7 @@ def test_inheritance_pickle():
 
     app = IntToStr()
     data = pickle.dumps(app)
-    restored = pickle.loads(data)  # noqa: S301
+    restored = pickle.loads(data)
     assert restored(42) == "42"
 
 
