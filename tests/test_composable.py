@@ -14,6 +14,7 @@ from scinexus.composable import (
     WRITER,
     ComposableApp,
     NotCompleted,
+    NotCompletedType,
     _get_raw_hints,
     define_app,
     is_app,
@@ -103,7 +104,7 @@ def test_composable_to_self():
 
 def test_err_result():
     """excercise creation of NotCompletedResult"""
-    result = NotCompleted("SKIP", "this", "some obj")
+    result = NotCompleted(NotCompletedType.FAIL, "this", "some obj")
     assert not result
     assert result.origin == "this"
     assert result.message == "some obj"
@@ -113,7 +114,7 @@ def test_err_result():
     fake_source = Mock()
     fake_source.source = "blah"
     del fake_source.info
-    result = NotCompleted("SKIP", "this", "err", source=fake_source)
+    result = NotCompleted(NotCompletedType.FAIL, "this", "err", source=fake_source)
     assert result.source == "blah"
 
     try:
@@ -121,14 +122,14 @@ def test_err_result():
         msg = "error message"
         raise ValueError(msg)
     except ValueError as err:
-        result = NotCompleted("SKIP", "this", err.args[0])
+        result = NotCompleted(NotCompletedType.FAIL, "this", err.args[0])
 
     assert result.message == "error message"
 
 
 def test_not_completed_result():
     """should survive roundtripping pickle"""
-    err = NotCompleted("FAIL", "mytest", "can we roundtrip")
+    err = NotCompleted(NotCompletedType.FAIL, "mytest", "can we roundtrip")
     p = dumps(err)
     new = loads(p)  # noqa: S301
     assert err.type == new.type
@@ -476,7 +477,9 @@ def test_validate_data_type_not_completed_pass_through():
     # returns the instance of a NotCompleted created by an input
     @define_app
     def take_int1(val: int) -> int:  # noqa: ARG001
-        return NotCompleted("ERROR", "take_int1", "external to app", source="unknown")
+        return NotCompleted(
+            NotCompletedType.ERROR, "take_int1", "external to app", source="unknown"
+        )
 
     @define_app
     def take_int2(val: int) -> int:
@@ -585,7 +588,7 @@ def test_skip_not_completed():
         return val.to_rich_dict()
 
     app = takes_not_completed()
-    nc = NotCompleted("ERROR", "test", "for tracing", source="blah")
+    nc = NotCompleted(NotCompletedType.ERROR, "test", "for tracing", source="blah")
     got = app(nc)
     assert isinstance(got, dict)
     assert got == nc.to_rich_dict()

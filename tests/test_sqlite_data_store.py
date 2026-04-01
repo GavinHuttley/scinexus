@@ -5,7 +5,7 @@ import pytest
 from citeable import Software
 from scitrack import get_text_hexdigest
 
-from scinexus.composable import NotCompleted
+from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import OVERWRITE, READONLY
 from scinexus.sqlite_data_store import (
     _MEMORY,
@@ -78,7 +78,7 @@ def test_rw_sql_dstore_mem():
 def test_not_completed(tmp_dir):
     path = tmp_dir / "test_nc.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
-    nc = NotCompleted("FAIL", "dummy", "test message", source="src")
+    nc = NotCompleted(NotCompletedType.FAIL, "dummy", "test message", source="src")
     dstore.write_not_completed(unique_id="nc1", data=nc.to_json())
     assert len(dstore.not_completed) == 1
     dstore.close()
@@ -98,7 +98,7 @@ def test_logdata(tmp_dir, DATA_DIR):
 def test_drop_not_completed(tmp_dir):
     path = tmp_dir / "test_drop_nc.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
-    nc = NotCompleted("FAIL", "dummy", "test message", source="src")
+    nc = NotCompleted(NotCompletedType.FAIL, "dummy", "test message", source="src")
     dstore.write_not_completed(unique_id="nc1", data=nc.to_json())
     dstore.write_not_completed(unique_id="nc2", data=nc.to_json())
     assert len(dstore.not_completed) == 2
@@ -130,7 +130,7 @@ def test_members(tmp_dir):
     path = tmp_dir / "test_members.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     dstore.write(unique_id="r1", data="d1")
-    nc = NotCompleted("FAIL", "dummy", "msg", source="src")
+    nc = NotCompleted(NotCompletedType.FAIL, "dummy", "msg", source="src")
     dstore.write_not_completed(unique_id="nc1", data=nc.to_json())
     assert len(dstore.members) == 2
     dstore.close()
@@ -178,7 +178,7 @@ def test_read(tmp_dir):
 def test_write_success_replaces_not_completed(tmp_dir):
     path = tmp_dir / "test_replace_nc.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
-    nc = NotCompleted("FAIL", "dummy", "msg", source="src")
+    nc = NotCompleted(NotCompletedType.FAIL, "dummy", "msg", source="src")
     dstore.write_not_completed(unique_id="r1", data=nc.to_json())
     assert len(dstore.not_completed) == 1
     dstore.write(unique_id="r1", data="completed data")

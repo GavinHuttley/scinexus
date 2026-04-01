@@ -60,10 +60,16 @@ def _get_origin(origin):
     return origin if type(origin) == str else origin.__class__.__name__
 
 
+class NotCompletedType(Enum):
+    ERROR = "ERROR"
+    FAIL = "FAIL"
+    BUG = "BUG"
+
+
 class NotCompleted(int):
     """results that failed to complete"""
 
-    type: str
+    type: NotCompletedType
     origin: str
     message: str
     source: str | None
@@ -72,8 +78,8 @@ class NotCompleted(int):
         """
         Parameters
         ----------
-        type : str
-            examples are 'ERROR', 'FAIL'
+        type : NotCompletedType or str
+            the category of failure, e.g. NotCompletedType.ERROR
         origin
             where the instance was created, can be an instance
         message : str
@@ -81,19 +87,14 @@ class NotCompleted(int):
         source : str or instance with .source or .info.source attributes
             the data operated on that led to this result.
         """
-        # TODO this approach to caching persistent arguments for reconstruction
-        # is fragile. Need an inspect module based approach
+        type = NotCompletedType(type)
         origin = _get_origin(origin)
         try:
             source = get_data_source(source)
         except Exception:
             source = None
-        d = locals()
-        d = {k: v for k, v in d.items() if k != "cls"}
         result = int.__new__(cls, False)
-        args = tuple(d.pop(v) for v in ("type", "origin", "message"))
-        result._persistent = args, d
-
+        result._persistent = (type.value, origin, message), {"source": source}
         result.type = type
         result.origin = origin
         result.message = message
@@ -109,7 +110,7 @@ class NotCompleted(int):
     def __str__(self) -> str:
         name = self.__class__.__name__
         source = self.source or "Unknown"
-        return f'{name}(type={self.type}, origin={self.origin}, source="{source}", message="{self.message}")'
+        return f'{name}(type={self.type.value}, origin={self.origin}, source="{source}", message="{self.message}")'
 
     def to_rich_dict(self):
         """returns components for to_json"""
@@ -411,7 +412,7 @@ class AppBase(Generic[T, R]):
     def __call__(self, val: T, *args, **kwargs) -> R | NotCompleted:
         if val is None:
             return NotCompleted(
-                "ERROR", self, "unexpected input value None", source=val
+                NotCompletedType.ERROR, self, "unexpected input value None", source=val
             )
 
         if isinstance(val, NotCompleted) and self._skip_not_completed:
@@ -429,11 +430,13 @@ class AppBase(Generic[T, R]):
         try:
             result = self.main(val, *args, **kwargs)
         except Exception:
-            result = NotCompleted("ERROR", self, traceback.format_exc(), source=val)
+            result = NotCompleted(
+                NotCompletedType.ERROR, self, traceback.format_exc(), source=val
+            )
 
         if result is None:
             result = NotCompleted(
-                "BUG", self, "unexpected output value None", source=val
+                NotCompletedType.BUG, self, "unexpected output value None", source=val
             )
         return result
 
@@ -468,7 +471,9 @@ class AppBase(Generic[T, R]):
             data = data.obj
 
         if isinstance(data, _builtin_seqs) and len(data) == 0:
-            return NotCompleted("ERROR", self, message="empty data", source=data)
+            return NotCompleted(
+                NotCompletedType.ERROR, self, message="empty data", source=data
+            )
 
         try:
             check_type(data, self._input_type)
@@ -477,7 +482,7 @@ class AppBase(Generic[T, R]):
             class_name = data.__class__.__name__
             expected = get_type_display_names(self._input_type)
             msg = f"invalid data type, '{class_name}' not in {', '.join(sorted(expected))}"
-            return NotCompleted("ERROR", self, message=msg, source=data)
+            return NotCompleted(NotCompletedType.ERROR, self, message=msg, source=data)
 
     @UI.display_wrap
     def as_completed(

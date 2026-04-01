@@ -376,7 +376,7 @@ def summary_not_completeds(
             idx = idx if idx > 0 else limit_len
             sources = f"{sources[:idx]} ..."
         row = {
-            "type": key[0],
+            "type": getattr(key[0], "value", key[0]),
             "origin": key[1],
             "message": messages,
             "num": len(types[key]),

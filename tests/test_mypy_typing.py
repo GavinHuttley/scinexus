@@ -5,7 +5,12 @@ import sys
 import textwrap
 
 from scinexus import AppBase, ComposableApp
-from scinexus.composable import NON_COMPOSABLE, NotCompleted, define_app
+from scinexus.composable import (
+    NON_COMPOSABLE,
+    NotCompleted,
+    NotCompletedType,
+    define_app,
+)
 
 
 class IntToStr(ComposableApp[int, str]):
@@ -37,7 +42,7 @@ def test_inheritance_composition():
 
 def test_inheritance_not_completed_propagation():
     app = IntToStr()
-    nc = NotCompleted("ERROR", "test", "msg")
+    nc = NotCompleted(NotCompletedType.ERROR, "test", "msg")
     result = app(nc)
     assert isinstance(result, NotCompleted)
 

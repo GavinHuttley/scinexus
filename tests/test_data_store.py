@@ -8,7 +8,7 @@ import pytest
 from citeable import Software
 from scitrack import get_text_hexdigest
 
-from scinexus.composable import NotCompleted
+from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import (
     _CITATIONS_FILE,
     _MD5_TABLE,
@@ -69,7 +69,9 @@ def completed_objects(ro_dstore):
 @pytest.fixture
 def nc_objects():
     return {
-        f"id_{i}": NotCompleted("ERROR", "location", "message", source=f"id_{i}")
+        f"id_{i}": NotCompleted(
+            NotCompletedType.ERROR, "location", "message", source=f"id_{i}"
+        )
         for i in range(3)
     }
 
@@ -108,7 +110,7 @@ def nc_dstore(DATA_DIR, nc_dir):
     dstore.write_log(unique_id=log_filename, data=(DATA_DIR / log_filename).read_text())
     nc = [
         NotCompleted(
-            "FAIL",
+            NotCompletedType.FAIL,
             f"dummy{i}",
             f"dummy_message{i}",
             source=f"dummy_source{i}",
