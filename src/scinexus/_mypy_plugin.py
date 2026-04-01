@@ -22,7 +22,7 @@ def _get_main_return_type(ctx: ClassDefContext):
     main_sym = info.names.get("main")
     if main_sym is None or main_sym.node is None:
         return None
-    main_type = main_sym.node.type
+    main_type = main_sym.node.type  # type: ignore[attr-defined]
     if main_type is None:
         return None
     return main_type.ret_type
@@ -40,7 +40,7 @@ def _define_app_hook(ctx: ClassDefContext) -> bool:
     if nc_info and nc_info.node:
         from mypy.types import Instance
 
-        not_completed_type = Instance(nc_info.node, [])
+        not_completed_type = Instance(nc_info.node, [])  # type: ignore[assignment,arg-type]
 
     return_type = UnionType([ret, not_completed_type])
 
