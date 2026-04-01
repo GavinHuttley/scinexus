@@ -26,6 +26,12 @@ def type_check(session):
 
 
 @nox.session(python=[f"3.{v}" for v in _py_versions])
+def test_types(session):
+    session.install("-e", ".", "--group", "test")
+    session.run("mypy", "src/scinexus/")
+
+
+@nox.session(python=[f"3.{v}" for v in _py_versions])
 def test(session):
     session.install("-e", ".", "--group", "test")
     session.run("uv", "pip", "list")

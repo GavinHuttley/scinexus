@@ -81,4 +81,4 @@ jobs:
 
       - name: "Run Type Checking for ${{ matrix.python-version }}"
         run: |
-          nox -db uv --force-python python -s type_check
+          nox -db uv --force-python python -s test_types
