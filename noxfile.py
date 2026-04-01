@@ -77,3 +77,32 @@ def testmpi(session):
         *session.posargs,
         external=True,
     )
+
+
+@nox.session(python=[f"3.{v}" for v in _py_versions])
+def testcov(session):
+    session.install("-e", ".", "--group", "test")
+    cov_file = str(pathlib.Path().resolve() / ".coverage")
+    session.env["COVERAGE_FILE"] = cov_file
+
+    session.run("coverage", "erase")
+
+    base = ["coverage", "run", "--source=scinexus"]
+
+    # mypy (captures _mypy_plugin execution)
+    session.run(*base, "-m", "mypy", "src/scinexus/")
+
+    # doctests
+    session.chdir("src/scinexus")
+    session.run(*base, "--append", "-m", "pytest", "-s", "-x", "--doctest-modules", ".")
+
+    # unit tests
+    session.chdir("../../tests")
+    session.run(
+        *base, "--append", "-m", "pytest", "-s", "-x", "-m", "not slow and not mpi",
+    )
+
+    session.chdir("..")
+    session.run("coverage", "report")
+    for fmt in session.posargs:
+        session.run("coverage", fmt)
