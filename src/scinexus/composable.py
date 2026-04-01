@@ -343,7 +343,7 @@ def _init_subclass_setup(cls, app_type, skip_not_completed, cite):
     if app_type is not LOADER:
         cls.input = None
 
-    if hasattr(cls, "__slots__"):
+    if "__slots__" in cls.__dict__:
         msg = "slots are not currently supported"
         raise NotImplementedError(msg)
 
@@ -1007,7 +1007,7 @@ def define_app(
                 msg = f"remove {meth!r} in {klass.__name__!r}, this functionality provided by define_app"
                 raise TypeError(msg)
 
-        if hasattr(klass, "__slots__"):
+        if "__slots__" in klass.__dict__:
             msg = "slots are not currently supported"
             raise NotImplementedError(msg)
 
