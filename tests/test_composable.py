@@ -1,5 +1,6 @@
 import inspect
 import pickle
+from copy import copy
 from pickle import dumps, loads
 from unittest.mock import Mock
 
@@ -11,8 +12,8 @@ from scinexus import typing as snx_types
 from scinexus.composable import (
     NON_COMPOSABLE,
     WRITER,
+    ComposableApp,
     NotCompleted,
-    _add,
     _get_raw_hints,
     define_app,
     is_app,
@@ -46,8 +47,8 @@ def test_composable():
     assert got == expect
 
 
-def test_composables_once():
-    """composables can only be used in a single composition"""
+def test_composables_reuse():
+    """apps can be reused in multiple compositions"""
 
     @define_app
     class app_dummyclass_1:
@@ -77,8 +78,11 @@ def test_composables_once():
     two = app_dummyclass_2(2)
     three = app_dummyclass_3(3)
     one + three
-    with pytest.raises(ValueError):
-        two + three  # three already has an input
+    two + three  # reuse of three now works
+    # originals are not mutated
+    assert one.input is None
+    assert two.input is None
+    assert three.input is None
 
 
 def test_composable_to_self():
@@ -95,44 +99,6 @@ def test_composable_to_self():
     app1 = app_dummyclass_1(1)
     with pytest.raises(ValueError):
         _ = app1 + app1
-
-
-def test_disconnect():
-    """disconnect breaks all connections and allows parts to be reused"""
-
-    @define_app
-    class app_dummyclass_1:
-        def __init__(self, a):
-            self.a = a
-
-        def main(self, val: int) -> int:
-            return val
-
-    @define_app
-    class app_dummyclass_2:
-        def __init__(self, b):
-            self.b = b
-
-        def main(self, val: int) -> int:
-            return val
-
-    @define_app
-    class app_dummyclass_3:
-        def __init__(self, c):
-            self.c = c
-
-        def main(self, val: int) -> int:
-            return val
-
-    aseqfunc1 = app_dummyclass_1(1)
-    aseqfunc2 = app_dummyclass_2(2)
-    aseqfunc3 = app_dummyclass_3(3)
-    comb = aseqfunc1 + aseqfunc2 + aseqfunc3
-    comb.disconnect()
-    assert aseqfunc1.input is None
-    assert aseqfunc3.input is None
-    # should be able to compose a new one now
-    aseqfunc1 + aseqfunc3
 
 
 def test_err_result():
@@ -329,6 +295,11 @@ def func2app(arg1: int, exponent: int) -> float:
     return arg1**exponent
 
 
+@define_app
+def float2int(val: float) -> int:
+    return int(val)
+
+
 def test_decorate_app_function():
     """works on functions now"""
 
@@ -343,6 +314,13 @@ def test_roundtrip_decorated_function():
     sqd = func2app(exponent=2)
     u = pickle.loads(pickle.dumps(sqd))  # noqa: S301
     assert u(4) == 16
+
+
+def test_roundtrip_composed_app():
+    """composed app can be pickled/unpickled"""
+    composed = func2app(exponent=2) + float2int()
+    u = pickle.loads(pickle.dumps(composed))  # noqa: S301
+    assert u(3) == 9
 
 
 def test_decorated_func_optional():
@@ -434,8 +412,8 @@ def test_add_non_composable_apps():
         def main(self, val: int) -> int:
             return val
 
-    app_non_composable1.__add__ = _add
-    app_non_composable2.__add__ = _add
+    app_non_composable1.__add__ = ComposableApp.__add__
+    app_non_composable2.__add__ = ComposableApp.__add__
     app1 = app_non_composable1()
     app2 = app_non_composable2()
     with pytest.raises(TypeError):
@@ -547,7 +525,6 @@ def test_complex_type_allowed_depths(hint):
         "__str__",
         "__new__",
         "__add__",
-        "disconnect",
         "input",
         "apply_to",
         "_validate_data_type",
@@ -794,29 +771,6 @@ def test_non_composable_app_with_citation():
     assert app.citations == (cite,)
 
 
-def test_citations_after_disconnect():
-    cite_a = _make_cite(title="A")
-    cite_b = _make_cite(title="B")
-
-    @define_app(cite=cite_a)
-    class disc_a:
-        def main(self, val: int) -> int:
-            return val
-
-    @define_app(cite=cite_b)
-    class disc_b:
-        def main(self, val: int) -> int:
-            return val
-
-    a = disc_a()
-    b = disc_b()
-    composed = a + b
-    assert len(composed.citations) == 2
-    composed.disconnect()
-    assert b.citations == (cite_b,)
-    assert a.citations == (cite_a,)
-
-
 def test_cite_sets_app_attribute():
     cite = _make_cite()
 
@@ -888,3 +842,89 @@ def test_bib_composed_apps():
     assert str(cite_b) in composed.bib
     assert str(cite_a) in composed.bib
     assert "\n\n" in composed.bib
+
+
+def test_app_copy():
+    """shallow copy creates new instance sharing attribute references"""
+
+    @define_app
+    class app_copy_test:
+        def __init__(self, data):
+            self.data = data
+
+        def main(self, val: int) -> int:
+            return val
+
+    original = app_copy_test([1, 2, 3])
+    copied = copy(original)
+    assert copied is not original
+    assert copied.data is original.data
+    assert copied._init_vals is original._init_vals  # noqa: SLF001
+
+
+def test_composition_does_not_mutate_originals():
+    """composition uses copies so originals stay independent"""
+
+    @define_app
+    class app_mut_a:
+        def main(self, val: int) -> int:
+            return val
+
+    @define_app
+    class app_mut_b:
+        def main(self, val: int) -> int:
+            return val
+
+    a = app_mut_a()
+    b = app_mut_b()
+    _ = a + b
+    assert a.input is None
+    assert b.input is None
+
+
+def test_app_reuse_in_multiple_compositions():
+    """same app instance can be used in multiple compositions"""
+
+    @define_app
+    class app_reuse_a:
+        def main(self, val: int) -> int:
+            return val
+
+    @define_app
+    class app_reuse_b:
+        def main(self, val: int) -> int:
+            return val
+
+    @define_app
+    class app_reuse_c:
+        def main(self, val: int) -> int:
+            return val
+
+    a = app_reuse_a()
+    b = app_reuse_b()
+    c = app_reuse_c()
+    comb1 = a + b
+    comb2 = a + c
+    comb3 = c + b
+    assert comb1(1) == 1
+    assert comb2(1) == 1
+    assert comb3(1) == 1
+
+
+def test_app_eq():
+    """__eq__ checks attribute identity"""
+
+    @define_app
+    class app_eq_test:
+        def __init__(self, x):
+            self.x = x
+
+        def main(self, val: int) -> int:
+            return val
+
+    a = app_eq_test(1)
+    b = copy(a)
+    assert a == b
+    c = app_eq_test(1)
+    assert a != c  # different instances with different attribute objects
+    assert a != "not an app"

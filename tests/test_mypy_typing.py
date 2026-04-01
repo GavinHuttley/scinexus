@@ -53,14 +53,6 @@ def test_inheritance_repr():
     assert "IntToStr()" in repr(app)
 
 
-def test_inheritance_disconnect():
-    a = IntToStr()
-    b = StrToInt()
-    composed = a + b
-    composed.disconnect()
-    assert b.input is None
-
-
 def test_inheritance_type_validation():
     app = IntToStr()
     result = app("wrong type")

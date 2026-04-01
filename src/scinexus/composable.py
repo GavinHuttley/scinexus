@@ -8,7 +8,7 @@ import traceback
 import types
 import typing
 from collections.abc import Generator
-from copy import deepcopy
+from copy import copy, deepcopy
 from enum import Enum
 from pathlib import Path
 from typing import Generic, TypeVar
@@ -29,6 +29,7 @@ from scinexus.typing import (
     get_type_display_names,
     resolve_type_hint,
 )
+from scinexus.warning import deprecated_callable
 
 from .data_store import (
     DataMember,
@@ -393,6 +394,20 @@ class AppBase(Generic[T, R]):
         obj._init_vals = init_vals
         return obj
 
+    def __copy__(self):
+        new = object.__new__(type(self))
+        new.__dict__.update(self.__dict__)
+        return new
+
+    def __eq__(self, other) -> bool:
+        if not isinstance(other, type(self)):
+            return False
+        return all(
+            v is other.__dict__.get(k) for k, v in self.__dict__.items() if k != "input"
+        )
+
+    __hash__ = None  # type: ignore[assignment]
+
     def __call__(self, val: T, *args, **kwargs) -> R | NotCompleted:
         if val is None:
             return NotCompleted(
@@ -559,7 +574,7 @@ class AppBase(Generic[T, R]):
 
 
 class ComposableApp(AppBase[T, R]):
-    """Adds __add__ and disconnect for LOADER/GENERIC."""
+    """Adds __add__ for LOADER/GENERIC."""
 
     _is_intermediate_base: bool = True
 
@@ -568,13 +583,7 @@ class ComposableApp(AppBase[T, R]):
             msg = f"{other!r} is not composable"
             raise TypeError(msg)
 
-        if other.input is not None:
-            msg = f"{other.__class__.__name__} already part of composed function, use disconnect() to free them up"
-            raise ValueError(
-                msg,
-            )
-
-        if other is self:
+        if other == self:
             msg = "cannot add an app to itself"
             raise ValueError(msg)
 
@@ -595,18 +604,17 @@ class ComposableApp(AppBase[T, R]):
                 f"type {other_names}"
             )
             raise TypeError(msg)
-        other.input = self
-        return other
+        result = copy(other)
+        result.input = copy(self)
+        return result
 
-    def disconnect(self) -> None:
-        """resets input to None
-        Breaks all connections among members of a composed function."""
-        if self.app_type is LOADER:
-            return
-        if self.input:
-            self.input.disconnect()
-
-        self.input = None
+    @deprecated_callable(
+        version="2026.9",
+        reason="no longer required",
+        is_discontinued=True,
+    )
+    def disconnect(self) -> None:  # pragma: no cover
+        """Deprecated. No longer required since composition uses copies."""
 
 
 class WriterApp(ComposableApp[T, R]):
@@ -760,10 +768,6 @@ class WriterApp(ComposableApp[T, R]):
             src = Path(self.data_store.source).parent  # type: ignore[attr-defined]
             logger.log_file_path = str(src / _make_logfile_name(self))
         self.logger = logger
-
-
-# Keep module-level references for backwards compatibility (used in tests)
-_add = ComposableApp.__add__
 
 
 def _class_from_func(func):
