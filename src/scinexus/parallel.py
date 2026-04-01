@@ -12,7 +12,7 @@ import loky  # type: ignore[import-untyped]
 
 from scinexus.misc import extend_docstring_from
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Callable, Generator, Iterable
     from typing import Any, Literal
 

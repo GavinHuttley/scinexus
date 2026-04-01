@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, ParamSpec, TypeVar, cast
 from warnings import catch_warnings, simplefilter
 from warnings import warn as _warn
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Callable, Sequence
     from typing import Any, Literal
 
