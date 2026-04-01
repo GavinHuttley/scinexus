@@ -82,9 +82,9 @@ def testmpi(session):
 @nox.session(python=[f"3.{v}" for v in _py_versions])
 def testcov(session):
     session.install("-e", ".", "--group", "test")
-    cov_file = str(pathlib.Path().resolve() / ".coverage")
-    session.env["COVERAGE_FILE"] = cov_file
 
+    cov_file = str(pathlib.Path.cwd() / ".coverage")
+    session.env["COVERAGE_FILE"] = cov_file
     session.run("coverage", "erase")
 
     base = ["coverage", "run", "--source=scinexus"]

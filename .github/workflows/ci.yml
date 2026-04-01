@@ -35,17 +35,19 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
-      - name: "Installs for ${{ matrix.python-version }}"
-        run: |
-          uv venv venv -p python${{ matrix.python-version }}
-          uv tool install -p venv nox
-
       - name: "Run nox for ${{ matrix.python-version }}"
         shell: bash
         run: |
-          dn=$(pwd)
-          cov="--cov-report lcov:lcov-${{matrix.os}}-${{matrix.python-version}}.lcov --cov-report term --cov-append --cov scinexus"
-          nox  -db uv --force-python python -s test -- $cov
+          cov="-o lcov:lcov-${{matrix.os}}-${{matrix.python-version}}.lcov"
+          uv run --group test nox --force-python python -s testcov -- $cov
+
+      - name: Coveralls Parallel
+        uses: coverallsapp/github-action@v2
+        with:
+          parallel: true
+          github-token: ${{ secrets.github_token }}
+          flag-name: run-${{matrix.python-version}}-${{matrix.os}}
+          file: "lcov-${{matrix.os}}-${{matrix.python-version}}.lcov"
 
   type_check:
     name: Type Check
@@ -71,11 +73,17 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
-      - name: "Installs for ${{ matrix.python-version }}"
-        run: |
-          uv venv venv -p python${{ matrix.python-version }}
-          uv tool install -p venv nox
-
       - name: "Run Type Checking for ${{ matrix.python-version }}"
         run: |
-          nox -db uv --force-python python -s test_types
+          uv run --group test nox --force-python python -s type_check
+
+  finish:
+    name: "Finish Coveralls"
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Coveralls Finished
+      uses: coverallsapp/github-action@v2
+      with:
+        github-token: ${{ secrets.github_token }}
+        parallel-finished: true
