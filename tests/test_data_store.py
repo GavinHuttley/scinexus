@@ -23,7 +23,9 @@ from scinexus.data_store import (
     get_summary_display,
     get_unique_id,
     load_record_from_json,
+    make_record_for_json,
     set_summary_display,
+    summary_not_completeds,
 )
 
 
@@ -690,3 +692,120 @@ def test_summary_citations_with_display(write_dir, sample_citations, _restore_di
     assert result == "citations_display"
     assert captured["name"] == "summary_citations"
     assert isinstance(captured["data"], list)
+
+
+def test_validate_incorrect_md5(write_dir):
+    dstore = DataStoreDirectory(write_dir, suffix="txt", mode=OVERWRITE)
+    dstore.write(unique_id="item.txt", data="original")
+    # corrupt the md5
+    md5_path = write_dir / _MD5_TABLE / "item.txt"
+    md5_path.write_text("wrong_md5_value")
+    result = dstore._validate()  # noqa: SLF001
+    assert result["md5_incorrect"] == 1
+
+
+def test_readonly_nonexistent_dir(tmp_path):
+    with pytest.raises(OSError, match="does not exist"):
+        DataStoreDirectory(tmp_path / "nonexistent", suffix="txt", mode=READONLY)
+
+
+def test_not_completed_with_limit(write_dir):
+    dstore = DataStoreDirectory(write_dir, suffix="txt", mode=OVERWRITE)
+    for i in range(5):
+        nc = NotCompleted(NotCompletedType.ERROR, "test", f"msg {i}", source=f"src_{i}")
+        dstore.write_not_completed(unique_id=f"nc_{i}.json", data=nc.to_json())
+    limited = DataStoreDirectory(write_dir, suffix="txt", mode=READONLY, limit=2)
+    assert len(limited.not_completed) == 2
+
+
+def test_summary_not_completeds(write_dir):
+    dstore = DataStoreDirectory(write_dir, suffix="txt", mode=OVERWRITE)
+    for i in range(3):
+        nc = NotCompleted(
+            NotCompletedType.ERROR, "myapp", f"error msg {i}", source=f"s{i}"
+        )
+        dstore.write_not_completed(unique_id=f"nc_{i}.json", data=nc.to_json())
+    rows = summary_not_completeds(dstore.not_completed)
+    assert len(rows) >= 1
+    assert rows[0]["origin"] == "myapp"
+    assert rows[0]["num"] == 3
+
+
+def test_make_record_for_json():
+    result = make_record_for_json("id1", {"key": "value"}, True)
+    assert result["identifier"] == "id1"
+    assert result["completed"] is True
+    assert isinstance(result["data"], str)
+    parsed = json.loads(result["data"])
+    assert parsed == {"key": "value"}
+
+
+def test_make_record_for_json_with_rich_dict():
+    class FakeObj:
+        def to_rich_dict(self):
+            return {"type": "fake", "data": 42}
+
+    result = make_record_for_json("id2", FakeObj(), True)
+    parsed = json.loads(result["data"])
+    assert parsed == {"type": "fake", "data": 42}
+
+
+def test_zipped_readonly_write_methods(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("data")
+    zpath = shutil.make_archive(str(src), "zip", root_dir=src.parent, base_dir=src.name)
+    zstore = ReadOnlyDataStoreZipped(zpath, suffix="txt")
+
+    with pytest.raises(TypeError):
+        zstore.write(unique_id="x", data="d")
+    with pytest.raises(TypeError):
+        zstore.write_not_completed(unique_id="x", data="d")
+    with pytest.raises(TypeError):
+        zstore.write_log(unique_id="x", data="d")
+    with pytest.raises(TypeError):
+        zstore.write_citations(data=())
+    with pytest.raises(TypeError):
+        zstore.drop_not_completed()
+
+
+def test_zipped_md5_returns_none(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("data")
+    zpath = shutil.make_archive(str(src), "zip", root_dir=src.parent, base_dir=src.name)
+    zstore = ReadOnlyDataStoreZipped(zpath, suffix="txt")
+    assert zstore.md5("a.txt") is None
+
+
+def test_zipped_load_citations_missing(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("data")
+    zpath = shutil.make_archive(str(src), "zip", root_dir=src.parent, base_dir=src.name)
+    zstore = ReadOnlyDataStoreZipped(zpath, suffix="txt")
+    assert zstore._load_citations() == []  # noqa: SLF001
+
+
+def test_zipped_completed_with_limit(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(5):
+        (src / f"f_{i}.txt").write_text(f"data {i}")
+    zpath = shutil.make_archive(str(src), "zip", root_dir=src.parent, base_dir=src.name)
+    zstore = ReadOnlyDataStoreZipped(zpath, suffix="txt", limit=2)
+    assert len(zstore.completed) == 2
+
+
+def test_summary_logs_continuation_line(write_dir):
+    from scitrack import CachingLogger
+
+    dstore = DataStoreDirectory(write_dir, suffix="txt", mode=OVERWRITE)
+    logger = CachingLogger(create_dir=True)
+    log_path = write_dir / "test.log"
+    logger.log_file_path = str(log_path)
+    logger.log_message("a long message\nthat continues", label="multi")
+    logger.shutdown()
+    dstore.write_log(unique_id="test.log", data=log_path.read_text())
+    rows = dstore._summary_logs()  # noqa: SLF001
+    assert len(rows) == 1
