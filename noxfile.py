@@ -64,6 +64,7 @@ def testmpi(session):
     py = pathlib.Path(session.bin_paths[0]) / "python"
     session.run(
         "mpiexec",
+        "--oversubscribe",
         "-n",
         "4",
         str(py),
@@ -118,6 +119,7 @@ def testcov(session):
         py = pathlib.Path(session.bin_paths[0]) / "python"
         session.run(
             "mpiexec",
+            "--oversubscribe",
             "-n",
             "4",
             str(py),
