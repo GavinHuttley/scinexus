@@ -931,3 +931,114 @@ def test_app_eq():
     c = app_eq_test(1)
     assert a != c  # different instances with different attribute objects
     assert a != "not an app"
+
+
+def test_check_data_type_default_true():
+    @define_app
+    class app_cdt:
+        def main(self, val: int) -> int:
+            return val
+
+    assert app_cdt().check_data_type is True
+
+
+def test_check_data_type_true_rejects_bad_type():
+    @define_app
+    class app_cdt:
+        def main(self, val: int) -> int:
+            return val
+
+    app = app_cdt()
+    app.check_data_type = True
+    got = app("not_an_int")
+    assert isinstance(got, NotCompleted)
+
+
+def test_check_data_type_false_skips_validation():
+    @define_app
+    class app_cdt:
+        def main(self, val: int) -> int:
+            return val
+
+    app = app_cdt()
+    app.check_data_type = False
+    got = app("42")
+    assert got == "42"
+
+
+def test_check_data_type_propagates_in_composition():
+    @define_app
+    class app_cdt_a:
+        def main(self, val: int) -> int:
+            return val
+
+    @define_app
+    class app_cdt_b:
+        def main(self, val: int) -> int:
+            return val
+
+    @define_app
+    class app_cdt_c:
+        def main(self, val: int) -> int:
+            return val
+
+    composed = app_cdt_a() + app_cdt_b() + app_cdt_c()
+    assert composed.check_data_type is True
+    assert composed.input.check_data_type is True
+    assert composed.input.input.check_data_type is True
+
+    composed.check_data_type = False
+    assert composed.check_data_type is False
+    assert composed.input.check_data_type is False
+    assert composed.input.input.check_data_type is False
+
+
+def test_check_data_type_does_not_affect_originals():
+    @define_app
+    class app_cdt_a:
+        def main(self, val: int) -> int:
+            return val
+
+    @define_app
+    class app_cdt_b:
+        def main(self, val: int) -> int:
+            return val
+
+    a = app_cdt_a()
+    b = app_cdt_b()
+    composed = a + b
+    composed.check_data_type = False
+    assert a.check_data_type is True
+    assert b.check_data_type is True
+
+
+def test_check_data_type_false_composed_end_to_end():
+    @define_app
+    class app_cdt_a:
+        def main(self, val: int) -> int:
+            return val
+
+    @define_app
+    class app_cdt_b:
+        def main(self, val: int) -> int:
+            return val
+
+    composed = app_cdt_a() + app_cdt_b()
+    composed.check_data_type = False
+    got = composed("not_an_int")
+    assert got == "not_an_int"
+
+
+def test_check_data_type_re_enable():
+    @define_app
+    class app_cdt:
+        def main(self, val: int) -> int:
+            return val
+
+    app = app_cdt()
+    app.check_data_type = False
+    assert app("not_int") == "not_int"
+
+    app.check_data_type = True
+    got = app("not_int")
+    assert isinstance(got, NotCompleted)

@@ -336,6 +336,7 @@ def _init_subclass_setup(cls, app_type, skip_not_completed, cite):
     cls._return_type = resolve_type_hint(raw_return, module_globals)
     cls.app_type = app_type
     cls._skip_not_completed = skip_not_completed
+    cls._check_data_type = True
     cls._cite = cite
     cls._source_wrapped = None
 
@@ -352,6 +353,7 @@ class AppBase(Generic[T, R]):
 
     _is_intermediate_base: bool = False
     _skip_not_completed: bool
+    _check_data_type: bool
     _source_wrapped: propagate_source | None
     _cite: Citation | None
     _input_type: type
@@ -409,6 +411,26 @@ class AppBase(Generic[T, R]):
 
     __hash__ = None  # type: ignore[assignment]
 
+    @property
+    def check_data_type(self) -> bool:
+        """toggle whether the type of input data matches the defined compatible types
+
+        Notes
+        -----
+        If False, and an invalid data type is passed, the error will
+        still be caught, but in a potentially less informative way. For instance
+        "'NoneType' object has no attribute 'blah'"
+        """
+        return self._check_data_type
+
+    @check_data_type.setter
+    def check_data_type(self, value: bool) -> None:
+        self._check_data_type = value
+        head = getattr(self, "input", None)
+        while head is not None:
+            head._check_data_type = value
+            head = getattr(head, "input", None)
+
     def __call__(self, val: T, *args, **kwargs) -> R | NotCompleted:
         if val is None:
             return NotCompleted(
@@ -423,9 +445,10 @@ class AppBase(Generic[T, R]):
             if isinstance(val, NotCompleted) and self._skip_not_completed:
                 return val
 
-        type_checked = self._validate_data_type(val)
-        if not type_checked:
-            return type_checked
+        if self._check_data_type:
+            type_checked = self._validate_data_type(val)
+            if not type_checked:
+                return type_checked
 
         try:
             result = self.main(val, *args, **kwargs)
