@@ -1,13 +1,14 @@
 import contextlib
 import json
-import os
 import pickle
 import typing
 import zipfile
+from collections.abc import Callable
 from functools import singledispatch
 from gzip import compress as gzip_compress
 from gzip import decompress as gzip_decompress
 from pathlib import Path
+from typing import Any
 
 from scinexus.deserialise import deserialise_object
 
@@ -21,7 +22,7 @@ from .data_store import (
 )
 from .sqlite_data_store import _MEMORY, DataStoreSqlite
 
-_datastore_reader_map = {}
+_datastore_reader_map: dict[str | None, type[DataStoreABC]] = {}
 
 
 class register_datastore_reader:
@@ -37,9 +38,9 @@ class register_datastore_reader:
         must be unique, a preceding '.' will be added if not already present
     """
 
-    def __init__(self, *args) -> None:
-        args = list(args)
-        for i, suffix in enumerate(args):
+    def __init__(self, *args: str | None) -> None:
+        suffixes: list[str | None] = list(args)
+        for i, suffix in enumerate(suffixes):
             if suffix is None:
                 if suffix in _datastore_reader_map:
                     msg = f"{suffix!r} already in {list(_datastore_reader_map)}"
@@ -61,9 +62,9 @@ class register_datastore_reader:
             if suffix in _datastore_reader_map:
                 msg = f"{suffix!r} already in {list(_datastore_reader_map)}"
                 raise ValueError(msg)
-            args[i] = suffix
+            suffixes[i] = suffix
 
-        self._type_str = tuple(args)
+        self._type_str = tuple(suffixes)
 
     def __call__(self, func):
         for type_str in self._type_str:
@@ -149,7 +150,7 @@ def unpickle_it(data: bytes) -> typing.Any:
 class compress:
     """Compresses bytes data."""
 
-    def __init__(self, compressor: callable = gzip_compress) -> None:
+    def __init__(self, compressor: Callable[..., Any] = gzip_compress) -> None:
         """
         Parameters
         ----------
@@ -166,7 +167,7 @@ class compress:
 class decompress:
     """Decompresses data."""
 
-    def __init__(self, decompressor: callable = gzip_decompress) -> None:
+    def __init__(self, decompressor: Callable[..., Any] = gzip_decompress) -> None:
         """
         Parameters
         ----------
@@ -191,7 +192,7 @@ def as_dict(obj: typing.Any) -> dict:
 class to_primitive:
     """convert an object to primitive python types suitable for serialisation"""
 
-    def __init__(self, convertor: callable = as_dict) -> None:
+    def __init__(self, convertor: Callable[..., Any] = as_dict) -> None:
         self.convertor = convertor
 
     def main(self, data: typing.Any) -> typing.Any:
@@ -203,7 +204,7 @@ class to_primitive:
 class from_primitive:
     """deserialises from primitive python types"""
 
-    def __init__(self, deserialiser: callable = deserialise_object) -> None:
+    def __init__(self, deserialiser: Callable[..., Any] = deserialise_object) -> None:
         self.deserialiser = deserialiser
 
     def main(self, data: typing.Any) -> typing.Any:
@@ -234,13 +235,13 @@ def _read_it(path) -> str:
 
 
 @_read_it.register
-def _(path: os.PathLike) -> str:
+def _(path: Path) -> str:
     path = path.expanduser().absolute()
     return path.read_text()
 
 
 @_read_it.register
-def _(path: str) -> os.PathLike:
+def _(path: str) -> str:
     return _read_it(Path(path))
 
 
