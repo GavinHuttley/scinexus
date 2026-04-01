@@ -483,20 +483,14 @@ class DataStoreSqlite(DataStoreABC):
         ).fetchone()
         return result is not None
 
-    @property
-    def summary_citations(self) -> list[dict]:
-        citations = self._load_citations()
-        return [{"app": c.summary()[0], "citation": c.summary()[1]} for c in citations]
-
-    @property
-    def describe(self) -> dict:
+    def _describe(self) -> dict:
         if self.locked and self._lock_id != os.getpid():
             title = f"Locked db store. Locked to pid={self._lock_id}, current pid={os.getpid()}."
         elif self.locked:
             title = "Locked to the current process."
         else:
             title = "Unlocked db store."
-        result = super().describe
+        result = super()._describe()
         result["title"] = title
         return result
 
@@ -518,8 +512,7 @@ class DataStoreSqlite(DataStoreABC):
         n = get_object_provenance(obj)
         self.db.execute("UPDATE state SET record_type=? WHERE state_id=1", (n,))
 
-    @property
-    def summary_not_completed(self) -> list[dict]:
+    def _summary_not_completed(self) -> list[dict]:
         """returns a list of dicts summarising not completed results"""
         from scinexus.data_store import summary_not_completeds
         from scinexus.io import DEFAULT_DESERIALISER

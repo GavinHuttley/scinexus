@@ -373,9 +373,6 @@ def test_write_read_only_datastore(tmp_dir):
     ro.close()
 
 
-# ---- Citation tests ----
-
-
 def test_write_citations_sqlite(tmp_dir, sample_citations):
     path = tmp_dir / "test_cite.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
@@ -415,3 +412,27 @@ def test_summary_citations_sqlite(tmp_dir, sample_citations):
     assert isinstance(result, list)
     assert len(result) == 2
     dstore.close()
+
+
+def test_describe_sqlite_with_display(tmp_dir):
+    from scinexus.data_store import set_summary_display
+
+    path = tmp_dir / "test_display.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    captured = {}
+
+    def display(data, *, name=""):
+        captured["data"] = data
+        captured["name"] = name
+        return "DISPLAY"
+
+    set_summary_display(display)
+    try:
+        result = dstore.describe
+        assert result == "DISPLAY"
+        assert captured["name"] == "describe"
+        assert "title" in captured["data"]
+        assert "completed" in captured["data"]
+    finally:
+        set_summary_display(None)
+        dstore.close()

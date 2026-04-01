@@ -20,8 +20,10 @@ from scinexus.data_store import (
     ReadOnlyDataStoreZipped,
     convert_directory_datastore,
     get_data_source,
+    get_summary_display,
     get_unique_id,
     load_record_from_json,
+    set_summary_display,
 )
 
 
@@ -192,9 +194,6 @@ def zipped_hidden(fasta_dir):
     )
     hidden.unlink()
     return pathlib.Path(path)
-
-
-# ---- Tests ----
 
 
 def test_data_member_eq(ro_dstore, fasta_dir):
@@ -463,9 +462,6 @@ def test_load_record_from_json():
         assert compl is True
 
 
-# ---- Zipped tests ----
-
-
 def test_zipped_ro_fail(zipped_basic):
     with pytest.raises(ValueError):
         ReadOnlyDataStoreZipped(zipped_basic, suffix="fasta", mode="w")
@@ -524,9 +520,6 @@ def test_zipped_md5(zipped_full, full_dstore):
     expect = {m.unique_id: full_dstore.md5(m.unique_id) for m in full_dstore.completed}
     got = {m.unique_id: zipped_full.md5(m.unique_id) for m in zipped_full.completed}
     assert got == expect
-
-
-# ---- Citation tests ----
 
 
 def test_write_citations_directory(write_dir, sample_citations):
@@ -597,3 +590,103 @@ def test_citations_file_not_in_completed(write_dir, sample_citations):
     member_ids = {m.unique_id for m in dstore.completed}
     assert _CITATIONS_FILE not in member_ids
     assert "sample.fasta" in member_ids
+
+
+@pytest.fixture
+def _restore_display():
+    """Ensure the global display function is reset after each test."""
+    yield
+    set_summary_display(None)
+
+
+def test_summary_display_default_is_none(_restore_display):
+    assert get_summary_display() is None
+
+
+def test_summary_display_set_and_get(_restore_display):
+    def my_display(data, *, name=""):
+        return data
+
+    set_summary_display(my_display)
+    assert get_summary_display() is my_display
+
+
+def test_summary_display_set_none_clears(_restore_display):
+    set_summary_display(lambda data, **kw: data)
+    set_summary_display(None)
+    assert get_summary_display() is None
+
+
+def test_describe_without_display(ro_dstore, _restore_display):
+    result = ro_dstore.describe
+    assert isinstance(result, dict)
+    assert "completed" in result
+
+
+def test_describe_with_display(ro_dstore, _restore_display):
+    captured = {}
+
+    def display(data, *, name=""):
+        captured["data"] = data
+        captured["name"] = name
+        return f"DISPLAY:{name}"
+
+    set_summary_display(display)
+    result = ro_dstore.describe
+    assert result == "DISPLAY:describe"
+    assert isinstance(captured["data"], dict)
+    assert "completed" in captured["data"]
+    assert captured["name"] == "describe"
+
+
+def test_summary_logs_with_display(full_dstore, _restore_display):
+    captured = {}
+
+    def display(data, *, name=""):
+        captured["data"] = data
+        captured["name"] = name
+        return "transformed"
+
+    set_summary_display(display)
+    result = full_dstore.summary_logs
+    assert result == "transformed"
+    assert captured["name"] == "summary_logs"
+    assert isinstance(captured["data"], list)
+
+
+def test_validate_with_display(ro_dstore, _restore_display):
+    captured = {}
+
+    def display(data, *, name=""):
+        captured["name"] = name
+        return "validated"
+
+    set_summary_display(display)
+    result = ro_dstore.validate()
+    assert result == "validated"
+    assert captured["name"] == "validate"
+
+
+def test_protected_methods_bypass_display(ro_dstore, _restore_display):
+    set_summary_display(lambda data, **kw: "SHOULD_NOT_SEE")
+    assert isinstance(ro_dstore._describe(), dict)  # noqa: SLF001
+    assert isinstance(ro_dstore._summary_logs(), list)  # noqa: SLF001
+    assert isinstance(ro_dstore._summary_not_completed(), list)  # noqa: SLF001
+    assert isinstance(ro_dstore._validate(), dict)  # noqa: SLF001
+
+
+def test_summary_citations_with_display(write_dir, sample_citations, _restore_display):
+    dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
+    dstore.write_citations(data=sample_citations)
+    captured = {}
+
+    def display(data, *, name=""):
+        captured["name"] = name
+        captured["data"] = data
+        return "citations_display"
+
+    set_summary_display(display)
+    result = dstore.summary_citations
+    assert result == "citations_display"
+    assert captured["name"] == "summary_citations"
+    assert isinstance(captured["data"], list)

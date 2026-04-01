@@ -49,6 +49,52 @@ APPEND = Mode.a
 OVERWRITE = Mode.w
 READONLY = Mode.r
 
+# Summary display registry
+_summary_display_func: Callable[..., Any] | None = None
+
+
+def set_summary_display(func: Callable[..., Any] | None) -> None:
+    """Set the function used to display data store summaries.
+
+    Parameters
+    ----------
+    func
+        A callable with signature ``func(data, *, name) -> Any`` where
+        *data* is a ``dict`` or ``list[dict]`` and *name* identifies the
+        summary method (e.g. ``"describe"``). Pass ``None`` to clear.
+    """
+    global _summary_display_func  # noqa: PLW0603
+    _summary_display_func = func
+
+
+def get_summary_display() -> Callable[..., Any] | None:
+    """Return the currently registered summary display function, or ``None``."""
+    return _summary_display_func
+
+
+def _apply_summary_display(data: Any, *, name: str) -> Any:
+    if _summary_display_func is not None:
+        return _summary_display_func(data, name=name)
+    return data
+
+
+def _summary_property(data_method: Callable[..., Any]) -> property:
+    """Create a property that delegates to a protected data method and applies display.
+
+    The *data_method* should be a method defined on ``DataStoreABC`` (or a
+    subclass) whose name starts with ``_``.  Subclasses customise the raw
+    data by overriding the ``_``-prefixed method; the public property
+    created here handles display wrapping automatically.
+    """
+    method_name = data_method.__name__
+    public_name = method_name.removeprefix("_")
+
+    def fget(self: DataStoreABC) -> Any:
+        data = getattr(self, method_name)()
+        return _apply_summary_display(data, name=public_name)
+
+    return property(fget, doc=data_method.__doc__)
+
 
 class DataMemberABC(ABC):
     """Abstract base class for DataMember
@@ -187,8 +233,7 @@ class DataStoreABC(ABC):
     @abstractmethod
     def not_completed(self) -> list[DataMemberABC]: ...
 
-    @property
-    def summary_logs(self) -> list[dict]:
+    def _summary_logs(self) -> list[dict]:
         """returns a list of dicts summarising log files"""
         rows = []
         for record in self.logs:
@@ -216,13 +261,15 @@ class DataStoreABC(ABC):
             rows.append(row)
         return rows
 
-    @property
-    def summary_not_completed(self) -> list[dict]:
+    summary_logs = _summary_property(_summary_logs)
+
+    def _summary_not_completed(self) -> list[dict]:
         """returns a list of dicts summarising not completed results"""
         return summary_not_completeds(self.not_completed)
 
-    @property
-    def describe(self) -> dict:
+    summary_not_completed = _summary_property(_summary_not_completed)
+
+    def _describe(self) -> dict:
         num_not_completed = len(self.not_completed)
         num_completed = len(self.completed)
         num_logs = len(self.logs)
@@ -232,10 +279,12 @@ class DataStoreABC(ABC):
             "logs": num_logs,
         }
 
+    describe = _summary_property(_describe)
+
     @abstractmethod
     def drop_not_completed(self, *, unique_id: str | None = None) -> None: ...
 
-    def validate(self) -> dict:
+    def _validate(self) -> dict:
         correct_md5 = len(self.members)
         missing_md5 = 0
         for m in self.members:
@@ -255,6 +304,9 @@ class DataStoreABC(ABC):
             "md5_missing": missing_md5,
             "has_log": len(self.logs) > 0,
         }
+
+    def validate(self) -> dict:
+        return _apply_summary_display(self._validate(), name="validate")
 
     @abstractmethod
     def md5(self, unique_id: str) -> str | NoneType:
@@ -276,22 +328,25 @@ class DataStoreABC(ABC):
         import warnings
 
         warnings.warn(
-            f"{type(self).__name__} does not support saving citations",
+            f"{type(self).__name__!r} does not support saving citations",
             UserWarning,
             stacklevel=2,
         )
 
-    @property
-    def summary_citations(self) -> list[dict]:
+    def _summary_citations(self) -> list[dict]:
         """Return a list of dicts summarising stored citations."""
-        import warnings
+        if type(self)._load_citations is DataStoreABC._load_citations:
+            import warnings
 
-        warnings.warn(
-            f"{type(self).__name__} does not support saving citations",
-            UserWarning,
-            stacklevel=2,
-        )
-        return []
+            warnings.warn(
+                f"{type(self).__name__!r} does not support saving citations",
+                UserWarning,
+                stacklevel=2,
+            )
+        citations = self._load_citations()
+        return [{"app": c.summary()[0], "citation": c.summary()[1]} for c in citations]
+
+    summary_citations = _summary_property(_summary_citations)
 
     def write_bib(self, dest_path: str | Path) -> None:
         """Write stored citations as a BibTeX .bib file."""
@@ -654,11 +709,6 @@ class DataStoreDirectory(DataStoreABC):
             return []
         return from_jsons(path.read_text())
 
-    @property
-    def summary_citations(self) -> list[dict]:
-        citations = self._load_citations()
-        return [{"app": c.summary()[0], "citation": c.summary()[1]} for c in citations]
-
 
 class ReadOnlyDataStoreZipped(DataStoreABC):
     def __init__(
@@ -806,11 +856,6 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
             return from_jsons(data)
         except KeyError:
             return []
-
-    @property
-    def summary_citations(self) -> list[dict]:
-        citations = self._load_citations()
-        return [{"app": c.summary()[0], "citation": c.summary()[1]} for c in citations]
 
 
 def get_unique_id(name: object) -> str | None:

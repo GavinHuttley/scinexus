@@ -629,9 +629,6 @@ def test_bad_wrap():
         define_app(bar)
 
 
-# ---- Citation tests ----
-
-
 def _make_cite(**kwargs):
     defaults = {
         "author": ["Doe, J"],
