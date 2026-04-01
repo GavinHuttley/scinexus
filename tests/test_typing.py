@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import TypeVar, Union
+from typing import Any, TypeVar, Union
 
 import pytest
 
@@ -118,8 +118,9 @@ def broken_subclasscheck():
     """a class whose metaclass makes issubclass() raise TypeError"""
 
     class BadMeta(type):
-        def __subclasscheck__(cls, subclass):
-            raise TypeError("broken")
+        def __subclasscheck__(cls, subclass: Any):
+            msg = "broken"
+            raise TypeError(msg)
 
     class Weird(metaclass=BadMeta):
         pass

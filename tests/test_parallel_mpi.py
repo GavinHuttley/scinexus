@@ -5,7 +5,7 @@ from scinexus.parallel import USING_MPI, imap, is_master_process
 pytestmark = pytest.mark.mpi
 
 
-def _is_master(n):
+def _is_master(n):  # noqa: ARG001
     return is_master_process()
 
 

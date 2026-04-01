@@ -164,7 +164,7 @@ def test_not_completed_result():
     """should survive roundtripping pickle"""
     err = NotCompleted("FAIL", "mytest", "can we roundtrip")
     p = dumps(err)
-    new = loads(p)
+    new = loads(p)  # noqa: S301
     assert err.type == new.type
     assert err.message == new.message
     assert err.source == new.source
@@ -186,7 +186,7 @@ def test_composable_variable_positional_args():
             return val
 
     instance = pos_var_pos1(2, 3, 4, 5, 6)
-    assert instance._init_vals == {"a": 2, "b": 3, "args": (4, 5, 6)}
+    assert instance._init_vals == {"a": 2, "b": 3, "args": (4, 5, 6)}  # noqa: SLF001
 
 
 def test_composable_minimum_parameters():
@@ -259,7 +259,7 @@ def test_composable_variable_positional_args_and_kwargs():
             return val
 
     instance = pos_var_pos_kw2(2, 3, 4, 5, 6, c=True)
-    assert instance._init_vals == {"a": 2, "args": (3, 4, 5, 6), "c": True}
+    assert instance._init_vals == {"a": 2, "args": (3, 4, 5, 6), "c": True}  # noqa: SLF001
 
 
 def test_app_decoration_fails_with_slots():
@@ -341,7 +341,7 @@ def test_roundtrip_decorated_function():
     """decorated function can be pickled/unpickled"""
 
     sqd = func2app(exponent=2)
-    u = pickle.loads(pickle.dumps(sqd))
+    u = pickle.loads(pickle.dumps(sqd))  # noqa: S301
     assert u(4) == 16
 
 
@@ -358,16 +358,16 @@ def test_decorated_func_repr():
     def kw(val: int = 1) -> int:
         return val**val
 
-    def kw_kw(val: int = 1, pow: int = 1) -> int:
+    def kw_kw(val: int = 1, pow: int = 1) -> int:  # noqa: A002
         return val**pow
 
     def pos(val: int) -> int:
         return val**val
 
-    def pos_pos(val: int, pow: int) -> int:
+    def pos_pos(val: int, pow: int) -> int:  # noqa: A002
         return val**pow
 
-    def pos_kw(val: int, pow: int = 1) -> int:
+    def pos_kw(val: int, pow: int = 1) -> int:  # noqa: A002
         return val**pow
 
     fns = {fn: func for fn, func in locals().items() if callable(func)}
@@ -389,7 +389,7 @@ def test_decorated_func_repr():
 
 def test_decorated_func_just_args():
     @define_app(app_type=NON_COMPOSABLE)
-    def power(val: int, pow: int) -> int:
+    def power(val: int, pow: int) -> int:  # noqa: A002
         return val**pow
 
     sqd = power()
@@ -445,16 +445,16 @@ def test_add_non_composable_apps():
 _types_null = (list, []), (tuple, ())
 
 
-@pytest.mark.parametrize(("in_type", "input"), _types_null)
-def test_handles_null_series_input(in_type, input):
+@pytest.mark.parametrize(("in_type", "input_"), _types_null)
+def test_handles_null_series_input(in_type, input_):
     """apps correctly handle null output"""
 
     @define_app
-    def null_in(val: in_type, pow: int) -> int:
+    def null_in(val: in_type, pow: int) -> int:  # noqa: A002, ARG001
         return 2
 
     app = null_in(pow=2)
-    got = app(input)
+    got = app(input_)
     assert isinstance(got, NotCompleted)
 
 
@@ -463,7 +463,7 @@ def test_handles_null_output(ret_type):
     """apps correctly handle null output"""
 
     @define_app
-    def null_out(val: ndarray, pow: int) -> int:
+    def null_out(val: ndarray, pow: int) -> int:  # noqa: A002, ARG001
         return ret_type
 
     app = null_out(pow=2)
@@ -476,7 +476,7 @@ def test_handles_None():
     """apps correctly handle null output"""
 
     @define_app
-    def none_out(val: ndarray, pow: int) -> int:
+    def none_out(val: ndarray, pow: int) -> int:  # noqa: A002, ARG001
         return None
 
     @define_app
@@ -497,7 +497,7 @@ def test_handles_None():
 def test_validate_data_type_not_completed_pass_through():
     # returns the instance of a NotCompleted created by an input
     @define_app
-    def take_int1(val: int) -> int:
+    def take_int1(val: int) -> int:  # noqa: ARG001
         return NotCompleted("ERROR", "take_int1", "external to app", source="unknown")
 
     @define_app
@@ -526,7 +526,7 @@ def test_complex_type_depths(hint):
     # deep nesting now allowed (typeguard handles arbitrary nesting)
     @define_app
     class x:
-        def main(self, data: hint) -> bool:
+        def main(self, data: hint) -> bool:  # noqa: ARG002
             return True
 
 
@@ -535,7 +535,7 @@ def test_complex_type_allowed_depths(hint):
     # allowed <=2-deep nesting of types
     @define_app
     class x:
-        def main(self, data: hint) -> int:
+        def main(self, data: hint) -> int:  # noqa: ARG002
             return int
 
 
@@ -589,6 +589,19 @@ def test_forbidden_methods_non_composable_app(meth):
         define_app(app_type=NON_COMPOSABLE)(app_forbidden_methods2)
 
 
+def test_forbidden_input_attribute():
+    """user-defined input attribute (non-function) is rejected on composable apps"""
+
+    class app_with_input_attr:
+        input = "some_value"
+
+        def main(self, val: int) -> int:
+            return val
+
+    with pytest.raises(TypeError):
+        define_app(app_with_input_attr)
+
+
 def test_skip_not_completed():
     @define_app(skip_not_completed=False)
     def takes_not_completed(val: snx_types.SerialisableType) -> dict:
@@ -640,16 +653,16 @@ def test_bad_wrap():
 
 
 def _make_cite(**kwargs):
-    defaults = dict(
-        author=["Doe, J"],
-        title="test",
-        year=2024,
-        url="https://example.com",
-        version="1.0",
-        license="MIT",
-        doi="10.0/test",
-        publisher="test",
-    )
+    defaults = {
+        "author": ["Doe, J"],
+        "title": "test",
+        "year": 2024,
+        "url": "https://example.com",
+        "version": "1.0",
+        "license": "MIT",
+        "doi": "10.0/test",
+        "publisher": "test",
+    }
     defaults.update(kwargs)
     return Software(**defaults)
 
@@ -663,7 +676,7 @@ def test_single_app_with_citation():
             return val
 
     app = cited_app()
-    assert app._cite is cite
+    assert app._cite is cite  # noqa: SLF001
     assert app.citations == (cite,)
 
 
@@ -674,7 +687,7 @@ def test_single_app_without_citation():
             return val
 
     app = uncited_app()
-    assert app._cite is None
+    assert app._cite is None  # noqa: SLF001
     assert app.citations == ()
 
 

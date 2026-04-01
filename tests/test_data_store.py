@@ -83,11 +83,11 @@ def log_data(DATA_DIR):
 @pytest.fixture
 def full_dstore(write_dir, nc_objects, completed_objects, log_data):
     dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
-    for id, data in nc_objects.items():
-        dstore.write_not_completed(unique_id=id, data=data.to_json())
+    for id_, data in nc_objects.items():
+        dstore.write_not_completed(unique_id=id_, data=data.to_json())
 
-    for id, data in completed_objects.items():
-        dstore.write(unique_id=id, data=data)
+    for id_, data in completed_objects.items():
+        dstore.write(unique_id=id_, data=data)
 
     dstore.write_log(unique_id="scitrack.log", data=log_data)
     return dstore
@@ -210,10 +210,10 @@ def test_convert_directory_datastore(fasta_dir, tmp_dir):
 
 
 def test_fail_try_append(full_dstore, completed_objects):
-    full_dstore._mode = APPEND
-    id, data = next(iter(completed_objects.items()))
+    full_dstore._mode = APPEND  # noqa: SLF001
+    id_, data = next(iter(completed_objects.items()))
     with pytest.raises(IOError):
-        full_dstore.write(unique_id=id, data=data)
+        full_dstore.write(unique_id=id_, data=data)
 
 
 def test_contains(ro_dstore):
@@ -252,14 +252,14 @@ def test_read(ro_dstore):
 
 def test_pickleable_roundtrip(ro_dstore):
     """pickling of data stores should be reversible"""
-    re_dstore = loads(dumps(ro_dstore))
+    re_dstore = loads(dumps(ro_dstore))  # noqa: S301
     assert str(ro_dstore) == str(re_dstore)
     assert ro_dstore[0].read() == re_dstore[0].read()
 
 
 def test_pickleable_member_roundtrip(ro_dstore):
     """pickling of data store members should be reversible"""
-    re_member = loads(dumps(ro_dstore[0]))
+    re_member = loads(dumps(ro_dstore[0]))  # noqa: S301
     data = re_member.read()
     assert len(data) > 0
 
@@ -356,17 +356,17 @@ def test_no_not_completed_subdir(nc_dstore):
 
 def test_limit_datastore(nc_dstore):
     assert len(nc_dstore) == len(nc_dstore.completed) + len(nc_dstore.not_completed)
-    nc_dstore._limit = len(nc_dstore.completed) // 2
-    nc_dstore._completed = []
-    nc_dstore._not_completed = []
+    nc_dstore._limit = len(nc_dstore.completed) // 2  # noqa: SLF001
+    nc_dstore._completed = []  # noqa: SLF001
+    nc_dstore._not_completed = []  # noqa: SLF001
     assert len(nc_dstore.completed) == len(nc_dstore.not_completed) == nc_dstore.limit
     assert len(nc_dstore) == len(nc_dstore.completed) + len(nc_dstore.not_completed)
     nc_dstore.drop_not_completed()
     assert len(nc_dstore) == len(nc_dstore.completed)
     assert len(nc_dstore.not_completed) == 0
-    nc_dstore._limit = len(nc_dstore.completed) // 2
-    nc_dstore._completed = []
-    nc_dstore._not_completed = []
+    nc_dstore._limit = len(nc_dstore.completed) // 2  # noqa: SLF001
+    nc_dstore._completed = []  # noqa: SLF001
+    nc_dstore._not_completed = []  # noqa: SLF001
     assert len(nc_dstore) == len(nc_dstore.completed) == nc_dstore.limit
     assert len(nc_dstore.not_completed) == 0
 
@@ -385,7 +385,7 @@ def test_md5_none(fasta_dir):
 
 
 def test_md5_missing(nc_dstore):
-    nc_dstore.md5("unknown") is None
+    assert nc_dstore.md5("unknown") is None
 
 
 def test_write_if_member_exists(full_dstore, write_dir):
@@ -397,7 +397,7 @@ def test_write_if_member_exists(full_dstore, write_dir):
     assert len_dstore == len(full_dstore)
     got = full_dstore.read(identifier)
     assert got == expect
-    full_dstore._mode = OVERWRITE
+    full_dstore._mode = OVERWRITE  # noqa: SLF001
     full_dstore.write(unique_id=identifier, data=expect)
     assert len_dstore == len(full_dstore)
     got = full_dstore.read(identifier)
@@ -455,8 +455,8 @@ def test_load_record_from_json():
     data2["data"] = json.dumps(data)
     for d in (data, json.dumps(data), data2):
         expected = "blah" if d != data2 else json.loads(data2["data"])
-        Id, data_, compl = load_record_from_json(d)
-        assert Id == "some.json"
+        id_, data_, compl = load_record_from_json(d)
+        assert id_ == "some.json"
         assert data_ == expected
         assert compl is True
 
@@ -532,7 +532,7 @@ def test_write_citations_directory(write_dir, sample_citations):
     dstore.write_citations(data=sample_citations)
     path = write_dir / _CITATIONS_FILE
     assert path.exists()
-    loaded = dstore._load_citations()
+    loaded = dstore._load_citations()  # noqa: SLF001
     assert len(loaded) == 2
     assert loaded[0].title == "Tool One"
     assert loaded[1].title == "Tool Two"
@@ -566,7 +566,7 @@ def test_write_bib_no_citations(write_dir):
 
 def test_load_citations_no_file(write_dir):
     dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
-    assert dstore._load_citations() == []
+    assert dstore._load_citations() == []  # noqa: SLF001
 
 
 def test_load_citations_zipped(write_dir, sample_citations):
@@ -580,7 +580,7 @@ def test_load_citations_zipped(write_dir, sample_citations):
         root_dir=source.parent,
     )
     zipped = ReadOnlyDataStoreZipped(pathlib.Path(path), suffix="fasta")
-    loaded = zipped._load_citations()
+    loaded = zipped._load_citations()  # noqa: SLF001
     assert len(loaded) == 2
     assert loaded[0].title == "Tool One"
 
@@ -591,7 +591,7 @@ def test_citations_file_not_in_completed(write_dir, sample_citations):
     dstore.write(unique_id="sample.fasta", data=">s1\nACGT\n")
     dstore.write_citations(data=sample_citations)
     assert (write_dir / _CITATIONS_FILE).exists()
-    dstore._completed = []
+    dstore._completed = []  # noqa: SLF001
     member_ids = {m.unique_id for m in dstore.completed}
     assert _CITATIONS_FILE not in member_ids
     assert "sample.fasta" in member_ids

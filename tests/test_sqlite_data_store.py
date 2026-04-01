@@ -56,7 +56,7 @@ def test_db_init_log(tmp_dir):
     path = tmp_dir / "test_log.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     dstore.write(unique_id="test_record", data="test data")
-    assert dstore._log_id is not None
+    assert dstore._log_id is not None  # noqa: SLF001
     dstore.close()
 
 
@@ -300,9 +300,9 @@ def test_md5_missing(tmp_dir):
 
 
 def test_open_data_store_sqlitedb_err():
-    with pytest.raises(NotImplementedError):
-        from scinexus.io import open_data_store
+    from scinexus.io import open_data_store
 
+    with pytest.raises(NotImplementedError):
         open_data_store(":memory:", mode="r")
 
 
@@ -312,7 +312,7 @@ def test_pickleable_roundtrip(tmp_dir):
     dstore.write(unique_id="r1", data="d1")
     dstore.close()
     dstore2 = DataStoreSqlite(path, mode=READONLY)
-    re_dstore = loads(dumps(dstore2))
+    re_dstore = loads(dumps(dstore2))  # noqa: S301
     assert re_dstore.read("r1") == "d1"
     re_dstore.close()
     dstore2.close()
@@ -325,7 +325,7 @@ def test_pickleable_member_roundtrip(tmp_dir):
     dstore.close()
     dstore2 = DataStoreSqlite(path, mode=READONLY)
     member = dstore2[0]
-    re_member = loads(dumps(member))
+    re_member = loads(dumps(member))  # noqa: S301
     assert re_member.read() == "d1"
     re_member.data_store.close()
     dstore2.close()
@@ -380,7 +380,7 @@ def test_write_citations_sqlite(tmp_dir, sample_citations):
     path = tmp_dir / "test_cite.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     dstore.write_citations(data=sample_citations)
-    loaded = dstore._load_citations()
+    loaded = dstore._load_citations()  # noqa: SLF001
     assert len(loaded) == 2
     assert loaded[0].title == "Tool One"
     dstore.close()
@@ -390,7 +390,7 @@ def test_write_citations_empty_sqlite(tmp_dir):
     path = tmp_dir / "test_cite_empty.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     dstore.write_citations(data=())
-    loaded = dstore._load_citations()
+    loaded = dstore._load_citations()  # noqa: SLF001
     assert len(loaded) == 0
     dstore.close()
 
