@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 import functools
 import inspect
-from collections.abc import Callable, Sequence
-from typing import Any, Literal, ParamSpec, TypeVar, cast
+from typing import TYPE_CHECKING, ParamSpec, TypeVar, cast
 from warnings import catch_warnings, simplefilter
 from warnings import warn as _warn
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+    from typing import Any, Literal
 
 
 def deprecated(

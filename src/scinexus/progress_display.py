@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import functools
 import io
 import sys
 import threading
 import time
-from collections.abc import Callable, Collection, Generator, Iterable, Sized
-from collections.abc import Sequence as PySeq
-from typing import TYPE_CHECKING, Any, ParamSpec, Self, TypeVar
+from collections.abc import Sized
+from typing import TYPE_CHECKING, ParamSpec, TypeVar
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
+    from collections.abc import Callable, Collection, Generator, Iterable
+    from collections.abc import Sequence as PySeq
+    from typing import Any, Self
+
     from tqdm import notebook, tqdm  # type: ignore[import-untyped]
 
 
@@ -60,7 +65,6 @@ class ProgressContext:
         message: str | None = None,
         mininterval: float = 1.0,
     ) -> None:
-        from tqdm import notebook, tqdm
 
         self.progress_bar_type = progress_bar_type
         self.progress_bar: tqdm[Any] | notebook.tqdm[Any] | LogFileOutput | None = None

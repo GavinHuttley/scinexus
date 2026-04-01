@@ -1,14 +1,20 @@
+from __future__ import annotations
+
 import concurrent.futures as concurrentfutures
 import multiprocessing
 import os
 import sys
 import warnings
-from collections.abc import Callable, Generator, Iterable, Sized
-from typing import Any, Generic, Literal, ParamSpec, TypeVar, cast
+from collections.abc import Sized
+from typing import TYPE_CHECKING, Generic, ParamSpec, TypeVar, cast
 
 import loky  # type: ignore[import-untyped]
 
 from scinexus.misc import extend_docstring_from
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Generator, Iterable
+    from typing import Any, Literal
 
 MPI: Any
 if os.environ.get("DONT_USE_MPI", 0):
