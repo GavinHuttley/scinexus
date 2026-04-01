@@ -4,6 +4,7 @@ import time
 import numpy
 
 from scinexus import parallel
+from scinexus.parallel import as_completed
 
 
 def get_process_value(n):
@@ -44,6 +45,14 @@ def test_random_seeding():
     assert result1 != result2
 
 
+def test_get_rank():
+    """get_rank() should return 0 on master, > 0 on workers"""
+    assert parallel.get_rank() == 0
+    index = list(range(1, 5))
+    ranks = list(parallel.imap(lambda _: parallel.get_rank(), index, use_mpi=False))
+    assert all(r > 0 for r in ranks)
+
+
 def test_is_master_process():
     """
     is_master_process() should return False
@@ -57,3 +66,14 @@ def test_is_master_process():
         for result in parallel.imap(check_is_master_process, index, use_mpi=False)
     )
     assert master_processes == 0
+
+
+def _double(x):
+    return x * 2
+
+
+def test_as_completed():
+    """as_completed should return all results"""
+    data = list(range(10))
+    result = sorted(as_completed(_double, data, use_mpi=False))
+    assert result == sorted(x * 2 for x in data)

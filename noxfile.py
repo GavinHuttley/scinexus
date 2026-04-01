@@ -1,5 +1,6 @@
 import os
 import pathlib
+import shutil
 import sys
 
 import nox
@@ -82,6 +83,9 @@ def testmpi(session):
 @nox.session(python=[f"3.{v}" for v in _py_versions])
 def testcov(session):
     session.install("-e", ".", "--group", "test")
+    cover_mpi = shutil.which("mpiexec") is not None
+    if cover_mpi:
+        session.install("-e", ".[mpi]")
 
     cov_file = str(pathlib.Path.cwd() / ".coverage")
     session.env["COVERAGE_FILE"] = cov_file
@@ -106,12 +110,41 @@ def testcov(session):
         "-s",
         "-x",
         "-m",
-        "not slow and not mpi",
+        "not mpi",
     )
+
+    # MPI tests when mpiexec is available
+    if cover_mpi:
+        py = pathlib.Path(session.bin_paths[0]) / "python"
+        session.run(
+            "mpiexec",
+            "-n",
+            "4",
+            str(py),
+            "-m",
+            "mpi4py.futures",
+            "-m",
+            *base,
+            "--append",
+            "-m",
+            "pytest",
+            "-s",
+            "-x",
+            "-m",
+            "mpi",
+            external=True,
+        )
 
     session.chdir("..")
     session.run("coverage", "report")
-    for i in range(0, len(session.posargs), 2):
+    i = 0
+    while i < len(session.posargs):
         fmt = session.posargs[i]
+        if fmt == "html":
+            session.run("coverage", fmt, external=True)
+            i += 1
+            continue
+
         o_name = session.posargs[i + 1]
         session.run("coverage", fmt, o_name, external=True)
+        i += 2
