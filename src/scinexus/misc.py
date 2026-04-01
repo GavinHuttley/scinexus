@@ -2,7 +2,10 @@
 
 import inspect
 import re
-from typing import ParamSpec, TypeVar
+from typing import TYPE_CHECKING, ParamSpec, TypeVar
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _wout_period = re.compile(r"^\.")
 
@@ -79,7 +82,7 @@ def in_jupyter() -> bool:
     try:
         # primitive approach, just check whether the following function
         # is in the namespace
-        get_ipython  # noqa: B018
+        get_ipython  # type: ignore[name-defined]  # noqa: B018
     except NameError:
         val = False
 
