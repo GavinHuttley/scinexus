@@ -23,7 +23,7 @@ PathType = str | PathLike[Any] | PurePath | Path
 
 
 @functools.singledispatch
-def is_url(path: str | bytes | Path | PathLike) -> bool:
+def is_url(path: str | bytes | Path | PathLike | ParseResult) -> bool:
     """whether a path is a url"""
     return False
 
@@ -46,7 +46,7 @@ def _(path: ParseResult) -> bool:
 def _get_compression_open(
     path: PathType | None = None,
     compression: str | None = None,
-) -> Callable | None:
+) -> Callable[..., Any] | None:
     """returns function for opening compression formats
 
     Parameters
@@ -64,8 +64,9 @@ def _get_compression_open(
         msg = "either path or compression argument must be provided"
         raise ValueError(msg)
     if compression is None:
+        assert path is not None
         _, compression = get_format_suffixes(path)
-    return _compression_handlers.get(compression)
+    return None if compression is None else _compression_handlers.get(compression)
 
 
 def open_zip(filename: PathType, mode: str = "r", **kwargs) -> IO:
@@ -87,7 +88,7 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs) -> IO:
 
     encoding = kwargs.pop("encoding") if "encoding" in kwargs else "latin-1"
     if mode.startswith("w"):
-        return atomic_write(filename, mode=mode, in_zip=True)
+        return atomic_write(filename, mode=mode, in_zip=True)  # type: ignore[return-value]
 
     mode = mode.strip("t")
     with ZipFile(filename) as zf:
@@ -100,7 +101,7 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs) -> IO:
         return opened if binary_mode else TextIOWrapper(opened, encoding=encoding)
 
 
-_compression_handlers = {
+_compression_handlers: dict[str, Callable[..., Any]] = {
     "gz": gzip_open,
     "bz2": bzip_open,
     "zip": open_zip,
@@ -130,7 +131,7 @@ def open_(filename: PathType, mode: str = "rt", **kwargs: Any) -> IO[Any]:
         raise ValueError(msg)
 
     if is_url(filename):
-        return open_url(filename, mode=mode, **kwargs)
+        return open_url(filename, mode=mode, **kwargs)  # type: ignore[arg-type]
 
     mode = mode or "rt"
     filename = Path(filename).expanduser()
@@ -167,8 +168,8 @@ def open_url(url: str | ParseResult, mode="rt", **kwargs) -> IO:
     file object which reads binary if "b" in mode, else text.
     """
     _, compression = get_format_suffixes(
-        getattr(url, "path", url),
-    )  # handling possibility of ParseResult
+        url.path if isinstance(url, ParseResult) else url,
+    )
     mode = mode or "r"
 
     if "r" not in mode:
@@ -184,7 +185,9 @@ def open_url(url: str | ParseResult, mode="rt", **kwargs) -> IO:
     response = urlopen(url_parsed.geturl(), timeout=10)
     encoding = response.headers.get_content_charset()
     if compression:
-        response = _get_compression_open(compression=compression)(response)
+        opener = _get_compression_open(compression=compression)
+        if opener is not None:
+            response = opener(response)
 
     return response if "b" in mode else TextIOWrapper(response, encoding=encoding)
 
@@ -408,7 +411,7 @@ def iter_splitlines(
     with open_(path) as infile:
         last = ""
         while True:
-            data = infile.read(chunk_size)
+            data = infile.read() if chunk_size is None else infile.read(chunk_size)
             if not data:  # end of file
                 break
 
