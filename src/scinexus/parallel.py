@@ -6,7 +6,7 @@ import warnings
 from collections.abc import Callable, Generator, Iterable, Sized
 from typing import Any, Generic, Literal, ParamSpec, TypeVar, cast
 
-import loky
+import loky  # type: ignore[import-untyped]
 
 from scinexus.misc import extend_docstring_from
 
@@ -15,7 +15,7 @@ if os.environ.get("DONT_USE_MPI", 0):
     MPI = None
 else:
     try:
-        from mpi4py import MPI  # type: ignore[no-redef]
+        from mpi4py import MPI  # type: ignore[import-not-found,no-redef]
         from mpi4py import futures as MPIfutures
     except ImportError:
         MPI = None
