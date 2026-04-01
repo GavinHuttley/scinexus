@@ -38,7 +38,9 @@ jobs:
       - name: "Run nox for ${{ matrix.python-version }}"
         shell: bash
         run: |
-          cov="lcov -o snx-${{matrix.os}}-${{matrix.python-version}}.lcov"
+          lname="snx-${{matrix.os}}-${{matrix.python-version}}.lcov"
+          xname="snx-${{matrix.os}}-${{matrix.python-version}}.xml"
+          cov="lcov -o$lname xml -o$xname"
           uv run --group test nox --force-python python -s testcov -- $cov
 
       - name: Coveralls Parallel

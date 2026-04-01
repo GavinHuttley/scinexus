@@ -255,14 +255,14 @@ def test_read(ro_dstore):
 
 def test_pickleable_roundtrip(ro_dstore):
     """pickling of data stores should be reversible"""
-    re_dstore = loads(dumps(ro_dstore))  # noqa: S301
+    re_dstore = loads(dumps(ro_dstore))
     assert str(ro_dstore) == str(re_dstore)
     assert ro_dstore[0].read() == re_dstore[0].read()
 
 
 def test_pickleable_member_roundtrip(ro_dstore):
     """pickling of data store members should be reversible"""
-    re_member = loads(dumps(ro_dstore[0]))  # noqa: S301
+    re_member = loads(dumps(ro_dstore[0]))
     data = re_member.read()
     assert len(data) > 0
 
