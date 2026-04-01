@@ -89,7 +89,7 @@ def testcov(session):
 
     base = ["coverage", "run", "--source=scinexus"]
 
-    # mypy via API wrapper (so coverage traces plugin hook execution)
+    # mypy via API wrapper so coverage traces plugin hook execution
     session.run(*base, "scripts/run_mypy_cov.py", "--no-incremental", "src/scinexus/")
 
     # doctests
@@ -111,5 +111,4 @@ def testcov(session):
 
     session.chdir("..")
     session.run("coverage", "report")
-    for fmt in session.posargs:
-        session.run("coverage", fmt)
+    session.run("coverage", *session.posargs)
