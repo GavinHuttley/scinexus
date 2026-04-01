@@ -15,7 +15,7 @@ from typing import Generic, TypeVar
 from uuid import uuid4
 
 from citeable import Citation
-from scitrack import CachingLogger
+from scitrack import CachingLogger  # type: ignore[import-untyped]
 from typeguard import TypeCheckError, check_type
 
 from scinexus import parallel as PAR
@@ -61,6 +61,11 @@ def _get_origin(origin):
 
 class NotCompleted(int):
     """results that failed to complete"""
+
+    type: str
+    origin: str
+    message: str
+    source: str | None
 
     def __new__(cls, type, origin, message, source=None):
         """
@@ -231,16 +236,16 @@ class source_proxy:
         """origin of this object"""
         return self._src
 
-    @property
-    def uuid(self) -> str:
-        """unique identifier for this object"""
-        return str(self._uuid)
-
     @source.setter
     def source(self, src: typing.Any) -> None:
         # need to check whether src is hashable, how to cope if it isn't?
         # might need to make this instance hashable perhaps using a uuid?
         self._src = src
+
+    @property
+    def uuid(self) -> str:
+        """unique identifier for this object"""
+        return str(self._uuid)
 
     def __getattr__(self, name: str) -> typing.Any:
         return getattr(self._obj, name)
@@ -344,6 +349,15 @@ class AppBase(Generic[T, R]):
     """Base for all app types. Provides __call__, __repr__, etc."""
 
     _is_intermediate_base: bool = False
+    _skip_not_completed: bool
+    _source_wrapped: propagate_source | None
+    _cite: Citation | None
+    _input_type: type
+    _return_type: type
+    _init_vals: dict
+    app_type: AppType
+    input: typing.Any
+    main: typing.Callable
 
     def __init_subclass__(
         cls,
@@ -381,7 +395,9 @@ class AppBase(Generic[T, R]):
 
     def __call__(self, val: T, *args, **kwargs) -> R | NotCompleted:
         if val is None:
-            val = NotCompleted("ERROR", self, "unexpected input value None", source=val)
+            return NotCompleted(
+                "ERROR", self, "unexpected input value None", source=val
+            )
 
         if isinstance(val, NotCompleted) and self._skip_not_completed:
             return val
@@ -501,11 +517,11 @@ class AppBase(Generic[T, R]):
             dstore = dstore.completed
         mapped = _proxy_input(dstore)
         if not mapped:
-            return mapped
+            return (_ for _ in ())
 
         if parallel:
             par_kw = par_kw or {}
-            to_do = PAR.as_completed(app, mapped, **par_kw)
+            to_do: typing.Iterable = PAR.as_completed(app, mapped, **par_kw)
         else:
             to_do = map(app, mapped)
 
@@ -597,6 +613,8 @@ class WriterApp(ComposableApp[T, R]):
     """Adds apply_to and set_logger for WRITER."""
 
     _is_intermediate_base: bool = True
+    data_store: DataStoreABC
+    logger: CachingLogger | None
 
     def apply_to(
         self,
@@ -647,6 +665,7 @@ class WriterApp(ComposableApp[T, R]):
         If run in parallel, this instance spawns workers and aggregates results.
         """
         if self.app_type is WRITER:
+            assert self.input is not None
             self.input._source_wrapped = propagate_source(self.input, id_from_source)
             self._source_wrapped = propagate_source(self, id_from_source)
 
@@ -663,7 +682,7 @@ class WriterApp(ComposableApp[T, R]):
         inputs = {}
         for m in dstore:
             input_id = Path(m.unique_id) if isinstance(m, DataMember) else m
-            input_id = id_from_source(input_id)
+            input_id = id_from_source(input_id)  # type: ignore[arg-type]
             if input_id in inputs or not input_id:
                 msg = f"non-unique identifier {input_id!r} detected in data"
                 raise ValueError(msg)
@@ -686,24 +705,26 @@ class WriterApp(ComposableApp[T, R]):
             logger.log_message(str(self), label="composable function")
             logger.log_versions(["scinexus"])
 
-        inputs = _proxy_input(inputs.values())
+        proxied = _proxy_input(inputs.values())
         for result in self.as_completed(
-            inputs,
+            proxied,
             parallel=parallel,
             par_kw=par_kw,
             show_progress=show_progress,
         ):
             member = self.main(
                 data=getattr(result, "obj", result),
-                identifier=id_from_source(result),
+                identifier=id_from_source(result),  # type: ignore[arg-type]
             )
             if self.logger:
                 md5 = getattr(member, "md5", None)
+                assert logger is not None
                 logger.log_message(str(member), label="output")
                 if md5:
                     logger.log_message(md5, label="output md5sum")
 
         if self.logger:
+            assert logger is not None
             taken = time.time() - start
             logger.log_message(f"{taken}", label="TIME TAKEN")
             log_file_path = Path(logger.log_file_path)
@@ -730,7 +751,7 @@ class WriterApp(ComposableApp[T, R]):
             msg = f"logger must be of type CachingLogger not {type(logger)}"
             raise TypeError(msg)
         if not logger.log_file_path:
-            src = Path(self.data_store.source).parent
+            src = Path(self.data_store.source).parent  # type: ignore[attr-defined]
             logger.log_file_path = str(src / _make_logfile_name(self))
         self.logger = logger
 
@@ -980,7 +1001,7 @@ def define_app(
 
         return new_klass
 
-    return wrapped(klass) if klass else wrapped
+    return wrapped(klass) if klass else wrapped  # type: ignore[return-value]
 
 
 def is_app_composable(obj) -> bool:
