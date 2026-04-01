@@ -1,0 +1,39 @@
+[project]
+name = "scinexus"
+dynamic = ["version"]
+description = "A composable app infrastructure for scientific computing"
+requires-python = ">=3.11"
+license = "BSD-3-Clause"
+readme = "README.md"
+readme_renderer = "markdown"
+dependencies = [
+    "charset_normalizer",
+    "citeable",
+    "loky!=3.5.0",
+    "scitrack",
+    "tqdm",
+    "typeguard>=4.0,<5",
+]
+
+[project.optional-dependencies]
+mpi = ["mpi4py"]
+
+[dependency-groups]
+test = ["pytest", "pytest-cov", "pytest-xdist", "mypy", "nox", "numpy", "ruff"]
+
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[tool.flit.module]
+name = "scinexus"
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "mpi: marks tests requiring MPI (run with nox -s testmpi)",
+]
+testpaths = ["tests"]
+
+[tool.mypy]
+plugins = ["scinexus._mypy_plugin"]

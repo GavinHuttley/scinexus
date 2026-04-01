@@ -1,0 +1,929 @@
+from __future__ import annotations
+
+import contextlib
+import inspect
+import json
+import pathlib
+import re
+import reprlib
+import zipfile
+from abc import ABC, abstractmethod
+from collections import defaultdict
+from enum import Enum
+from functools import singledispatch
+from io import TextIOWrapper
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from scitrack import get_text_hexdigest  # type: ignore[import-untyped]
+
+from scinexus.deserialise import deserialise_object
+from scinexus.io_util import get_format_suffixes, open_
+from scinexus.parallel import is_master_process
+
+if TYPE_CHECKING:  # pragma: no cover
+    from collections.abc import Callable, Iterator
+    from typing import Any
+
+    from citeable import CitationBase
+
+_NOT_COMPLETED_TABLE = "not_completed"
+_LOG_TABLE = "logs"
+_MD5_TABLE = "md5"
+
+# used for log files, not-completed results
+_special_suffixes = re.compile(r"\.(log|json)$")
+
+_CITATIONS_FILE = "bibliography.citations"
+
+NoneType = type(None)
+
+
+class Mode(Enum):
+    r = "r"
+    w = "w"
+    a = "a"
+
+
+APPEND = Mode.a
+OVERWRITE = Mode.w
+READONLY = Mode.r
+
+# Summary display registry
+_summary_display_func: Callable[..., Any] | None = None
+
+
+def set_summary_display(func: Callable[..., Any] | None) -> None:
+    """Set the function used to display data store summaries.
+
+    Parameters
+    ----------
+    func
+        A callable with signature ``func(data, *, name) -> Any`` where
+        *data* is a ``dict`` or ``list[dict]`` and *name* identifies the
+        summary method (e.g. ``"describe"``). Pass ``None`` to clear.
+    """
+    global _summary_display_func  # noqa: PLW0603
+    _summary_display_func = func
+
+
+def get_summary_display() -> Callable[..., Any] | None:
+    """Return the currently registered summary display function, or ``None``."""
+    return _summary_display_func
+
+
+def _apply_summary_display(data: Any, *, name: str) -> Any:
+    if _summary_display_func is not None:
+        return _summary_display_func(data, name=name)
+    return data
+
+
+def _summary_property(data_method: Callable[..., Any]) -> property:
+    """Create a property that delegates to a protected data method and applies display.
+
+    The *data_method* should be a method defined on ``DataStoreABC`` (or a
+    subclass) whose name starts with ``_``.  Subclasses customise the raw
+    data by overriding the ``_``-prefixed method; the public property
+    created here handles display wrapping automatically.
+    """
+    method_name = data_method.__name__
+    public_name = method_name.removeprefix("_")
+
+    def fget(self: DataStoreABC) -> Any:
+        data = getattr(self, method_name)()
+        return _apply_summary_display(data, name=public_name)
+
+    return property(fget, doc=data_method.__doc__)
+
+
+class DataMemberABC(ABC):
+    """Abstract base class for DataMember
+
+    A data member is a handle to a record in a DataStore. It has a reference
+    to its data store and a unique identifier.
+    """
+
+    @property
+    @abstractmethod
+    def data_store(self) -> DataStoreABC: ...
+
+    @property
+    @abstractmethod
+    def unique_id(self): ...
+
+    def __str__(self) -> str:
+        return self.unique_id
+
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(data_store={self.data_store.source}, unique_id={self.unique_id})"
+
+    def read(self) -> str | bytes:
+        return self.data_store.read(self.unique_id)
+
+    def __eq__(self, other):
+        """to check equality of members and check existence of a
+        member in a list of members"""
+        return isinstance(other, type(self)) and (self.data_store, self.unique_id) == (
+            other.data_store,
+            other.unique_id,
+        )
+
+    @property
+    def md5(self):
+        return self.data_store.md5(self.unique_id)
+
+
+class DataStoreABC(ABC):
+    """Abstract base class for DataStore"""
+
+    _init_vals: dict
+    _completed: list[DataMemberABC]
+    _not_completed: list[DataMemberABC]
+
+    def __new__(cls, *args, **kwargs):
+        obj = object.__new__(cls)
+
+        init_sig = inspect.signature(cls.__init__)
+        bargs = init_sig.bind_partial(cls, *args, **kwargs)
+        bargs.apply_defaults()
+        init_vals = bargs.arguments
+        init_vals.pop("self", None)
+
+        obj._init_vals = init_vals
+        obj._completed = []
+        obj._not_completed = []
+        return obj
+
+    @property
+    @abstractmethod
+    def source(self) -> str | Path:
+        """string that references connecting to data store, override in subclass constructor"""
+        ...
+
+    @property
+    @abstractmethod
+    def mode(self) -> Mode:
+        """string that references datastore mode, override in subclass constructor"""
+        ...
+
+    @property
+    @abstractmethod
+    def limit(self) -> int | None: ...
+
+    def __repr__(self) -> str:
+        name = self.__class__.__name__
+        construction = ", ".join(f"{k}={v}" for k, v in self._init_vals.items())
+        return f"{name}({construction})"
+
+    def __str__(self) -> str:
+        num = len(self.members)
+        name = self.__class__.__name__
+        sample = f"{list(self[:2])}..." if num > 2 else list(self)
+        return f"{num}x member {name}(source='{self.source}', members={sample})"
+
+    def __getitem__(self, index):
+        return self.members[index]
+
+    def __len__(self) -> int:
+        return len(self.members)
+
+    def __contains__(self, identifier) -> bool:
+        """whether relative identifier has been stored"""
+        return any(m.unique_id == identifier for m in self)
+
+    @abstractmethod
+    def read(self, unique_id: str) -> str | bytes: ...
+
+    def _check_writable(self, unique_id: str) -> None:
+        if self.mode is READONLY:
+            msg = "datastore is readonly"
+            raise OSError(msg)
+        if unique_id in self and self.mode is APPEND:
+            msg = "cannot overwrite existing record in append mode"
+            raise OSError(msg)
+
+    @abstractmethod
+    def write(self, *, unique_id: str, data: str | bytes) -> None:
+        self._check_writable(unique_id)
+
+    @abstractmethod
+    def write_not_completed(self, *, unique_id: str, data: str | bytes) -> None:
+        self._check_writable(unique_id)
+
+    @abstractmethod
+    def write_log(self, *, unique_id: str, data: str | bytes) -> None:
+        self._check_writable(unique_id)
+
+    @property
+    def members(self) -> list[DataMemberABC]:
+        return self.completed + self.not_completed
+
+    def __iter__(self):
+        yield from self.members
+
+    @property
+    @abstractmethod
+    def logs(self) -> list[DataMemberABC]: ...
+
+    @property
+    @abstractmethod
+    def completed(self) -> list[DataMemberABC]: ...
+
+    @property
+    @abstractmethod
+    def not_completed(self) -> list[DataMemberABC]: ...
+
+    def _summary_logs(self) -> list[dict]:
+        """returns a list of dicts summarising log files"""
+        rows = []
+        for record in self.logs:
+            lines = str(record.read()).splitlines()
+            first = lines.pop(0).split("\t")
+            row = {"time": first[0], "name": record.unique_id}
+            key: str | None = None
+            mapped: dict[str, str] = {}
+            for line in lines:
+                parts = line.split("\t")[-1].split(" : ", maxsplit=1)
+                if len(parts) == 1:
+                    if key is None:
+                        msg = "malformed log data: continuation line before any key"
+                        raise ValueError(msg)
+                    mapped[key] += parts[0]
+                    continue
+
+                key = parts[0]
+                mapped[key] = parts[1]
+
+            row["python_version"] = mapped["python"]
+            row["who"] = mapped["user"]
+            row["command"] = mapped["command_string"]
+            row["composable"] = mapped.get("composable function", "")
+            rows.append(row)
+        return rows
+
+    summary_logs = _summary_property(_summary_logs)
+
+    def _summary_not_completed(self) -> list[dict]:
+        """returns a list of dicts summarising not completed results"""
+        return summary_not_completeds(self.not_completed)
+
+    summary_not_completed = _summary_property(_summary_not_completed)
+
+    def _describe(self) -> dict:
+        num_not_completed = len(self.not_completed)
+        num_completed = len(self.completed)
+        num_logs = len(self.logs)
+        return {
+            "completed": num_completed,
+            "not_completed": num_not_completed,
+            "logs": num_logs,
+        }
+
+    describe = _summary_property(_describe)
+
+    @abstractmethod
+    def drop_not_completed(self, *, unique_id: str | None = None) -> None: ...
+
+    def _validate(self) -> dict:
+        correct_md5 = len(self.members)
+        missing_md5 = 0
+        for m in self.members:
+            data = m.read()
+            md5 = self.md5(m.unique_id)
+            if md5 is None:
+                missing_md5 += 1
+                correct_md5 -= 1
+            elif md5 != get_text_hexdigest(data):
+                correct_md5 -= 1
+
+        incorrect_md5 = len(self.members) - correct_md5 - missing_md5
+
+        return {
+            "md5_correct": correct_md5,
+            "md5_incorrect": incorrect_md5,
+            "md5_missing": missing_md5,
+            "has_log": len(self.logs) > 0,
+        }
+
+    def validate(self) -> dict:
+        return _apply_summary_display(self._validate(), name="validate")
+
+    @abstractmethod
+    def md5(self, unique_id: str) -> str | NoneType:
+        """
+        Parameters
+        ----------
+        unique_id
+            name of data store member
+
+        Returns
+        -------
+        md5 checksum for the member, if available, None otherwise
+        """
+
+    def write_citations(self, *, data: tuple[CitationBase, ...]) -> None:
+        """Write citations to the data store. Subclasses should override."""
+        if not data:
+            return
+        import warnings
+
+        warnings.warn(
+            f"{type(self).__name__!r} does not support saving citations",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    def _summary_citations(self) -> list[dict]:
+        """Return a list of dicts summarising stored citations."""
+        if type(self)._load_citations is DataStoreABC._load_citations:
+            import warnings
+
+            warnings.warn(
+                f"{type(self).__name__!r} does not support saving citations",
+                UserWarning,
+                stacklevel=2,
+            )
+        citations = self._load_citations()
+        return [{"app": c.summary()[0], "citation": c.summary()[1]} for c in citations]
+
+    summary_citations = _summary_property(_summary_citations)
+
+    def write_bib(self, dest_path: str | Path) -> None:
+        """Write stored citations as a BibTeX .bib file."""
+        citations = self._load_citations()
+        if not citations:
+            import warnings
+
+            warnings.warn(
+                "No citations stored in this data store",
+                UserWarning,
+                stacklevel=2,
+            )
+            return
+        from citeable import write_bibtex
+
+        dest_path = Path(dest_path).expanduser().absolute()
+        write_bibtex(citations, dest_path)
+
+    def _load_citations(self) -> list[CitationBase]:
+        """Load stored citations. Override in subclasses."""
+        return []
+
+
+class DataMember(DataMemberABC):
+    """Generic DataMember class, bound to a data store. All read operations
+    delivered by the parent."""
+
+    def __init__(self, *, data_store: DataStoreABC, unique_id: str) -> None:
+        self._data_store = data_store
+        self._unique_id = str(unique_id)
+
+    @property
+    def data_store(self) -> DataStoreABC:
+        return self._data_store
+
+    @property
+    def unique_id(self):
+        return self._unique_id
+
+
+def summary_not_completeds(
+    not_completed: list[DataMemberABC],
+    deserialise: Callable[..., Any] | None = None,
+) -> list[dict]:
+    """
+    Parameters
+    ----------
+    not_completed
+        list of DataMember instances for notcompleted records
+    deserialise
+        a callable for converting not completed contents, the result of member.read() must be a json string
+    """
+    err_pat = re.compile(r"[A-Z][a-z]+[A-Z][a-z]+\:.+")
+    types = defaultdict(list)
+    indices = "type", "origin"
+    num_bytes = 0
+    for member in not_completed:
+        record = member.read()
+        if deserialise:
+            record = deserialise(record)
+        if isinstance(record, bytes):
+            num_bytes += 1
+            continue
+        record = deserialise_object(record)
+        key = tuple(getattr(record, k, None) for k in indices)
+        match = err_pat.findall(record.message)
+        types[key].append([match[-1] if match else record.message, record.source])
+
+    if num_bytes == len(not_completed):
+        return []
+
+    rows = []
+    maxtring = reprlib.aRepr.maxstring
+    reprlib.aRepr.maxstring = 45
+    limit_len = 45
+    for key in types:
+        msg_list, src_list = list(zip(*types[key], strict=False))
+        messages = reprlib.repr(", ".join(m.splitlines()[-1] for m in set(msg_list)))
+        sources = ", ".join(s.splitlines()[-1] for s in src_list if s)
+        if len(sources) > limit_len:
+            idx = sources.rfind(",", None, limit_len) + 1
+            idx = idx if idx > 0 else limit_len
+            sources = f"{sources[:idx]} ..."
+        row = {
+            "type": getattr(key[0], "value", key[0]),
+            "origin": key[1],
+            "message": messages,
+            "num": len(types[key]),
+            "source": sources,
+        }
+        rows.append(row)
+    reprlib.aRepr.maxstring = maxtring  # restoring original val
+    return rows
+
+
+def _tidy_and_check_suffix(suffix: str | None) -> str:
+    """tidies suffix by removing leading wildcards and dots"""
+    suffix = suffix or ""
+    suffix = re.sub(r"^[\s.*]+", "", suffix)  # tidy the suffix
+    if not suffix or suffix == "*":
+        msg = "suffix is required for DataStoreDirectory and cannot be just a wildcard"
+        raise ValueError(msg)
+
+    return suffix
+
+
+class DataStoreDirectory(DataStoreABC):
+    def __init__(
+        self,
+        source: str | Path,
+        mode: Mode | str = READONLY,
+        suffix: str | None = None,
+        limit: int | None = None,
+        verbose: bool = False,
+    ) -> None:
+        self._mode = Mode(mode)
+        source = Path(source)
+        self._source = source.expanduser()
+        self.suffix = _tidy_and_check_suffix(suffix)
+        self._verbose = verbose
+        self._source_check_create(self._mode)
+        self._limit = limit
+
+    def __contains__(self, item: str) -> bool:
+        if not _special_suffixes.search(item):
+            item = f"{item}.{self.suffix}" if self.suffix not in item else item
+        return super().__contains__(item)
+
+    def _source_check_create(self, mode: Mode) -> None:
+        if not is_master_process():
+            return
+
+        sub_dirs = [_NOT_COMPLETED_TABLE, _LOG_TABLE, _MD5_TABLE]
+        source = self.source
+        if mode is READONLY:
+            if not source.exists():
+                msg = f"'{source}' does not exist"
+                raise OSError(msg)
+            return
+
+        if not source.exists():
+            source.mkdir(parents=True, exist_ok=True)
+
+        for sub_dir in sub_dirs:
+            (source / sub_dir).mkdir(parents=True, exist_ok=True)
+
+    @property
+    def source(self) -> Path:
+        """path that references the data store"""
+        return self._source
+
+    @property
+    def mode(self) -> Mode:
+        """string that references datastore mode, override in subclass constructor"""
+        return self._mode
+
+    @property
+    def limit(self) -> int | None:
+        return self._limit
+
+    def read(self, unique_id: str) -> str:
+        """reads data corresponding to identifier"""
+        with open_(self.source / unique_id) as infile:
+            return infile.read()
+
+    def drop_not_completed(self, *, unique_id: str | None = None) -> None:
+        unique_id = (unique_id or "").replace(f".{self.suffix}", "")
+        unique_id = f"{unique_id}.json" if unique_id else unique_id
+        nc_dir = self.source / _NOT_COMPLETED_TABLE
+        md5_dir = self.source / _MD5_TABLE
+        for m in list(self.not_completed):
+            if unique_id and not m.unique_id.endswith(unique_id):
+                continue
+
+            file = nc_dir / Path(m.unique_id).name
+            file.unlink()
+            md5_file = md5_dir / f"{file.stem}.txt"
+            md5_file.unlink()
+            self.not_completed.remove(m)
+
+        if not unique_id:
+            Path(self.source / _NOT_COMPLETED_TABLE).rmdir()
+            # reset _not_completed list to force not_completed function to make it again
+            self._not_completed: list[DataMemberABC] = []
+
+    @property
+    def logs(self) -> list[DataMemberABC]:
+        log_dir = self.source / _LOG_TABLE
+        return (
+            [
+                DataMember(data_store=self, unique_id=str(Path(_LOG_TABLE) / m.name))
+                for m in log_dir.glob("*")
+            ]
+            if log_dir.exists()
+            else []
+        )
+
+    @property
+    def completed(self) -> list[DataMemberABC]:
+        if not self._completed:
+            self._completed = []
+            suffix = f"*.{self.suffix}"
+            for i, m in enumerate(self.source.glob(suffix)):
+                if self.limit and i == self.limit:
+                    break
+                self._completed.append(DataMember(data_store=self, unique_id=m.name))
+        return self._completed
+
+    @property
+    def not_completed(self) -> list[DataMemberABC]:
+        if not self._not_completed:
+            self._not_completed = []
+            for i, m in enumerate((self.source / _NOT_COMPLETED_TABLE).glob("*.json")):
+                if self.limit and i == self.limit:
+                    break
+                self._not_completed.append(
+                    DataMember(
+                        data_store=self,
+                        unique_id=str(Path(_NOT_COMPLETED_TABLE) / m.name),
+                    ),
+                )
+        return self._not_completed
+
+    def _write(
+        self,
+        *,
+        subdir: str,
+        unique_id: str,
+        suffix: str,
+        data: str,
+    ) -> DataMember | None:
+        super().write(unique_id=unique_id, data=data)
+        if not suffix:
+            msg = "suffix must be provided"
+            raise ValueError(msg)
+        # check suffix compatible with this datastore
+        sfx, cmp = get_format_suffixes(unique_id)
+        if sfx != suffix:
+            unique_id = f"{Path(unique_id).stem}.{suffix}"
+            sfx, cmp = get_format_suffixes(unique_id)
+
+        unique_id = (
+            unique_id.replace(self.suffix, suffix)
+            if self.suffix and self.suffix != suffix
+            else unique_id
+        )
+        if suffix != "log" and unique_id in self:
+            return None
+        newline = None if cmp else "\n"
+        mode = "wt" if cmp else "w"
+        with open_(self.source / subdir / unique_id, mode=mode, newline=newline) as out:
+            out.write(data)
+
+        if subdir == _LOG_TABLE:
+            return None
+        if subdir == _NOT_COMPLETED_TABLE:
+            member = DataMember(
+                data_store=self,
+                unique_id=str(Path(_NOT_COMPLETED_TABLE) / unique_id),
+            )
+        elif not subdir:
+            member = DataMember(data_store=self, unique_id=unique_id)
+
+        md5 = get_text_hexdigest(data)
+        unique_id = unique_id.replace(suffix, "txt")
+        unique_id = unique_id if cmp is None else unique_id.replace(f".{cmp}", "")
+        with open_(self.source / _MD5_TABLE / unique_id, mode="w") as out:
+            out.write(md5)
+
+        return member
+
+    def write(self, *, unique_id: str, data: str) -> DataMember:  # type: ignore[override]
+        """writes a completed record ending with .suffix
+
+        Parameters
+        ----------
+        unique_id
+            unique identifier
+        data
+            text data to be written
+
+        Returns
+        -------
+        a member for this record
+
+        Notes
+        -----
+        Drops any not-completed member corresponding to this identifier
+        """
+        member = self._write(
+            subdir="",
+            unique_id=unique_id,
+            suffix=self.suffix,
+            data=data,
+        )
+        self.drop_not_completed(unique_id=unique_id)
+        if member is not None:
+            self._completed.append(member)
+        return member  # type: ignore[return-value]
+
+    def write_not_completed(self, *, unique_id: str, data: str) -> DataMember:  # type: ignore[override]
+        """writes a not completed record as json
+
+        Parameters
+        ----------
+        unique_id
+            unique identifier
+        data
+            text data to be written
+
+        Returns
+        -------
+        a member for this record
+        """
+        (self.source / _NOT_COMPLETED_TABLE).mkdir(parents=True, exist_ok=True)
+        member = self._write(
+            subdir=_NOT_COMPLETED_TABLE,
+            unique_id=unique_id,
+            suffix="json",
+            data=data,
+        )
+        if member is not None:
+            self._not_completed.append(member)
+        return member  # type: ignore[return-value]
+
+    def write_log(self, *, unique_id: str, data: str) -> None:  # type: ignore[override]
+        (self.source / _LOG_TABLE).mkdir(parents=True, exist_ok=True)
+        _ = self._write(subdir=_LOG_TABLE, unique_id=unique_id, suffix="log", data=data)
+
+    def md5(self, unique_id: str) -> str | NoneType:
+        """
+        Parameters
+        ----------
+        unique_id
+            name of data store member
+
+        Returns
+        -------
+        md5 checksum for the member, if available, None otherwise
+        """
+        uid_name = Path(unique_id).name
+        md5_name = re.sub(rf"[.]({self.suffix}|json)$", ".txt", uid_name)
+        path = self.source / _MD5_TABLE / md5_name
+
+        return path.read_text() if path.exists() else None
+
+    def write_citations(self, *, data: tuple[CitationBase, ...]) -> None:
+        if not data:
+            return
+        from citeable import to_jsons
+
+        path = self.source / _CITATIONS_FILE
+        path.write_text(to_jsons(data))
+
+    def _load_citations(self) -> list[CitationBase]:
+        from citeable import from_jsons
+
+        path = self.source / _CITATIONS_FILE
+        if not path.exists():
+            return []
+        return from_jsons(path.read_text())
+
+
+class ReadOnlyDataStoreZipped(DataStoreABC):
+    def __init__(
+        self,
+        source: str | Path,
+        mode: Mode | str = READONLY,
+        suffix: str | None = None,
+        limit: int | None = None,
+        verbose=False,
+    ) -> None:
+        self._mode = Mode(mode)
+        if self._mode is not READONLY:
+            msg = "this is a read only data store"
+            raise ValueError(msg)
+
+        self.suffix = _tidy_and_check_suffix(suffix)
+        source = Path(source)
+        self._source = source.expanduser()
+        if not self._source.exists():
+            msg = f"{self._source!s} does not exit"
+            raise OSError(msg)
+
+        self._verbose = verbose
+        self._limit = limit
+
+    @property
+    def limit(self):
+        return self._limit
+
+    @property
+    def mode(self):
+        return self._mode
+
+    @property
+    def source(self) -> Path:
+        return self._source
+
+    def read(self, unique_id: str) -> str | bytes:
+        member_path = str(pathlib.Path(self.source.stem, unique_id)).replace("\\", "/")
+        with zipfile.ZipFile(self.source) as archive:
+            raw = archive.open(member_path)
+            wrapped = TextIOWrapper(raw, encoding="latin-1")
+            return wrapped.read()
+
+    def _iter_matches(self, subdir: str, pattern: str) -> Iterator[Path]:
+        with zipfile.ZipFile(self._source) as archive:
+            names = archive.namelist()
+            for name in names:
+                p = pathlib.Path(name)
+                if subdir and p.parent.name != subdir:
+                    continue
+                if p.match(pattern) and not p.name.startswith("."):
+                    yield p
+
+    @property
+    def completed(self) -> list[DataMemberABC]:
+        if not self._completed:
+            pattern = f"*.{self.suffix}"
+            self._completed = []
+            num_matches = 0
+            for name in self._iter_matches("", pattern):
+                num_matches += 1
+                member = DataMember(data_store=self, unique_id=name.name)
+                self._completed.append(member)
+
+                if self.limit and num_matches >= self.limit:
+                    break
+
+        return self._completed
+
+    @property
+    def not_completed(self):
+        if not self._not_completed:
+            self._not_completed = []
+            num_matches = 0
+            nc_dir_path = pathlib.Path(_NOT_COMPLETED_TABLE)
+            for name in self._iter_matches(_NOT_COMPLETED_TABLE, "*.json"):
+                num_matches += 1
+                member = DataMember(
+                    data_store=self,
+                    unique_id=str(nc_dir_path / name.name),
+                )
+                self._not_completed.append(member)
+                if self.limit and num_matches >= self.limit:
+                    break
+
+        return self._not_completed
+
+    @property
+    def logs(self) -> list[DataMemberABC]:
+        log_dir = pathlib.Path(_LOG_TABLE)
+        logs: list[DataMemberABC] = []
+        for name in self._iter_matches(_LOG_TABLE, "*"):
+            m = DataMember(data_store=self, unique_id=str(log_dir / name.name))
+            logs.append(m)
+        return logs
+
+    def md5(self, unique_id: str) -> str | None:
+        """
+        Parameters
+        ----------
+        unique_id
+            name of data store member
+
+        Returns
+        -------
+        md5 checksum for the member, if available, None otherwise
+        """
+        uid_name = Path(unique_id).name
+        md5_name = re.sub(rf"[.]({self.suffix}|json)$", ".txt", uid_name)
+        md5_dir = pathlib.Path(_MD5_TABLE)
+        for name in self._iter_matches(_MD5_TABLE, md5_name):
+            m = DataMember(data_store=self, unique_id=str(md5_dir / name.name))
+            result = m.read()
+            return result if isinstance(result, str) else result.decode()
+        return None
+
+    def drop_not_completed(self, *, unique_id: str | None = None) -> None:
+        msg = "zip data stores are read only"
+        raise TypeError(msg)
+
+    def write(self, *, unique_id: str, data: str | bytes) -> None:
+        msg = "zip data stores are read only"
+        raise TypeError(msg)
+
+    def write_not_completed(self, *, unique_id: str, data: str | bytes) -> None:
+        msg = "zip data stores are read only"
+        raise TypeError(msg)
+
+    def write_log(self, *, unique_id: str, data: str | bytes) -> None:
+        msg = "zip data stores are read only"
+        raise TypeError(msg)
+
+    def write_citations(self, *, data: tuple[CitationBase, ...]) -> None:
+        msg = "zip data stores are read only"
+        raise TypeError(msg)
+
+    def _load_citations(self) -> list[CitationBase]:
+        from citeable import from_jsons
+
+        target = str(pathlib.Path(self.source.stem, _CITATIONS_FILE)).replace("\\", "/")
+        try:
+            with zipfile.ZipFile(self.source) as archive:
+                data = archive.read(target).decode("utf-8")
+            return from_jsons(data)
+        except KeyError:
+            return []
+
+
+def get_unique_id(name: object) -> str | None:
+    """strips any format suffixes from name"""
+    if (name := get_data_source(name)) is None:
+        return None
+    suffixes = ".".join(sfx for sfx in get_format_suffixes(name) if sfx)
+    return re.sub(rf"[.]{suffixes}$", "", name)
+
+
+@singledispatch
+def get_data_source(data: object) -> str | None:
+    source = getattr(data, "source", None)
+    return None if source is None else get_data_source(source)
+
+
+@get_data_source.register
+def _(data: str) -> str | None:
+    return get_data_source(Path(data))
+
+
+@get_data_source.register
+def _(data: Path) -> str | None:
+    return data.name
+
+
+@get_data_source.register
+def _(data: dict) -> str | None:
+    try:
+        source = data.get("info", {})["source"]
+    except KeyError:
+        source = data.get("source", None)  # noqa
+    return get_data_source(source)
+
+
+@get_data_source.register
+def _(data: DataMemberABC) -> str | None:
+    return str(data.unique_id)
+
+
+def convert_directory_datastore(
+    inpath: Path,
+    outpath: Path,
+    suffix: str | None = None,
+) -> DataStoreABC:
+    out_dstore = DataStoreDirectory(source=outpath, mode=OVERWRITE, suffix=suffix)
+    filenames = inpath.glob(f"*{suffix}")
+    for fn in filenames:
+        out_dstore.write(unique_id=fn.name, data=fn.read_text())
+    return out_dstore
+
+
+def make_record_for_json(identifier, data, completed):
+    """returns a dict for storage as json"""
+    with contextlib.suppress(AttributeError):
+        data = data.to_rich_dict()
+
+    data = json.dumps(data)
+    return {"identifier": identifier, "data": data, "completed": completed}
+
+
+def load_record_from_json(data):
+    """returns identifier, data, completed status from json string"""
+    if isinstance(data, str):
+        data = json.loads(data)
+
+    value = data["data"]
+    if isinstance(value, str):
+        with contextlib.suppress(json.JSONDecodeError):
+            value = json.loads(value)
+    return data["identifier"], value, data["completed"]

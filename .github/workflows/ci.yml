@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches-ignore:
+      - master
+  pull_request:
+    branches-ignore:
+      - master
+# NOTE:
+# if changing python versions, also update versions in
+# - release.yml
+# - noxfile.py
+
+jobs:
+  tests:
+    name: "Python ${{ matrix.python-version }} (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11", "3.14"]
+
+    steps:
+      - uses: "actions/checkout@v6"
+        with:
+          fetch-depth: 0
+
+      # Setup env
+      - uses: "actions/setup-python@v6"
+        with:
+            python-version: "${{ matrix.python-version }}"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: "Installs for ${{ matrix.python-version }}"
+        run: |
+          uv venv venv -p python${{ matrix.python-version }}
+          uv tool install -p venv nox
+
+      - name: "Run nox for ${{ matrix.python-version }}"
+        shell: bash
+        run: |
+          dn=$(pwd)
+          cov="--cov-report lcov:lcov-${{matrix.os}}-${{matrix.python-version}}.lcov --cov-report term --cov-append --cov scinexus"
+          nox  -db uv --force-python python -s test -- $cov
+
+  type_check:
+    name: Type Check
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        python-version: ["3.14"]
+        os: [ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: "actions/setup-python@v6"
+        with:
+            python-version: "${{ matrix.python-version }}"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: "Installs for ${{ matrix.python-version }}"
+        run: |
+          uv venv venv -p python${{ matrix.python-version }}
+          uv tool install -p venv nox
+
+      - name: "Run Type Checking for ${{ matrix.python-version }}"
+        run: |
+          nox -db uv --force-python python -s test_types
