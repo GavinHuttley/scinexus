@@ -8,7 +8,7 @@ from collections.abc import Sequence as PySeq
 from typing import TYPE_CHECKING, Any, ParamSpec, Self, TypeVar
 
 if TYPE_CHECKING:  # pragma: no cover
-    from tqdm import notebook, tqdm
+    from tqdm import notebook, tqdm  # type: ignore[import-untyped]
 
 
 from scinexus import parallel as PAR
