@@ -9,7 +9,7 @@ import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from scitrack import get_text_hexdigest
+from scitrack import get_text_hexdigest  # type: ignore[import-untyped]
 
 from scinexus.data_store import (
     _LOG_TABLE,
@@ -127,7 +127,7 @@ class DataStoreSqlite(DataStoreABC):
         verbose: bool = False,
     ) -> None:
         if _mem_pattern.search(str(source)):
-            self._source = _MEMORY
+            self._source: str | Path = _MEMORY
         else:
             source = Path(source).expanduser()
             self._source = (
@@ -143,9 +143,9 @@ class DataStoreSqlite(DataStoreABC):
             )
         self._limit = limit
         self._verbose = verbose
-        self._db = None
+        self._db: sqlite3.Connection | None = None
         self._open = False
-        self._log_id = None
+        self._log_id: int | None = None
         weakref.finalize(self, self.close)
 
     def __getstate__(self) -> dict:
@@ -187,7 +187,7 @@ class DataStoreSqlite(DataStoreABC):
     def _init_log(self) -> None:
         timestamp = datetime.datetime.now(tz=datetime.UTC)
         self.db.execute(f"INSERT INTO {_LOG_TABLE}(date) VALUES (?)", (timestamp,))
-        self._log_id = self._db.execute(
+        self._log_id = self.db.execute(
             f"SELECT log_id FROM {_LOG_TABLE} where date = ?",
             (timestamp,),
         ).fetchone()["log_id"]
@@ -195,6 +195,7 @@ class DataStoreSqlite(DataStoreABC):
     def close(self) -> None:
         if getattr(self, "_db", None) is None:
             return
+        assert self._db is not None
         with contextlib.suppress(sqlite3.ProgrammingError):
             self._db.close()
         self._open = False
@@ -203,22 +204,22 @@ class DataStoreSqlite(DataStoreABC):
         """
         identifier string formed from Path(table_name) / identifier
         """
-        unique_id = Path(unique_id)
-        table_name = str(unique_id.parent)
+        uid_path = Path(unique_id)
+        table_name = str(uid_path.parent)
         if table_name not in (
             ".",
             _LOG_TABLE,
         ):
-            msg = f"unknown table for {str(unique_id)!r}"
+            msg = f"unknown table for {str(uid_path)!r}"
             raise ValueError(msg)
 
         if table_name != _LOG_TABLE:
             cmnd = f"SELECT * FROM {_RESULT_TABLE} WHERE record_id = ?"
-            result = self.db.execute(cmnd, (unique_id.name,)).fetchone()
+            result = self.db.execute(cmnd, (uid_path.name,)).fetchone()
             return result["data"]
 
         cmnd = f"SELECT * FROM {_LOG_TABLE} WHERE log_name = ?"
-        result = self.db.execute(cmnd, (unique_id.name,)).fetchone()
+        result = self.db.execute(cmnd, (uid_path.name,)).fetchone()
 
         return result["data"]
 
@@ -272,7 +273,7 @@ class DataStoreSqlite(DataStoreABC):
         *,
         table_name: str,
         unique_id: str,
-        data: str,
+        data: StrOrBytes,
         is_completed: bool,
     ) -> DataMemberABC | None:
         """
@@ -311,7 +312,8 @@ class DataStoreSqlite(DataStoreABC):
 
         return DataMember(data_store=self, unique_id=unique_id)
 
-    def drop_not_completed(self, *, unique_id: str = "") -> None:
+    def drop_not_completed(self, *, unique_id: str | None = None) -> None:
+        vals: tuple[int] | tuple[int, str]
         if not unique_id:
             cmnd = f"DELETE FROM {_RESULT_TABLE} WHERE is_completed=?"
             vals = (0,)
@@ -336,7 +338,7 @@ class DataStoreSqlite(DataStoreABC):
         """if writable, and not locked, locks the database to this pid"""
         if self.mode is READONLY:
             return
-
+        assert self._db is not None
         result = self._db.execute("SELECT state_id,lock_pid FROM state").fetchall()
         locked = result[0]["lock_pid"] if result else None
         if locked and self.mode is OVERWRITE:
@@ -373,7 +375,7 @@ class DataStoreSqlite(DataStoreABC):
         return
 
     @extend_docstring_from(DataStoreDirectory.write)
-    def write(self, *, unique_id: str, data: StrOrBytes) -> DataMemberABC:
+    def write(self, *, unique_id: str, data: StrOrBytes) -> DataMemberABC:  # type: ignore[override]
         if unique_id.startswith(_RESULT_TABLE):
             unique_id = Path(unique_id).name
 
@@ -387,9 +389,8 @@ class DataStoreSqlite(DataStoreABC):
             data=data,
             is_completed=True,
         )
-        if (
-            member is not None and member not in self._completed
-        ):  # new to check existence
+        assert member is not None
+        if member not in self._completed:
             self._completed.append(member)
         return member
 
@@ -407,7 +408,7 @@ class DataStoreSqlite(DataStoreABC):
         )
 
     @extend_docstring_from(DataStoreDirectory.write_not_completed)
-    def write_not_completed(self, *, unique_id: str, data: StrOrBytes) -> DataMemberABC:
+    def write_not_completed(self, *, unique_id: str, data: StrOrBytes) -> DataMemberABC:  # type: ignore[override]
         if unique_id.startswith(_RESULT_TABLE):
             unique_id = Path(unique_id).name
 
@@ -418,8 +419,8 @@ class DataStoreSqlite(DataStoreABC):
             data=data,
             is_completed=False,
         )
-        if member is not None:
-            self._not_completed.append(member)
+        assert member is not None
+        self._not_completed.append(member)
         return member
 
     def md5(self, unique_id: str) -> str | NoneType:  # we have it in base class

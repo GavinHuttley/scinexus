@@ -15,15 +15,15 @@ from io import TextIOWrapper
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from scitrack import get_text_hexdigest
+from scitrack import get_text_hexdigest  # type: ignore[import-untyped]
 
 from scinexus.deserialise import deserialise_object
 from scinexus.io_util import get_format_suffixes, open_
 from scinexus.parallel import is_master_process
 
 if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import Iterator
-    from os import PathLike
+    from collections.abc import Callable, Iterator
+    from typing import Any
 
     from citeable import CitationBase
 
@@ -90,6 +90,10 @@ class DataMemberABC(ABC):
 
 class DataStoreABC(ABC):
     """Abstract base class for DataStore"""
+
+    _init_vals: dict
+    _completed: list[DataMemberABC]
+    _not_completed: list[DataMemberABC]
 
     def __new__(cls, *args, **kwargs):
         obj = object.__new__(cls)
@@ -189,25 +193,25 @@ class DataStoreABC(ABC):
         """returns a list of dicts summarising log files"""
         rows = []
         for record in self.logs:
-            data = record.read().splitlines()
-            first = data.pop(0).split("\t")
+            lines = str(record.read()).splitlines()
+            first = lines.pop(0).split("\t")
             row = {"time": first[0], "name": record.unique_id}
-            key = None
-            mapped = {}
-            for line in data:
-                line = line.split("\t")[-1].split(" : ", maxsplit=1)
-                if len(line) == 1:
-                    mapped[key] += line[0]
+            key: str | None = None
+            mapped: dict[str, str] = {}
+            for line in lines:
+                parts = line.split("\t")[-1].split(" : ", maxsplit=1)
+                if len(parts) == 1:
+                    assert key is not None
+                    mapped[key] += parts[0]
                     continue
 
-                key = line[0]
-                mapped[key] = line[1]
+                key = parts[0]
+                mapped[key] = parts[1]
 
-            data = mapped
-            row["python_version"] = data["python"]
-            row["who"] = data["user"]
-            row["command"] = data["command_string"]
-            row["composable"] = data.get("composable function", "")
+            row["python_version"] = mapped["python"]
+            row["who"] = mapped["user"]
+            row["command"] = mapped["command_string"]
+            row["composable"] = mapped.get("composable function", "")
             rows.append(row)
         return rows
 
@@ -329,7 +333,7 @@ class DataMember(DataMemberABC):
 
 def summary_not_completeds(
     not_completed: list[DataMemberABC],
-    deserialise: callable | None = None,
+    deserialise: Callable[..., Any] | None = None,
 ) -> list[dict]:
     """
     Parameters
@@ -362,19 +366,19 @@ def summary_not_completeds(
     maxtring = reprlib.aRepr.maxstring
     reprlib.aRepr.maxstring = 45
     limit_len = 45
-    for record in types:
-        messages, sources = list(zip(*types[record], strict=False))
-        messages = reprlib.repr(", ".join(m.splitlines()[-1] for m in set(messages)))
-        sources = ", ".join(s.splitlines()[-1] for s in sources if s)
+    for key in types:
+        msg_list, src_list = list(zip(*types[key], strict=False))
+        messages = reprlib.repr(", ".join(m.splitlines()[-1] for m in set(msg_list)))
+        sources = ", ".join(s.splitlines()[-1] for s in src_list if s)
         if len(sources) > limit_len:
             idx = sources.rfind(",", None, limit_len) + 1
             idx = idx if idx > 0 else limit_len
             sources = f"{sources[:idx]} ..."
         row = {
-            "type": record[0],
-            "origin": record[1],
+            "type": key[0],
+            "origin": key[1],
             "message": messages,
-            "num": len(types[record]),
+            "num": len(types[key]),
             "source": sources,
         }
         rows.append(row)
@@ -407,7 +411,7 @@ class DataStoreDirectory(DataStoreABC):
         self._source = source.expanduser()
         self.suffix = _tidy_and_check_suffix(suffix)
         self._verbose = verbose
-        self._source_check_create(mode)
+        self._source_check_create(self._mode)
         self._limit = limit
 
     def __contains__(self, item: str) -> bool:
@@ -434,8 +438,8 @@ class DataStoreDirectory(DataStoreABC):
             (source / sub_dir).mkdir(parents=True, exist_ok=True)
 
     @property
-    def source(self) -> str | Path:
-        """string that references the data store, override in subclass constructor"""
+    def source(self) -> Path:
+        """path that references the data store"""
         return self._source
 
     @property
@@ -444,7 +448,7 @@ class DataStoreDirectory(DataStoreABC):
         return self._mode
 
     @property
-    def limit(self):
+    def limit(self) -> int | None:
         return self._limit
 
     def read(self, unique_id: str) -> str:
@@ -452,8 +456,8 @@ class DataStoreDirectory(DataStoreABC):
         with open_(self.source / unique_id) as infile:
             return infile.read()
 
-    def drop_not_completed(self, *, unique_id: str = "") -> None:
-        unique_id = unique_id.replace(f".{self.suffix}", "")
+    def drop_not_completed(self, *, unique_id: str | None = None) -> None:
+        unique_id = (unique_id or "").replace(f".{self.suffix}", "")
         unique_id = f"{unique_id}.json" if unique_id else unique_id
         nc_dir = self.source / _NOT_COMPLETED_TABLE
         md5_dir = self.source / _MD5_TABLE
@@ -470,14 +474,14 @@ class DataStoreDirectory(DataStoreABC):
         if not unique_id:
             Path(self.source / _NOT_COMPLETED_TABLE).rmdir()
             # reset _not_completed list to force not_completed function to make it again
-            self._not_completed = []
+            self._not_completed: list[DataMemberABC] = []
 
     @property
-    def logs(self) -> list[DataMember]:
+    def logs(self) -> list[DataMemberABC]:
         log_dir = self.source / _LOG_TABLE
         return (
             [
-                DataMember(data_store=self, unique_id=Path(_LOG_TABLE) / m.name)
+                DataMember(data_store=self, unique_id=str(Path(_LOG_TABLE) / m.name))
                 for m in log_dir.glob("*")
             ]
             if log_dir.exists()
@@ -485,7 +489,7 @@ class DataStoreDirectory(DataStoreABC):
         )
 
     @property
-    def completed(self) -> list[DataMember]:
+    def completed(self) -> list[DataMemberABC]:
         if not self._completed:
             self._completed = []
             suffix = f"*.{self.suffix}"
@@ -496,7 +500,7 @@ class DataStoreDirectory(DataStoreABC):
         return self._completed
 
     @property
-    def not_completed(self) -> list[DataMember]:
+    def not_completed(self) -> list[DataMemberABC]:
         if not self._not_completed:
             self._not_completed = []
             for i, m in enumerate((self.source / _NOT_COMPLETED_TABLE).glob("*.json")):
@@ -505,7 +509,7 @@ class DataStoreDirectory(DataStoreABC):
                 self._not_completed.append(
                     DataMember(
                         data_store=self,
-                        unique_id=Path(_NOT_COMPLETED_TABLE) / m.name,
+                        unique_id=str(Path(_NOT_COMPLETED_TABLE) / m.name),
                     ),
                 )
         return self._not_completed
@@ -545,7 +549,7 @@ class DataStoreDirectory(DataStoreABC):
         if subdir == _NOT_COMPLETED_TABLE:
             member = DataMember(
                 data_store=self,
-                unique_id=Path(_NOT_COMPLETED_TABLE) / unique_id,
+                unique_id=str(Path(_NOT_COMPLETED_TABLE) / unique_id),
             )
         elif not subdir:
             member = DataMember(data_store=self, unique_id=unique_id)
@@ -558,7 +562,7 @@ class DataStoreDirectory(DataStoreABC):
 
         return member
 
-    def write(self, *, unique_id: str, data: str) -> DataMember:
+    def write(self, *, unique_id: str, data: str) -> DataMember:  # type: ignore[override]
         """writes a completed record ending with .suffix
 
         Parameters
@@ -585,9 +589,9 @@ class DataStoreDirectory(DataStoreABC):
         self.drop_not_completed(unique_id=unique_id)
         if member is not None:
             self._completed.append(member)
-        return member
+        return member  # type: ignore[return-value]
 
-    def write_not_completed(self, *, unique_id: str, data: str) -> DataMember:
+    def write_not_completed(self, *, unique_id: str, data: str) -> DataMember:  # type: ignore[override]
         """writes a not completed record as json
 
         Parameters
@@ -610,9 +614,9 @@ class DataStoreDirectory(DataStoreABC):
         )
         if member is not None:
             self._not_completed.append(member)
-        return member
+        return member  # type: ignore[return-value]
 
-    def write_log(self, *, unique_id: str, data: str) -> None:
+    def write_log(self, *, unique_id: str, data: str) -> None:  # type: ignore[override]
         (self.source / _LOG_TABLE).mkdir(parents=True, exist_ok=True)
         _ = self._write(subdir=_LOG_TABLE, unique_id=unique_id, suffix="log", data=data)
 
@@ -627,9 +631,9 @@ class DataStoreDirectory(DataStoreABC):
         -------
         md5 checksum for the member, if available, None otherwise
         """
-        unique_id = Path(unique_id)
-        unique_id = re.sub(rf"[.]({self.suffix}|json)$", ".txt", unique_id.name)
-        path = self.source / _MD5_TABLE / unique_id
+        uid_name = Path(unique_id).name
+        md5_name = re.sub(rf"[.]({self.suffix}|json)$", ".txt", uid_name)
+        path = self.source / _MD5_TABLE / md5_name
 
         return path.read_text() if path.exists() else None
 
@@ -688,28 +692,28 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         return self._mode
 
     @property
-    def source(self) -> str | Path:
+    def source(self) -> Path:
         return self._source
 
     def read(self, unique_id: str) -> StrOrBytes:
-        unique_id = str(pathlib.Path(self.source.stem, unique_id)).replace("\\", "/")
+        member_path = str(pathlib.Path(self.source.stem, unique_id)).replace("\\", "/")
         with zipfile.ZipFile(self.source) as archive:
-            record = archive.open(unique_id)
-            record = TextIOWrapper(record, encoding="latin-1")
-            return record.read()
+            raw = archive.open(member_path)
+            wrapped = TextIOWrapper(raw, encoding="latin-1")
+            return wrapped.read()
 
-    def _iter_matches(self, subdir: str, pattern: str) -> Iterator[PathLike]:
+    def _iter_matches(self, subdir: str, pattern: str) -> Iterator[Path]:
         with zipfile.ZipFile(self._source) as archive:
             names = archive.namelist()
             for name in names:
-                name = pathlib.Path(name)
-                if subdir and name.parent.name != subdir:
+                p = pathlib.Path(name)
+                if subdir and p.parent.name != subdir:
                     continue
-                if name.match(pattern) and not name.name.startswith("."):
-                    yield name
+                if p.match(pattern) and not p.name.startswith("."):
+                    yield p
 
     @property
-    def completed(self) -> list[DataMember]:
+    def completed(self) -> list[DataMemberABC]:
         if not self._completed:
             pattern = f"*.{self.suffix}"
             self._completed = []
@@ -745,13 +749,13 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
     @property
     def logs(self) -> list[DataMemberABC]:
         log_dir = pathlib.Path(_LOG_TABLE)
-        logs = []
+        logs: list[DataMemberABC] = []
         for name in self._iter_matches(_LOG_TABLE, "*"):
             m = DataMember(data_store=self, unique_id=str(log_dir / name.name))
             logs.append(m)
         return logs
 
-    def md5(self, unique_id: str) -> str | NoneType:
+    def md5(self, unique_id: str) -> str | None:
         """
         Parameters
         ----------
@@ -762,12 +766,13 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         -------
         md5 checksum for the member, if available, None otherwise
         """
-        unique_id = Path(unique_id)
-        unique_id = re.sub(rf"[.]({self.suffix}|json)$", ".txt", unique_id.name)
+        uid_name = Path(unique_id).name
+        md5_name = re.sub(rf"[.]({self.suffix}|json)$", ".txt", uid_name)
         md5_dir = pathlib.Path(_MD5_TABLE)
-        for name in self._iter_matches(_MD5_TABLE, unique_id):
+        for name in self._iter_matches(_MD5_TABLE, md5_name):
             m = DataMember(data_store=self, unique_id=str(md5_dir / name.name))
-            return m.read()
+            result = m.read()
+            return result if isinstance(result, str) else result.decode()
         return None
 
     def drop_not_completed(self, *, unique_id: str | None = None) -> None:
