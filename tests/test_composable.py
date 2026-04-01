@@ -10,15 +10,22 @@ from numpy import array, ndarray
 
 from scinexus import typing as snx_types
 from scinexus.composable import (
+    LOADER,
     NON_COMPOSABLE,
     WRITER,
     ComposableApp,
     NotCompleted,
     NotCompletedType,
     _get_raw_hints,
+    _make_logfile_name,
+    _proxy_input,
     define_app,
     is_app,
+    is_app_composable,
+    propagate_source,
+    source_proxy,
 )
+from scinexus.data_store import DataStoreDirectory, Mode, get_unique_id
 
 
 def test_composable():
@@ -1039,3 +1046,549 @@ def test_check_data_type_re_enable():
     app.check_data_type = True
     got = app("not_int")
     assert isinstance(got, NotCompleted)
+
+
+def test_make_logfile_name():
+    @define_app
+    class logname_app:
+        def main(self, val: int) -> int:
+            return val
+
+    app = logname_app()
+    name = _make_logfile_name(app)
+    assert name.startswith("logname_app")
+    assert name.endswith(".log")
+
+
+def test_not_completed_repr():
+    nc = NotCompleted(NotCompletedType.ERROR, "origin", "msg", source="src")
+    r = repr(nc)
+    assert "ERROR" in r
+    assert "origin" in r
+    assert "msg" in r
+
+
+def test_not_completed_source_exception():
+    """source that raises in get_data_source results in None"""
+    nc = NotCompleted(NotCompletedType.ERROR, "test", "msg", source=42)
+    assert nc.source is None
+
+
+def test_call_with_none():
+    @define_app
+    class none_app:
+        def main(self, val: int) -> int:
+            return val
+
+    app = none_app()
+    got = app(None)
+    assert isinstance(got, NotCompleted)
+    assert "None" in got.message
+
+
+def test_validate_data_type_source_proxy():
+    @define_app
+    class proxy_app:
+        def main(self, val: int) -> int:
+            return val
+
+    app = proxy_app()
+    sp = source_proxy(42)
+    got = app(sp)
+    assert got == 42
+
+
+def test_add_writer_lhs_raises():
+    @define_app(app_type=WRITER)
+    class writer_app:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: int, identifier: str = "") -> int:
+            return data
+
+    @define_app
+    class generic_app:
+        def main(self, val: int) -> int:
+            return val
+
+    ds = Mock()
+    ds.source = "/tmp"
+    w = writer_app(data_store=ds)
+    g = generic_app()
+    with pytest.raises(TypeError, match="writer"):
+        w + g
+
+
+def test_add_loader_rhs_raises():
+    @define_app(app_type=LOADER)
+    class loader_app:
+        def main(self, val: str) -> int:
+            return int(val)
+
+    @define_app
+    class generic_app:
+        def main(self, val: int) -> int:
+            return val
+
+    g = generic_app()
+    lo = loader_app()
+    with pytest.raises(TypeError, match="loader"):
+        g + lo
+
+
+def test_add_incompatible_types():
+    @define_app
+    class str_app:
+        def main(self, val: int) -> str:
+            return str(val)
+
+    @define_app
+    class int_only_app:
+        def main(self, val: int) -> int:
+            return val
+
+    with pytest.raises(TypeError, match="incompatible"):
+        str_app() + int_only_app()
+
+
+def test_is_app_composable_true():
+    @define_app
+    class comp_app:
+        def main(self, val: int) -> int:
+            return val
+
+    assert is_app_composable(comp_app)
+
+
+def test_is_app_composable_false_non_composable():
+    @define_app(app_type=NON_COMPOSABLE)
+    class nc_app:
+        def main(self, val: int) -> int:
+            return val
+
+    assert not is_app_composable(nc_app)
+
+
+def test_is_app_composable_false_not_app():
+    assert not is_app_composable("not an app")
+
+
+def test_define_app_on_non_class():
+    with pytest.raises(ValueError, match="not a class"):
+        define_app(42)
+
+
+def test_source_proxy_basic():
+    obj = [1, 2, 3]
+    sp = source_proxy(obj)
+    assert sp.obj is obj
+    assert sp.source is obj
+    assert isinstance(sp.uuid, str)
+
+
+def test_source_proxy_set_obj():
+    sp = source_proxy([1, 2])
+    sp.set_obj([3, 4])
+    assert sp.obj == [3, 4]
+    assert sp.source == [1, 2]
+
+
+def test_source_proxy_source_setter():
+    sp = source_proxy("original")
+    # property setter must be called directly because __setattr__ intercepts
+    type(sp).source.fset(sp, "new_source")
+    assert sp.source == "new_source"
+
+
+def test_source_proxy_getattr():
+    sp = source_proxy([1, 2, 3])
+    assert sp.count(1) == 1
+
+
+def test_source_proxy_setattr():
+    obj = Mock()
+    sp = source_proxy(obj)
+    sp.value = 42
+    assert obj.value == 42
+
+
+def test_source_proxy_bool():
+    assert bool(source_proxy([1]))
+    assert not bool(source_proxy([]))
+
+
+def test_source_proxy_repr_str():
+    sp = source_proxy([1, 2])
+    assert repr(sp) == repr([1, 2])
+    assert str(sp) == str([1, 2])
+
+
+def test_source_proxy_eq():
+    sp = source_proxy(42)
+    assert sp == 42
+    assert sp != 43
+
+
+def test_source_proxy_len():
+    sp = source_proxy([1, 2, 3])
+    assert len(sp) == 3
+
+
+def test_source_proxy_pickle():
+    sp = source_proxy("hello")
+    restored = pickle.loads(pickle.dumps(sp))  # noqa: S301
+    assert restored.obj == "hello"
+    assert restored.source == "hello"
+
+
+def test_proxy_input_with_source():
+    item = Mock()
+    item.source = "test"
+    item.__bool__ = lambda self: True
+    result = _proxy_input([item])
+    assert len(result) == 1
+    assert result[0] is item
+
+
+def test_proxy_input_without_source():
+    result = _proxy_input(["a", "b"])
+    assert len(result) == 2
+    assert all(isinstance(r, source_proxy) for r in result)
+
+
+def test_proxy_input_skips_falsy():
+    result = _proxy_input([0, "", "valid"])
+    assert len(result) == 1
+
+
+def test_propagate_source_non_proxy():
+    @define_app
+    class prop_app:
+        def main(self, val: int) -> int:
+            return val * 2
+
+    app = prop_app()
+    ps = propagate_source(app, get_unique_id)
+    got = ps(4)
+    assert got == 8
+
+
+def test_propagate_source_proxy_with_source():
+    @define_app
+    class prop_app2:
+        def main(self, val: str) -> str:
+            return val.upper()
+
+    app = prop_app2()
+
+    class HasSource:
+        def __init__(self, v, src):
+            self.value = v
+            self.source = src
+
+        def upper(self):
+            return HasSource(self.value.upper(), self.source)
+
+    obj = HasSource("hello", "my_source")
+    sp = source_proxy(obj)
+    ps = propagate_source(app, get_unique_id)
+    got = ps(sp)
+    # result has source via get_unique_id, so returned directly
+    assert not isinstance(got, source_proxy) or got.obj is not obj
+
+
+def test_propagate_source_proxy_no_source():
+    @define_app
+    class prop_app3:
+        def main(self, val: int) -> int:
+            return val + 1
+
+    app = prop_app3()
+    sp = source_proxy(10)
+    ps = propagate_source(app, get_unique_id)
+    got = ps(sp)
+    assert isinstance(got, source_proxy)
+    assert got.obj == 11
+
+
+def test_as_completed_serial(tmp_path):
+    @define_app
+    class ac_app:
+        def main(self, val: str) -> str:
+            return val.upper()
+
+    app = ac_app()
+    results = list(app.as_completed(["a", "b", "c"], show_progress=False))
+    objs = [r.obj if isinstance(r, source_proxy) else r for r in results]
+    assert "A" in objs
+    assert len(objs) == 3
+
+
+def test_as_completed_empty():
+    @define_app
+    class ac_empty:
+        def main(self, val: int) -> int:
+            return val
+
+    app = ac_empty()
+    results = list(app.as_completed([], show_progress=False))
+    assert results == []
+
+
+def test_as_completed_string_input():
+    @define_app
+    class ac_str:
+        def main(self, val: str) -> str:
+            return val
+
+    app = ac_str()
+    results = list(app.as_completed("hello", show_progress=False))
+    assert len(results) == 1
+
+
+def test_writer_set_logger_default(tmp_path):
+    @define_app(app_type=WRITER)
+    class w_logger:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: int, identifier: str = "") -> int:
+            return data
+
+    ds = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    app = w_logger(data_store=ds)
+    app.set_logger()
+    assert app.logger is not None
+    app.logger.shutdown()
+
+
+def test_writer_set_logger_false(tmp_path):
+    @define_app(app_type=WRITER)
+    class w_logger2:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: int, identifier: str = "") -> int:
+            return data
+
+    ds = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    app = w_logger2(data_store=ds)
+    app.set_logger(logger=False)
+    assert app.logger is None
+
+
+def test_writer_set_logger_invalid_type(tmp_path):
+    @define_app(app_type=WRITER)
+    class w_logger3:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: int, identifier: str = "") -> int:
+            return data
+
+    ds = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    app = w_logger3(data_store=ds)
+    with pytest.raises(TypeError, match="CachingLogger"):
+        app.set_logger(logger="not a logger")
+
+
+def test_writer_apply_to(tmp_path):
+    from scinexus.data_store import DataMember
+
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(3):
+        (src / f"item_{i}.txt").write_text(f"data {i}")
+
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    out = tmp_path / "out"
+    out_dstore = DataStoreDirectory(out, mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    result = process.apply_to(dstore, logger=False, show_progress=False)
+    assert len(result) == 3
+
+
+def test_get_main_hints_no_main():
+    from scinexus.composable import _get_main_hints
+
+    class NoMain:
+        pass
+
+    with pytest.raises(ValueError, match="main"):
+        _get_main_hints(NoMain)
+
+
+def test_source_proxy_hash():
+    sp = source_proxy("hello")
+    assert isinstance(hash(sp), int)
+    sp2 = source_proxy("hello")
+    assert hash(sp) != hash(sp2)
+
+
+def test_init_subclass_slots():
+    with pytest.raises(NotImplementedError, match="slots"):
+
+        class BadApp(ComposableApp[int, int]):
+            __slots__ = ("x",)
+
+            def main(self, val: int) -> int:
+                return val
+
+
+def test_validate_data_type_not_completed_skip_true():
+    @define_app
+    class skip_app:
+        def main(self, val: int) -> int:
+            return val
+
+    app = skip_app()
+    nc = NotCompleted(NotCompletedType.ERROR, "test", "msg")
+    got = app._validate_data_type(nc)  # noqa: SLF001
+    assert isinstance(got, NotCompleted)
+
+
+def test_as_completed_with_datastore(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(2):
+        (src / f"f_{i}.txt").write_text(f"content {i}")
+
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app
+    class read_app:
+        def main(self, val: str) -> str:
+            return val
+
+    app = read_app()
+    results = list(app.as_completed(dstore, show_progress=False))
+    assert len(results) == 2
+
+
+def test_as_completed_parallel():
+    app = func2app(exponent=2)
+    results = list(app.as_completed([1, 2, 3], parallel=True, show_progress=False))
+    objs = [r.obj if isinstance(r, source_proxy) else r for r in results]
+    assert sorted(objs) == [1, 4, 9]
+
+
+def test_writer_apply_to_no_input(tmp_path):
+    @define_app(app_type=WRITER)
+    class lone_writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: int, identifier: str = "") -> int:
+            return data
+
+    ds = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    app = lone_writer(data_store=ds)
+    with pytest.raises(RuntimeError, match="no composed input"):
+        app.apply_to(["something"], logger=False)
+
+
+def test_apply_to_empty_dstore(tmp_path):
+    from scinexus.data_store import DataMember
+
+    src = tmp_path / "empty"
+    src.mkdir()
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    with pytest.raises(ValueError, match="empty"):
+        process.apply_to(dstore, logger=False, show_progress=False)
+
+
+def test_apply_to_skip_existing(tmp_path):
+    from scinexus.data_store import DataMember
+
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(3):
+        (src / f"item_{i}.txt").write_text(f"data {i}")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    out = tmp_path / "out"
+    out_dstore = DataStoreDirectory(out, mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    process.apply_to(dstore, logger=False, show_progress=False)
+    assert len(out_dstore) == 3
+    # run again — existing items should be skipped
+    result = process.apply_to(dstore, logger=False, show_progress=False)
+    assert len(result) == 3
+
+
+def test_apply_to_with_logging(tmp_path):
+    from scinexus.data_store import DataMember
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item.txt").write_text("data")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    out = tmp_path / "out"
+    out_dstore = DataStoreDirectory(out, mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    result = process.apply_to(dstore, show_progress=False)
+    assert len(result) == 1
+    # log file should have been written to the data store
+    assert any("log" in str(m) for m in out_dstore.logs)
