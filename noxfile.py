@@ -89,8 +89,8 @@ def testcov(session):
 
     base = ["coverage", "run", "--source=scinexus"]
 
-    # mypy (captures _mypy_plugin execution)
-    session.run(*base, "-m", "mypy", "src/scinexus/")
+    # mypy via API wrapper (so coverage traces plugin hook execution)
+    session.run(*base, "scripts/run_mypy_cov.py", "--no-incremental", "src/scinexus/")
 
     # doctests
     session.chdir("src/scinexus")
@@ -99,7 +99,14 @@ def testcov(session):
     # unit tests
     session.chdir("../../tests")
     session.run(
-        *base, "--append", "-m", "pytest", "-s", "-x", "-m", "not slow and not mpi",
+        *base,
+        "--append",
+        "-m",
+        "pytest",
+        "-s",
+        "-x",
+        "-m",
+        "not slow and not mpi",
     )
 
     session.chdir("..")

@@ -14,7 +14,7 @@ from scinexus.composable import (
     is_app_composable,
 )
 
-if _typing.TYPE_CHECKING:
+if _typing.TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Callable
     from typing import Any
 

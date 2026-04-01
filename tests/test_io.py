@@ -7,6 +7,7 @@ import shutil
 
 import pytest
 
+import scinexus
 from scinexus.composable import NotCompleted
 from scinexus.data_store import DataStoreDirectory, ReadOnlyDataStoreZipped
 from scinexus.deserialise import deserialise_object
@@ -163,3 +164,72 @@ def test_open_data_store_sqlitedb(tmp_dir):
     path = tmp_dir / "test.sqlitedb"
     dstore = open_data_store(path, mode="w")
     assert isinstance(dstore, DataStoreSqlite)
+
+
+# Tests for top-level scinexus.open_data_store
+
+
+def test_toplevel_open_data_store(fasta_dir):
+    """top-level open_data_store delegates to scinexus.io"""
+    found = scinexus.open_data_store(fasta_dir, suffix="fasta")
+    assert isinstance(found, DataStoreDirectory)
+    assert len(found) > 1
+
+
+def test_toplevel_open_data_store_sqlitedb(tmp_dir):
+    path = tmp_dir / "test_toplevel.sqlitedb"
+    dstore = scinexus.open_data_store(path, mode="w")
+    assert isinstance(dstore, DataStoreSqlite)
+
+
+# Tests for set_summary_display / get_summary_display
+
+
+def test_get_summary_display_default():
+    """default summary display is None"""
+    orig = scinexus.get_summary_display()
+    try:
+        scinexus.set_summary_display(None)
+        assert scinexus.get_summary_display() is None
+    finally:
+        scinexus.set_summary_display(orig)
+
+
+def test_set_get_summary_display():
+    """set then get returns the same function"""
+    orig = scinexus.get_summary_display()
+    try:
+        sentinel = lambda data, *, name: data  # noqa: E731
+        scinexus.set_summary_display(sentinel)
+        assert scinexus.get_summary_display() is sentinel
+    finally:
+        scinexus.set_summary_display(orig)
+
+
+def test_set_summary_display_none():
+    """setting None clears the display function"""
+    orig = scinexus.get_summary_display()
+    try:
+        scinexus.set_summary_display(lambda data, *, name: data)
+        scinexus.set_summary_display(None)
+        assert scinexus.get_summary_display() is None
+    finally:
+        scinexus.set_summary_display(orig)
+
+
+def test_summary_display_applied(fasta_dir):
+    """a registered display function is called by summary properties"""
+    orig = scinexus.get_summary_display()
+    calls = []
+
+    def track(data, *, name):
+        calls.append(name)
+        return data
+
+    try:
+        scinexus.set_summary_display(track)
+        dstore = scinexus.open_data_store(fasta_dir, suffix="fasta")
+        _ = dstore.describe
+        assert "describe" in calls
+    finally:
+        scinexus.set_summary_display(orig)
