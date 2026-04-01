@@ -36,7 +36,6 @@ _special_suffixes = re.compile(r"\.(log|json)$")
 
 _CITATIONS_FILE = "bibliography.citations"
 
-StrOrBytes = str | bytes
 NoneType = type(None)
 
 
@@ -72,7 +71,7 @@ class DataMemberABC(ABC):
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(data_store={self.data_store.source}, unique_id={self.unique_id})"
 
-    def read(self) -> StrOrBytes:
+    def read(self) -> str | bytes:
         return self.data_store.read(self.unique_id)
 
     def __eq__(self, other):
@@ -147,7 +146,7 @@ class DataStoreABC(ABC):
         return any(m.unique_id == identifier for m in self)
 
     @abstractmethod
-    def read(self, unique_id: str) -> StrOrBytes: ...
+    def read(self, unique_id: str) -> str | bytes: ...
 
     def _check_writable(self, unique_id: str) -> None:
         if self.mode is READONLY:
@@ -158,15 +157,15 @@ class DataStoreABC(ABC):
             raise OSError(msg)
 
     @abstractmethod
-    def write(self, *, unique_id: str, data: StrOrBytes) -> None:
+    def write(self, *, unique_id: str, data: str | bytes) -> None:
         self._check_writable(unique_id)
 
     @abstractmethod
-    def write_not_completed(self, *, unique_id: str, data: StrOrBytes) -> None:
+    def write_not_completed(self, *, unique_id: str, data: str | bytes) -> None:
         self._check_writable(unique_id)
 
     @abstractmethod
-    def write_log(self, *, unique_id: str, data: StrOrBytes) -> None:
+    def write_log(self, *, unique_id: str, data: str | bytes) -> None:
         self._check_writable(unique_id)
 
     @property
@@ -695,7 +694,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
     def source(self) -> Path:
         return self._source
 
-    def read(self, unique_id: str) -> StrOrBytes:
+    def read(self, unique_id: str) -> str | bytes:
         member_path = str(pathlib.Path(self.source.stem, unique_id)).replace("\\", "/")
         with zipfile.ZipFile(self.source) as archive:
             raw = archive.open(member_path)
@@ -779,15 +778,15 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         msg = "zip data stores are read only"
         raise TypeError(msg)
 
-    def write(self, *, unique_id: str, data: StrOrBytes) -> None:
+    def write(self, *, unique_id: str, data: str | bytes) -> None:
         msg = "zip data stores are read only"
         raise TypeError(msg)
 
-    def write_not_completed(self, *, unique_id: str, data: StrOrBytes) -> None:
+    def write_not_completed(self, *, unique_id: str, data: str | bytes) -> None:
         msg = "zip data stores are read only"
         raise TypeError(msg)
 
-    def write_log(self, *, unique_id: str, data: StrOrBytes) -> None:
+    def write_log(self, *, unique_id: str, data: str | bytes) -> None:
         msg = "zip data stores are read only"
         raise TypeError(msg)
 

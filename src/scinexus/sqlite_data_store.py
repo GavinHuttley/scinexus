@@ -21,7 +21,6 @@ from scinexus.data_store import (
     DataStoreABC,
     DataStoreDirectory,
     Mode,
-    StrOrBytes,
 )
 from scinexus.misc import extend_docstring_from
 
@@ -200,7 +199,7 @@ class DataStoreSqlite(DataStoreABC):
             self._db.close()
         self._open = False
 
-    def read(self, unique_id: str) -> StrOrBytes:
+    def read(self, unique_id: str) -> str | bytes:
         """
         identifier string formed from Path(table_name) / identifier
         """
@@ -273,7 +272,7 @@ class DataStoreSqlite(DataStoreABC):
         *,
         table_name: str,
         unique_id: str,
-        data: StrOrBytes,
+        data: str | bytes,
         is_completed: bool,
     ) -> DataMemberABC | None:
         """
@@ -375,7 +374,7 @@ class DataStoreSqlite(DataStoreABC):
         return
 
     @extend_docstring_from(DataStoreDirectory.write)
-    def write(self, *, unique_id: str, data: StrOrBytes) -> DataMemberABC:  # type: ignore[override]
+    def write(self, *, unique_id: str, data: str | bytes) -> DataMemberABC:  # type: ignore[override]
         if unique_id.startswith(_RESULT_TABLE):
             unique_id = Path(unique_id).name
 
@@ -395,7 +394,7 @@ class DataStoreSqlite(DataStoreABC):
         return member
 
     @extend_docstring_from(DataStoreDirectory.write_log)
-    def write_log(self, *, unique_id: str, data: StrOrBytes) -> None:
+    def write_log(self, *, unique_id: str, data: str | bytes) -> None:
         if unique_id.startswith(_LOG_TABLE):
             unique_id = Path(unique_id).name
 
@@ -408,7 +407,9 @@ class DataStoreSqlite(DataStoreABC):
         )
 
     @extend_docstring_from(DataStoreDirectory.write_not_completed)
-    def write_not_completed(self, *, unique_id: str, data: StrOrBytes) -> DataMemberABC:  # type: ignore[override]
+    def write_not_completed(
+        self, *, unique_id: str, data: str | bytes
+    ) -> DataMemberABC:  # type: ignore[override]
         if unique_id.startswith(_RESULT_TABLE):
             unique_id = Path(unique_id).name
 
