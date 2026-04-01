@@ -111,7 +111,7 @@ def get_type_display_names(hint) -> frozenset[str]:
     hint
         a resolved type hint (one that has been through resolve_type_hint)
     """
-    names = set()
+    names: set[str] = set()
     origin = get_origin(hint)
 
     if origin is Union or isinstance(hint, UnionType) or origin in (list, tuple, set):
