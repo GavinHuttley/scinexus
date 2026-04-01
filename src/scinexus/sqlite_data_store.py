@@ -407,9 +407,9 @@ class DataStoreSqlite(DataStoreABC):
         )
 
     @extend_docstring_from(DataStoreDirectory.write_not_completed)
-    def write_not_completed(
+    def write_not_completed(  # type: ignore[override]
         self, *, unique_id: str, data: str | bytes
-    ) -> DataMemberABC:  # type: ignore[override]
+    ) -> DataMemberABC:
         if unique_id.startswith(_RESULT_TABLE):
             unique_id = Path(unique_id).name
 
