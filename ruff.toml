@@ -25,7 +25,7 @@ exclude = [
     "node_modules",
     "site-packages",
     "venv",
-    "working"
+    "working",
 ]
 
 # Same as Black.
@@ -58,9 +58,9 @@ ignore = [
     "FBT001",
     "FBT002",
     "PT011",
-    "S311", # Allow use of random
+    "S311",    # Allow use of random
     "PLR2004", # Magic number usage where appropriate
-    "PLC0415" # Allow delayed imports
+    "PLC0415", # Allow delayed imports
 ]
 
 # Allow fix for all enabled rules (when `--fix`) is provided.
@@ -72,28 +72,29 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
 [lint.per-file-ignores]
 "tests/**/*.py" = [
-    "S101", # asserts allowed in tests...
+    "S101",   # asserts allowed in tests...
     "INP001", # __init__.py files are not required...
     "ANN",
     "N802",
     "N803",
-    "S608" # sql injection unlikely
+    "S608",   # sql injection unlikely
+    "S301",   # we allow pickling / unpickling in tests
 ]
 "noxfile.py" = [
-    "S101", # asserts allowed in tests...
+    "S101",   # asserts allowed in tests...
     "INP001", # __init__.py files are not required...
     "ANN",
     "N802",
-    "N803"
+    "N803",
 ]
 "src/scinexus/io_util.py" = [
-    "ANN401" # Allow use of Any
+    "ANN401", # Allow use of Any
 ]
 "src/scinexus/misc.py" = [
-    "ANN401" # Allow use of Any
+    "ANN401", # Allow use of Any
 ]
 "src/scinexus/io.py" = [
-    "ANN401" # Allow use of Any for generic serialisation apps
+    "ANN401", # Allow use of Any for generic serialisation apps
 ]
 
 [format]
