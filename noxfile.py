@@ -111,4 +111,7 @@ def testcov(session):
 
     session.chdir("..")
     session.run("coverage", "report")
-    session.run("coverage", *session.posargs)
+    for i in range(0, len(session.posargs), 2):
+        fmt = session.posargs[i]
+        o_name = session.posargs[i + 1]
+        session.run("coverage", fmt, o_name, external=True)
