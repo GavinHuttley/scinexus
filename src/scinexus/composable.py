@@ -11,6 +11,7 @@ from collections.abc import Generator
 from copy import deepcopy
 from enum import Enum
 from pathlib import Path
+from typing import Generic, TypeVar
 from uuid import uuid4
 
 from citeable import Citation
@@ -37,6 +38,9 @@ from .data_store import (
 )
 
 _builtin_seqs = list, set, tuple
+
+T = TypeVar("T")
+R = TypeVar("R")
 
 
 def _make_logfile_name(process) -> str:
@@ -204,88 +208,6 @@ def _set_hints(main_meth, first_param_type, return_type):
     return main_meth
 
 
-# Added new function to decorator, doesn't have function body yet
-def _disconnect(self) -> None:
-    """resets input to None
-    Breaks all connections among members of a composed function."""
-    if self.app_type is LOADER:
-        return
-    if self.input:
-        self.input.disconnect()
-
-    self.input = None
-
-
-def _add(self, other):
-    if getattr(other, "app_type", None) not in {WRITER, LOADER, GENERIC}:
-        msg = f"{other!r} is not composable"
-        raise TypeError(msg)
-
-    if other.input is not None:
-        msg = f"{other.__class__.__name__} already part of composed function, use disconnect() to free them up"
-        raise ValueError(
-            msg,
-        )
-
-    if other is self:
-        msg = "cannot add an app to itself"
-        raise ValueError(msg)
-
-    # Check order
-    if self.app_type is WRITER:
-        msg = "Left hand side of add operator must not be of type writer"
-        raise TypeError(msg)
-    if other.app_type is LOADER:
-        msg = "Right hand side of add operator must not be of type loader"
-        raise TypeError(msg)
-
-    if not check_type_compatibility(self._return_type, other._input_type):
-        self_names = get_type_display_names(self._return_type)
-        other_names = get_type_display_names(other._input_type)
-        msg = (
-            f"{self.__class__.__name__!r} return_type {self_names} "
-            f"incompatible with {other.__class__.__name__!r} input "
-            f"type {other_names}"
-        )
-        raise TypeError(msg)
-    other.input = self
-    return other
-
-
-def _repr(self):
-    val = f"{self.input!r} + " if self.app_type is not LOADER and self.input else ""
-    all_args = {**self._init_vals}
-    args_items = all_args.pop("args", None)
-    data = ", ".join(f"{v!r}" for v in args_items) if args_items else ""
-    kwargs_items = all_args.pop("kwargs", None)
-    data += (
-        ", ".join(f"{k}={v!r}" for k, v in kwargs_items.items()) if kwargs_items else ""
-    )
-    data += ", ".join(f"{k}={v!r}" for k, v in all_args.items())
-    data = f"{val}{self.__class__.__name__}({data})"
-    return textwrap.fill(data, width=80, break_long_words=False, break_on_hyphens=False)
-
-
-def _new(klass, *args, **kwargs):
-    obj = object.__new__(klass)
-
-    if hasattr(klass, "_func_sig"):
-        # we have a decorated function, the first parameter in the signature
-        # is not given to constructor, so we create a new signature excluding that one
-        params = klass._func_sig.parameters
-        init_sig = inspect.Signature(parameters=list(params.values())[1:])
-        bargs = init_sig.bind_partial(*args, **kwargs)
-    else:
-        init_sig = inspect.signature(klass.__init__)
-        bargs = init_sig.bind_partial(klass, *args, **kwargs)
-    bargs.apply_defaults()
-    init_vals = bargs.arguments
-    init_vals.pop("self", None)
-
-    obj._init_vals = init_vals
-    return obj
-
-
 class source_proxy:
     __slots__ = ("_obj", "_src", "_uuid")
 
@@ -353,69 +275,468 @@ class source_proxy:
         self._obj, self._src, self._uuid = state
 
 
-def _call(self, val, *args, **kwargs):
+def _proxy_input(dstore) -> list:
+    inputs = []
+    for e in dstore:
+        if not e:
+            continue
+        if not isinstance(e, source_proxy):
+            e = e if hasattr(e, "source") else source_proxy(e)
+        inputs.append(e)
+
+    return inputs
+
+
+GetIdFuncType = typing.Callable[[source_proxy | snx_typing.HasSource], str | None]
+
+
+class propagate_source:
+    """retains result association with source
+
+    Notes
+    -----
+    Returns the unwrapped result if it has a .source instance,
+    otherwise returns the original source_proxy with the .obj
+    updated with result.
     """
-    Parameters
-    ----------
-    val
-        the primary data the app operates on. If the instance type
-        does not match tha defined for the first argument of the
-        app.main() method, a NotCompleted result is generated.
-    args, kwargs
-        other positional and keyword arguments of the app.main()
-        method.
 
-    Returns
-    -------
-    The return type of app.main()
-    """
-    if val is None:
-        val = NotCompleted("ERROR", self, "unexpected input value None", source=val)
+    def __init__(self, app, id_from_source: GetIdFuncType) -> None:
+        self.app = app
+        self.id_from_source = id_from_source
 
-    if isinstance(val, NotCompleted) and self._skip_not_completed:
-        return val
+    def __call__(
+        self, value: source_proxy | snx_typing.HasSource
+    ) -> snx_typing.HasSource:
+        if not isinstance(value, source_proxy):
+            return self.app(value)
 
-    if self.app_type is not LOADER and self.input:  # passing to connected app
-        val = self.input(val, *args, **kwargs)
+        result = self.app(value.obj)
+        if self.id_from_source(result):
+            return result
+
+        value.set_obj(result)
+        return value
+
+
+def _init_subclass_setup(cls, app_type, skip_not_completed, cite):
+    """Shared setup logic for __init_subclass__ and define_app."""
+    app_type = AppType(app_type)
+
+    raw_input, raw_return = _get_main_hints(cls)
+    mod = sys.modules.get(cls.__module__) if cls.__module__ else None
+    module_globals = vars(mod) if mod else {}
+    cls._input_type = resolve_type_hint(raw_input, module_globals)
+    cls._return_type = resolve_type_hint(raw_return, module_globals)
+    cls.app_type = app_type
+    cls._skip_not_completed = skip_not_completed
+    cls._cite = cite
+    cls._source_wrapped = None
+
+    if app_type is not LOADER:
+        cls.input = None
+
+    if hasattr(cls, "__slots__"):
+        msg = "slots are not currently supported"
+        raise NotImplementedError(msg)
+
+
+class AppBase(Generic[T, R]):
+    """Base for all app types. Provides __call__, __repr__, etc."""
+
+    _is_intermediate_base: bool = False
+
+    def __init_subclass__(
+        cls,
+        app_type=GENERIC,
+        skip_not_completed=True,
+        cite=None,
+        **kwargs,
+    ):
+        super().__init_subclass__(**kwargs)
+        # Skip setup for intermediate bases and classes built by define_app
+        if "_is_intermediate_base" in cls.__dict__ or getattr(
+            cls, "_define_app_pending", False
+        ):
+            return
+        _init_subclass_setup(cls, app_type, skip_not_completed, cite)
+
+    def __new__(cls, *args, **kwargs):
+        obj = object.__new__(cls)
+
+        if hasattr(cls, "_func_sig"):
+            # we have a decorated function, the first parameter in the signature
+            # is not given to constructor, so we create a new signature excluding that one
+            params = cls._func_sig.parameters
+            init_sig = inspect.Signature(parameters=list(params.values())[1:])
+            bargs = init_sig.bind_partial(*args, **kwargs)
+        else:
+            init_sig = inspect.signature(cls.__init__)
+            bargs = init_sig.bind_partial(cls, *args, **kwargs)
+        bargs.apply_defaults()
+        init_vals = bargs.arguments
+        init_vals.pop("self", None)
+
+        obj._init_vals = init_vals
+        return obj
+
+    def __call__(self, val: T, *args, **kwargs) -> R | NotCompleted:
+        if val is None:
+            val = NotCompleted("ERROR", self, "unexpected input value None", source=val)
+
         if isinstance(val, NotCompleted) and self._skip_not_completed:
             return val
 
-    type_checked = self._validate_data_type(val)
-    if not type_checked:
-        return type_checked
+        if self.app_type is not LOADER and self.input:  # passing to connected app
+            val = self.input(val, *args, **kwargs)
+            if isinstance(val, NotCompleted) and self._skip_not_completed:
+                return val
 
-    try:
-        result = self.main(val, *args, **kwargs)
-    except Exception:
-        result = NotCompleted("ERROR", self, traceback.format_exc(), source=val)
+        type_checked = self._validate_data_type(val)
+        if not type_checked:
+            return type_checked
 
-    if result is None:
-        result = NotCompleted("BUG", self, "unexpected output value None", source=val)
-    return result
+        try:
+            result = self.main(val, *args, **kwargs)
+        except Exception:
+            result = NotCompleted("ERROR", self, traceback.format_exc(), source=val)
+
+        if result is None:
+            result = NotCompleted(
+                "BUG", self, "unexpected output value None", source=val
+            )
+        return result
+
+    def __repr__(self):
+        val = f"{self.input!r} + " if self.app_type is not LOADER and self.input else ""
+        all_args = {**self._init_vals}
+        args_items = all_args.pop("args", None)
+        data = ", ".join(f"{v!r}" for v in args_items) if args_items else ""
+        kwargs_items = all_args.pop("kwargs", None)
+        data += (
+            ", ".join(f"{k}={v!r}" for k, v in kwargs_items.items())
+            if kwargs_items
+            else ""
+        )
+        data += ", ".join(f"{k}={v!r}" for k, v in all_args.items())
+        data = f"{val}{self.__class__.__name__}({data})"
+        return textwrap.fill(
+            data, width=80, break_long_words=False, break_on_hyphens=False
+        )
+
+    __str__ = __repr__
+
+    def _validate_data_type(self, data):
+        """checks data type matches defined compatible types using typeguard"""
+        if isinstance(data, NotCompleted):
+            if self._skip_not_completed:
+                return data
+            # skip_not_completed=False means the app handles NotCompleted itself
+            return True
+
+        if isinstance(data, source_proxy):
+            data = data.obj
+
+        if isinstance(data, _builtin_seqs) and len(data) == 0:
+            return NotCompleted("ERROR", self, message="empty data", source=data)
+
+        try:
+            check_type(data, self._input_type)
+            return True
+        except TypeCheckError:
+            class_name = data.__class__.__name__
+            expected = get_type_display_names(self._input_type)
+            msg = f"invalid data type, '{class_name}' not in {', '.join(sorted(expected))}"
+            return NotCompleted("ERROR", self, message=msg, source=data)
+
+    @UI.display_wrap
+    def as_completed(
+        self,
+        dstore,
+        parallel: bool = False,
+        par_kw: dict | None = None,
+        id_from_source: GetIdFuncType = get_unique_id,
+        **kwargs,
+    ) -> Generator:
+        """invokes self composable function on the provided data store
+
+        Parameters
+        ----------
+        dstore
+            a path, list of paths, or DataStore to which the process will be
+            applied.
+        parallel : bool
+            run in parallel, according to arguments in par_kwargs. If True,
+            the last step of the composable function serves as the master
+            process, with earlier steps being executed in parallel for each
+            member of dstore.
+        par_kw
+            dict of values for configuring parallel execution.
+        kwargs
+            setting a show_progress boolean keyword value here
+            affects progress display code, other arguments are passed to
+            the progress bar display_wrap decorator
+
+        Notes
+        -----
+        If run in parallel, this instance serves as the master object and
+        aggregates results. If run in serial, results are returned in the
+        same order as provided.
+        """
+        if self._source_wrapped is None:
+            app = propagate_source(
+                self.input if self.app_type is WRITER else self, id_from_source
+            )
+        else:
+            app = (
+                self.input._source_wrapped
+                if self.app_type is WRITER
+                else self._source_wrapped
+            )
+
+        ui = kwargs.pop("ui")
+
+        if isinstance(dstore, str):
+            dstore = [dstore]
+        elif isinstance(dstore, DataStoreABC):
+            dstore = dstore.completed
+        mapped = _proxy_input(dstore)
+        if not mapped:
+            return mapped
+
+        if parallel:
+            par_kw = par_kw or {}
+            to_do = PAR.as_completed(app, mapped, **par_kw)
+        else:
+            to_do = map(app, mapped)
+
+        return ui.series(to_do, count=len(mapped), **kwargs)
+
+    def _get_citations(self) -> tuple[Citation, ...]:
+        """Return citations for this app and all composed input apps."""
+        seen: set[Citation] = set()
+        result: list[Citation] = []
+
+        if self._cite is not None:
+            self._cite.app = self.__class__.__name__
+            seen.add(self._cite)
+            result.append(self._cite)
+
+        head = getattr(self, "input", None)
+        while head is not None:
+            if head._cite is not None and head._cite not in seen:
+                head._cite.app = head.__class__.__name__
+                seen.add(head._cite)
+                result.append(head._cite)
+            head = getattr(head, "input", None)
+
+        return tuple(result)
+
+    @property
+    def citations(self) -> tuple[Citation, ...]:
+        """Citations for this app and all composed input apps."""
+        return self._get_citations()
+
+    @property
+    def bib(self) -> str:
+        """BibTeX formatted string of citations for this app and all composed input apps."""
+        return "\n\n".join(str(cite) for cite in self.citations)
 
 
-def _validate_data_type(self, data):
-    """checks data type matches defined compatible types using typeguard"""
-    if isinstance(data, NotCompleted):
-        if self._skip_not_completed:
-            return data
-        # skip_not_completed=False means the app handles NotCompleted itself
-        return True
+class ComposableApp(AppBase[T, R]):
+    """Adds __add__ and disconnect for LOADER/GENERIC."""
 
-    if isinstance(data, source_proxy):
-        data = data.obj
+    _is_intermediate_base: bool = True
 
-    if isinstance(data, _builtin_seqs) and len(data) == 0:
-        return NotCompleted("ERROR", self, message="empty data", source=data)
+    def __add__(self, other):
+        if getattr(other, "app_type", None) not in {WRITER, LOADER, GENERIC}:
+            msg = f"{other!r} is not composable"
+            raise TypeError(msg)
 
-    try:
-        check_type(data, self._input_type)
-        return True
-    except TypeCheckError:
-        class_name = data.__class__.__name__
-        expected = get_type_display_names(self._input_type)
-        msg = f"invalid data type, '{class_name}' not in {', '.join(sorted(expected))}"
-        return NotCompleted("ERROR", self, message=msg, source=data)
+        if other.input is not None:
+            msg = f"{other.__class__.__name__} already part of composed function, use disconnect() to free them up"
+            raise ValueError(
+                msg,
+            )
+
+        if other is self:
+            msg = "cannot add an app to itself"
+            raise ValueError(msg)
+
+        # Check order
+        if self.app_type is WRITER:
+            msg = "Left hand side of add operator must not be of type writer"
+            raise TypeError(msg)
+        if other.app_type is LOADER:
+            msg = "Right hand side of add operator must not be of type loader"
+            raise TypeError(msg)
+
+        if not check_type_compatibility(self._return_type, other._input_type):
+            self_names = get_type_display_names(self._return_type)
+            other_names = get_type_display_names(other._input_type)
+            msg = (
+                f"{self.__class__.__name__!r} return_type {self_names} "
+                f"incompatible with {other.__class__.__name__!r} input "
+                f"type {other_names}"
+            )
+            raise TypeError(msg)
+        other.input = self
+        return other
+
+    def disconnect(self) -> None:
+        """resets input to None
+        Breaks all connections among members of a composed function."""
+        if self.app_type is LOADER:
+            return
+        if self.input:
+            self.input.disconnect()
+
+        self.input = None
+
+
+class WriterApp(ComposableApp[T, R]):
+    """Adds apply_to and set_logger for WRITER."""
+
+    _is_intermediate_base: bool = True
+
+    def apply_to(
+        self,
+        dstore,
+        id_from_source: GetIdFuncType = get_unique_id,
+        parallel: bool = False,
+        par_kw: dict | None = None,
+        logger: CachingLogger | None = None,
+        cleanup: bool = True,
+        show_progress: bool = False,
+    ):
+        """invokes self composable function on the provided data store
+
+        Parameters
+        ----------
+        dstore
+            a path, list of paths, or DataStore to which the process will be
+            applied.
+        id_from_source : callable
+            makes the unique identifier from elements of dstore that will be
+            used for writing results
+        parallel : bool
+            run in parallel, according to arguments in par_kwargs. If True,
+            the last step of the composable function serves as the master
+            process, with earlier steps being executed in parallel for each
+            member of dstore.
+        par_kw
+            dict of values for configuring parallel execution.
+        logger
+            Argument ignored if not an io.writer. If a scitrack logger not provided,
+            one is created with a name that defaults to the composable function names
+            and the process ID.
+        cleanup : bool
+            after copying of log files into the data store, it is deleted
+            from the original location
+        show_progress : bool
+            controls progress bar display
+
+        Returns
+        -------
+        The output data store instance
+
+        Notes
+        -----
+        This is an append only function, meaning that if a member already exists
+        in self.data_store for an input, it is skipped.
+
+        If run in parallel, this instance spawns workers and aggregates results.
+        """
+        if self.app_type is WRITER:
+            self.input._source_wrapped = propagate_source(self.input, id_from_source)
+            self._source_wrapped = propagate_source(self, id_from_source)
+
+        if not self.input:
+            msg = f"{self!r} is not part of a composed function"
+            raise RuntimeError(msg)
+
+        if isinstance(dstore, str | Path):  # one filename
+            dstore = [dstore]
+        elif isinstance(dstore, DataStoreABC):
+            dstore = dstore.completed
+
+        # TODO this should fail if somebody provides data that cannot produce a unique_id
+        inputs = {}
+        for m in dstore:
+            input_id = Path(m.unique_id) if isinstance(m, DataMember) else m
+            input_id = id_from_source(input_id)
+            if input_id in inputs or not input_id:
+                msg = f"non-unique identifier {input_id!r} detected in data"
+                raise ValueError(msg)
+            if input_id in self.data_store:
+                # we are assuming that this query returns True only when
+                # an input_id is completed, we will not hit this if not_completed
+                continue
+            inputs[input_id] = m
+
+        if (
+            not dstore
+        ):  # this should just return datastore, because if all jobs are done!
+            msg = "dstore is empty"
+            raise ValueError(msg)
+
+        self.set_logger(logger)
+        if self.logger:
+            start = time.time()
+            logger = self.logger
+            logger.log_message(str(self), label="composable function")
+            logger.log_versions(["scinexus"])
+
+        inputs = _proxy_input(inputs.values())
+        for result in self.as_completed(
+            inputs,
+            parallel=parallel,
+            par_kw=par_kw,
+            show_progress=show_progress,
+        ):
+            member = self.main(
+                data=getattr(result, "obj", result),
+                identifier=id_from_source(result),
+            )
+            if self.logger:
+                md5 = getattr(member, "md5", None)
+                logger.log_message(str(member), label="output")
+                if md5:
+                    logger.log_message(md5, label="output md5sum")
+
+        if self.logger:
+            taken = time.time() - start
+            logger.log_message(f"{taken}", label="TIME TAKEN")
+            log_file_path = Path(logger.log_file_path)
+            logger.shutdown()
+            self.data_store.write_log(
+                unique_id=log_file_path.name,
+                data=log_file_path.read_text(),
+            )
+            if cleanup:
+                log_file_path.unlink(missing_ok=True)
+
+        # write citations
+        self.data_store.write_citations(data=self.citations)
+
+        return self.data_store
+
+    def set_logger(self, logger=None) -> None:
+        if logger is False:
+            self.logger = None
+            return
+        if logger is None:
+            logger = CachingLogger(create_dir=True)
+        if not isinstance(logger, CachingLogger):
+            msg = f"logger must be of type CachingLogger not {type(logger)}"
+            raise TypeError(msg)
+        if not logger.log_file_path:
+            src = Path(self.data_store.source).parent
+            logger.log_file_path = str(src / _make_logfile_name(self))
+        self.logger = logger
+
+
+# Keep module-level references for backwards compatibility (used in tests)
+_add = ComposableApp.__add__
 
 
 def _class_from_func(func):
@@ -462,6 +783,31 @@ def _class_from_func(func):
     result.__doc__ = summary
     result.__init__.__doc__ = body
     return result
+
+
+# Forbidden methods per app kind
+_FORBIDDEN_BASE = frozenset(
+    {
+        "__call__",
+        "__repr__",
+        "__str__",
+        "__new__",
+        "_validate_data_type",
+    }
+)
+_FORBIDDEN_COMPOSABLE = _FORBIDDEN_BASE | frozenset(
+    {
+        "__add__",
+        "disconnect",
+        "input",
+    }
+)
+_FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset(
+    {
+        "apply_to",
+        "set_logger",
+    }
+)
 
 
 def define_app(
@@ -569,7 +915,6 @@ def define_app(
         )
 
     app_type = AppType(app_type)
-    composable = app_type is not NON_COMPOSABLE
 
     def wrapped(klass):
         if inspect.isfunction(klass):
@@ -578,169 +923,64 @@ def define_app(
             msg = f"{klass} is not a class"
             raise ValueError(msg)
 
-        excludes = []
-        if not composable:
-            excludes = ["__add__", "disconnect"]
-        if app_type is not WRITER:
-            excludes.extend(["apply_to", "set_logger"])
-        method_list = [item for item in __mapping if item not in excludes] + ["__str__"]
-        # check if user defined input for composable
-        if composable and getattr(klass, "input", None):
+        # Select base class based on app_type
+        composable = app_type is not NON_COMPOSABLE
+        if app_type is WRITER:
+            base = WriterApp
+            forbidden = _FORBIDDEN_WRITER
+        elif composable:
+            base = ComposableApp
+            forbidden = _FORBIDDEN_COMPOSABLE
+        else:
+            base = AppBase
+            forbidden = _FORBIDDEN_BASE
+
+        # Check forbidden methods on the user's class
+        if (
+            composable
+            and "input" in klass.__dict__
+            and klass.__dict__["input"] is not None
+        ):
             msg = f"remove 'input' attribute in {klass.__name__!r}, this functionality provided by define_app"
-            raise TypeError(
-                msg,
-            )
-        if composable and getattr(klass, "__add__", None):
-            msg = f"remove '__add__' method in {klass.__name__!r}, this functionality provided by define_app"
-            raise TypeError(
-                msg,
-            )
-        for meth in method_list:
-            # make sure method not defined by user before adding
-            if inspect.isfunction(getattr(klass, meth, None)):
+            raise TypeError(msg)
+        for meth in forbidden:
+            if meth in klass.__dict__ and inspect.isfunction(klass.__dict__[meth]):
                 msg = f"remove {meth!r} in {klass.__name__!r}, this functionality provided by define_app"
-                raise TypeError(
-                    msg,
-                )
-            func = __mapping["__repr__"] if meth == "__str__" else __mapping[meth]
-            func.__name__ = meth
-            setattr(klass, meth, func)
-
-        # Resolve type hints at decoration time
-        raw_input, raw_return = _get_main_hints(klass)
-        mod = sys.modules.get(klass.__module__) if klass.__module__ else None
-        module_globals = vars(mod) if mod else {}
-        klass._input_type = resolve_type_hint(raw_input, module_globals)
-        klass._return_type = resolve_type_hint(raw_return, module_globals)
-        klass.app_type = app_type
-        klass._skip_not_completed = skip_not_completed
-
-        klass._cite = cite
-        klass.citations = property(_citations_property)
-        klass.bib = property(_bib)
-
-        if app_type is not LOADER:
-            klass.input = None
-
-        # the ._source_wrapped attribute used for wrapping/unwrapping
-        # result objects
-        klass._source_wrapped = None
+                raise TypeError(msg)
 
         if hasattr(klass, "__slots__"):
-            # not supporting this yet
             msg = "slots are not currently supported"
             raise NotImplementedError(msg)
 
-        return klass
+        # Get type hints before rebuilding the class
+        raw_input, raw_return = _get_main_hints(klass)
+
+        # Collect the user's class dict (excluding metaclass artefacts)
+        original_dict = {
+            k: v
+            for k, v in klass.__dict__.items()
+            if k not in ("__dict__", "__weakref__")
+        }
+        # Prevent __init_subclass__ from running setup (we do it below)
+        original_dict["_define_app_pending"] = True
+
+        # Recreate class with the base (types.new_class stores
+        # parameterised form in __orig_bases__ for type checkers)
+        new_klass = types.new_class(
+            klass.__name__,
+            (base[raw_input, raw_return],),
+            exec_body=lambda ns: ns.update(original_dict),
+        )
+        new_klass.__module__ = klass.__module__
+        new_klass.__qualname__ = klass.__qualname__
+        del new_klass._define_app_pending
+
+        # Run setup once with the decorator's arguments
+        _init_subclass_setup(new_klass, app_type, skip_not_completed, cite)
+
+        return new_klass
 
     return wrapped(klass) if klass else wrapped
-
-
-def _proxy_input(dstore) -> list:
-    inputs = []
-    for e in dstore:
-        if not e:
-            continue
-        if not isinstance(e, source_proxy):
-            e = e if hasattr(e, "source") else source_proxy(e)
-        inputs.append(e)
-
-    return inputs
-
-
-GetIdFuncType = typing.Callable[[source_proxy | snx_typing.HasSource], str | None]
-
-
-class propagate_source:
-    """retains result association with source
-
-    Notes
-    -----
-    Returns the unwrapped result if it has a .source instance,
-    otherwise returns the original source_proxy with the .obj
-    updated with result.
-    """
-
-    def __init__(self, app, id_from_source: GetIdFuncType) -> None:
-        self.app = app
-        self.id_from_source = id_from_source
-
-    def __call__(
-        self, value: source_proxy | snx_typing.HasSource
-    ) -> snx_typing.HasSource:
-        if not isinstance(value, source_proxy):
-            return self.app(value)
-
-        result = self.app(value.obj)
-        if self.id_from_source(result):
-            return result
-
-        value.set_obj(result)
-        return value
-
-
-@UI.display_wrap
-def _as_completed(
-    self: type,
-    dstore,
-    parallel: bool = False,
-    par_kw: dict | None = None,
-    id_from_source: GetIdFuncType = get_unique_id,
-    **kwargs,
-) -> Generator:
-    """invokes self composable function on the provided data store
-
-    Parameters
-    ----------
-    dstore
-        a path, list of paths, or DataStore to which the process will be
-        applied.
-    parallel : bool
-        run in parallel, according to arguments in par_kwargs. If True,
-        the last step of the composable function serves as the master
-        process, with earlier steps being executed in parallel for each
-        member of dstore.
-    par_kw
-        dict of values for configuring parallel execution.
-    kwargs
-        setting a show_progress boolean keyword value here
-        affects progress display code, other arguments are passed to
-        the progress bar display_wrap decorator
-
-    Notes
-    -----
-    If run in parallel, this instance serves as the master object and
-    aggregates results. If run in serial, results are returned in the
-    same order as provided.
-    """
-    if self._source_wrapped is None:
-        app = propagate_source(
-            self.input if self.app_type is WRITER else self, id_from_source
-        )
-    else:
-        app = (
-            self.input._source_wrapped
-            if self.app_type is WRITER
-            else self._source_wrapped
-        )
-
-    ui = kwargs.pop("ui")
-
-    if isinstance(dstore, str):
-        dstore = [dstore]
-    elif isinstance(dstore, DataStoreABC):
-        dstore = dstore.completed
-    mapped = _proxy_input(dstore)
-    if not mapped:
-        return mapped
-
-    if parallel:
-        par_kw = par_kw or {}
-        to_do = PAR.as_completed(app, mapped, **par_kw)
-    else:
-        to_do = map(app, mapped)
-
-    return ui.series(to_do, count=len(mapped), **kwargs)
 
 
 def is_app_composable(obj) -> bool:
@@ -751,187 +991,6 @@ def is_app_composable(obj) -> bool:
 def is_app(obj) -> bool:
     """checks whether obj has been decorated by define_app"""
     return hasattr(obj, "app_type")
-
-
-def _apply_to(
-    self,
-    dstore,
-    id_from_source: GetIdFuncType = get_unique_id,
-    parallel: bool = False,
-    par_kw: dict | None = None,
-    logger: CachingLogger | None = None,
-    cleanup: bool = True,
-    show_progress: bool = False,
-):
-    """invokes self composable function on the provided data store
-
-    Parameters
-    ----------
-    dstore
-        a path, list of paths, or DataStore to which the process will be
-        applied.
-    id_from_source : callable
-        makes the unique identifier from elements of dstore that will be
-        used for writing results
-    parallel : bool
-        run in parallel, according to arguments in par_kwargs. If True,
-        the last step of the composable function serves as the master
-        process, with earlier steps being executed in parallel for each
-        member of dstore.
-    par_kw
-        dict of values for configuring parallel execution.
-    logger
-        Argument ignored if not an io.writer. If a scitrack logger not provided,
-        one is created with a name that defaults to the composable function names
-        and the process ID.
-    cleanup : bool
-        after copying of log files into the data store, it is deleted
-        from the original location
-    show_progress : bool
-        controls progress bar display
-
-    Returns
-    -------
-    The output data store instance
-
-    Notes
-    -----
-    This is an append only function, meaning that if a member already exists
-    in self.data_store for an input, it is skipped.
-
-    If run in parallel, this instance spawns workers and aggregates results.
-    """
-    if self.app_type is WRITER:
-        self.input._source_wrapped = propagate_source(self.input, id_from_source)
-        self._source_wrapped = propagate_source(self, id_from_source)
-
-    if not self.input:
-        msg = f"{self!r} is not part of a composed function"
-        raise RuntimeError(msg)
-
-    if isinstance(dstore, str | Path):  # one filename
-        dstore = [dstore]
-    elif isinstance(dstore, DataStoreABC):
-        dstore = dstore.completed
-
-    # TODO this should fail if somebody provides data that cannot produce a unique_id
-    inputs = {}
-    for m in dstore:
-        input_id = Path(m.unique_id) if isinstance(m, DataMember) else m
-        input_id = id_from_source(input_id)
-        if input_id in inputs or not input_id:
-            msg = f"non-unique identifier {input_id!r} detected in data"
-            raise ValueError(msg)
-        if input_id in self.data_store:
-            # we are assuming that this query returns True only when
-            # an input_id is completed, we will not hit this if not_completed
-            continue
-        inputs[input_id] = m
-
-    if not dstore:  # this should just return datastore, because if all jobs are done!
-        msg = "dstore is empty"
-        raise ValueError(msg)
-
-    self.set_logger(logger)
-    if self.logger:
-        start = time.time()
-        logger = self.logger
-        logger.log_message(str(self), label="composable function")
-        logger.log_versions(["scinexus"])
-
-    inputs = _proxy_input(inputs.values())
-    for result in self.as_completed(
-        inputs,
-        parallel=parallel,
-        par_kw=par_kw,
-        show_progress=show_progress,
-    ):
-        member = self.main(
-            data=getattr(result, "obj", result),
-            identifier=id_from_source(result),
-        )
-        if self.logger:
-            md5 = getattr(member, "md5", None)
-            logger.log_message(str(member), label="output")
-            if md5:
-                logger.log_message(md5, label="output md5sum")
-
-    if self.logger:
-        taken = time.time() - start
-        logger.log_message(f"{taken}", label="TIME TAKEN")
-        log_file_path = Path(logger.log_file_path)
-        logger.shutdown()
-        self.data_store.write_log(
-            unique_id=log_file_path.name,
-            data=log_file_path.read_text(),
-        )
-        if cleanup:
-            log_file_path.unlink(missing_ok=True)
-
-    # write citations
-    self.data_store.write_citations(data=self.citations)
-
-    return self.data_store
-
-
-def _set_logger(self, logger=None) -> None:
-    if logger is False:
-        self.logger = None
-        return
-    if logger is None:
-        logger = CachingLogger(create_dir=True)
-    if not isinstance(logger, CachingLogger):
-        msg = f"logger must be of type CachingLogger not {type(logger)}"
-        raise TypeError(msg)
-    if not logger.log_file_path:
-        src = Path(self.data_store.source).parent
-        logger.log_file_path = str(src / _make_logfile_name(self))
-    self.logger = logger
-
-
-def _get_citations(self) -> tuple[Citation, ...]:
-    """Return citations for this app and all composed input apps."""
-    seen: set[Citation] = set()
-    result: list[Citation] = []
-
-    if self._cite is not None:
-        self._cite.app = self.__class__.__name__
-        seen.add(self._cite)
-        result.append(self._cite)
-
-    head = getattr(self, "input", None)
-    while head is not None:
-        if head._cite is not None and head._cite not in seen:
-            head._cite.app = head.__class__.__name__
-            seen.add(head._cite)
-            result.append(head._cite)
-        head = getattr(head, "input", None)
-
-    return tuple(result)
-
-
-def _citations_property(self) -> tuple[Citation, ...]:
-    """Citations for this app and all composed input apps."""
-    return self._get_citations()
-
-
-def _bib(self) -> str:
-    """BibTeX formatted string of citations for this app and all composed input apps."""
-    return "\n\n".join(str(cite) for cite in self.citations)
-
-
-__mapping = {
-    "__new__": _new,
-    "__add__": _add,
-    "__call__": _call,
-    "__repr__": _repr,  # str(obj) calls __repr__ if __str__ missing
-    "_validate_data_type": _validate_data_type,
-    "disconnect": _disconnect,
-    "apply_to": _apply_to,
-    "as_completed": _as_completed,
-    "set_logger": _set_logger,
-    "_get_citations": _get_citations,
-}
 
 
 @register_deserialiser(get_object_provenance(NotCompleted))

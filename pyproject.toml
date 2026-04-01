@@ -34,3 +34,6 @@ markers = [
     "mpi: marks tests requiring MPI (run with nox -s testmpi)",
 ]
 testpaths = ["tests"]
+
+[tool.mypy]
+plugins = ["scinexus._mypy_plugin"]
