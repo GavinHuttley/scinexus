@@ -4,7 +4,6 @@ import pickle
 import typing
 import zipfile
 from collections.abc import Callable
-from functools import singledispatch
 from gzip import compress as gzip_compress
 from gzip import decompress as gzip_decompress
 from pathlib import Path
@@ -222,27 +221,6 @@ def to_json(data: dict) -> str:
 def from_json(data: str) -> dict:
     """Convert json string to primitive python types."""
     return json.loads(data)
-
-
-@singledispatch
-def _read_it(path) -> str:
-    try:
-        data = path.read()
-    except AttributeError:
-        msg = f"unexpected type {type(path)}"
-        raise OSError(msg)
-    return data
-
-
-@_read_it.register
-def _(path: Path) -> str:
-    path = path.expanduser().absolute()
-    return path.read_text()
-
-
-@_read_it.register
-def _(path: str) -> str:
-    return _read_it(Path(path))
 
 
 DEFAULT_DESERIALISER = unpickle_it() + from_primitive()

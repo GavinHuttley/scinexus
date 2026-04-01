@@ -8,7 +8,7 @@ import time
 from collections.abc import Sized
 from typing import TYPE_CHECKING, ParamSpec, TypeVar
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Callable, Collection, Generator, Iterable
     from collections.abc import Sequence as PySeq
     from typing import Any, Self

@@ -4,7 +4,7 @@ import inspect
 import re
 from typing import TYPE_CHECKING, ParamSpec, TypeVar
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Callable
 
 _wout_period = re.compile(r"^\.")
