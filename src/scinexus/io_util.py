@@ -16,7 +16,6 @@ from types import TracebackType
 from typing import IO, Any
 from urllib.parse import ParseResult, urlparse
 from urllib.request import urlopen
-from zipfile import ZipFile
 
 from charset_normalizer import detect
 
@@ -94,6 +93,8 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
     encoding = kwargs.pop("encoding") if "encoding" in kwargs else "latin-1"
     if mode.startswith("w"):
         return atomic_write(filename, mode=mode, in_zip=True)  # type: ignore[return-value]
+
+    from zipfile import ZipFile
 
     mode = mode.strip("t")
     with ZipFile(filename) as zf:
@@ -330,6 +331,8 @@ class atomic_write:
         shutil.rmtree(src.parent)
 
     def _close_rename_zip(self, src: Path) -> None:
+        from zipfile import ZipFile
+
         if self._in_zip is None:
             msg = "in_zip path is unexpectedly None"
             raise ValueError(msg)

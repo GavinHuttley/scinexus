@@ -2,7 +2,6 @@ import contextlib
 import json
 import pickle
 import typing
-import zipfile
 from collections.abc import Callable
 from gzip import compress as gzip_compress
 from gzip import decompress as gzip_decompress
@@ -97,6 +96,8 @@ def open_data_store(
     mode
         opening mode, either r, w, a as per file opening modes
     """
+    import zipfile
+
     mode = Mode(mode)
     if not isinstance(suffix, str | type(None)):
         msg = f"suffix {type(suffix)} not one of string or None"

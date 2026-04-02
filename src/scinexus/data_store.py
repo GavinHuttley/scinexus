@@ -3,10 +3,8 @@ from __future__ import annotations
 import contextlib
 import inspect
 import json
-import pathlib
 import re
 import reprlib
-import zipfile
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from enum import Enum
@@ -766,17 +764,21 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
 
     def read(self, unique_id: str) -> str | bytes:
         """reads data corresponding to identifier from the zip archive"""
-        member_path = str(pathlib.Path(self.source.stem, unique_id)).replace("\\", "/")
+        import zipfile
+
+        member_path = str(Path(self.source.stem, unique_id)).replace("\\", "/")
         with zipfile.ZipFile(self.source) as archive:
             raw = archive.open(member_path)
             wrapped = TextIOWrapper(raw, encoding="latin-1")
             return wrapped.read()
 
     def _iter_matches(self, subdir: str, pattern: str) -> Iterator[Path]:
+        import zipfile
+
         with zipfile.ZipFile(self._source) as archive:
             names = archive.namelist()
             for name in names:
-                p = pathlib.Path(name)
+                p = Path(name)
                 if subdir and p.parent.name != subdir:
                     continue
                 if p.match(pattern) and not p.name.startswith("."):
@@ -803,7 +805,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         if not self._not_completed:
             self._not_completed = []
             num_matches = 0
-            nc_dir_path = pathlib.Path(_NOT_COMPLETED_TABLE)
+            nc_dir_path = Path(_NOT_COMPLETED_TABLE)
             for name in self._iter_matches(_NOT_COMPLETED_TABLE, "*.json"):
                 num_matches += 1
                 member = DataMember(
@@ -818,7 +820,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
 
     @property
     def logs(self) -> list[DataMemberABC]:
-        log_dir = pathlib.Path(_LOG_TABLE)
+        log_dir = Path(_LOG_TABLE)
         logs: list[DataMemberABC] = []
         for name in self._iter_matches(_LOG_TABLE, "*"):
             m = DataMember(data_store=self, unique_id=str(log_dir / name.name))
@@ -838,7 +840,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         """
         uid_name = Path(unique_id).name
         md5_name = re.sub(rf"[.]({self.suffix}|json)$", ".txt", uid_name)
-        md5_dir = pathlib.Path(_MD5_TABLE)
+        md5_dir = Path(_MD5_TABLE)
         for name in self._iter_matches(_MD5_TABLE, md5_name):
             m = DataMember(data_store=self, unique_id=str(md5_dir / name.name))
             result = m.read()
@@ -867,9 +869,11 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         raise TypeError(msg)
 
     def _load_citations(self) -> list[CitationBase]:
+        import zipfile
+
         from citeable import from_jsons
 
-        target = str(pathlib.Path(self.source.stem, _CITATIONS_FILE)).replace("\\", "/")
+        target = str(Path(self.source.stem, _CITATIONS_FILE)).replace("\\", "/")
         try:
             with zipfile.ZipFile(self.source) as archive:
                 data = archive.read(target).decode("utf-8")
