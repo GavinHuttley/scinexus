@@ -30,18 +30,18 @@ def _get_main_return_type(ctx: ClassDefContext) -> MypyType | None:
 
 
 def _define_app_hook(ctx: ClassDefContext) -> bool:
-    """Add __call__ with correct return type to @define_app-decorated classes."""
+    """Add __call__ and __add__ to @define_app-decorated classes."""
     ret = _get_main_return_type(ctx)
     if ret is None:
         return True
 
+    from mypy.types import Instance
+
     # Build NotCompleted union type
-    not_completed_type = AnyType(TypeOfAny.special_form)
+    not_completed_type: MypyType = AnyType(TypeOfAny.special_form)
     nc_info = ctx.api.lookup_fully_qualified_or_none("scinexus.composable.NotCompleted")
     if nc_info and nc_info.node:
-        from mypy.types import Instance
-
-        not_completed_type = Instance(nc_info.node, [])  # type: ignore[assignment,arg-type]
+        not_completed_type = Instance(nc_info.node, [])  # type: ignore[arg-type]
 
     return_type = UnionType([ret, not_completed_type])
 
@@ -71,6 +71,24 @@ def _define_app_hook(ctx: ClassDefContext) -> bool:
         [val_arg, args_arg, kwargs_arg],
         return_type,
     )
+
+    # Add ComposableApp as a base class so instances are recognised as
+    # composable by mypy (the runtime decorator rebuilds the class with
+    # ComposableApp as a base via types.new_class).
+    composable_sym = ctx.api.lookup_fully_qualified_or_none(
+        "scinexus.composable.ComposableApp"
+    )
+    if composable_sym and composable_sym.node:
+        any_type = AnyType(TypeOfAny.explicit)
+        base_type = Instance(composable_sym.node, [any_type, any_type])  # type: ignore[arg-type]
+        if not any(
+            isinstance(b, Instance)
+            and b.type.fullname == "scinexus.composable.ComposableApp"
+            for b in ctx.cls.info.bases
+        ):
+            ctx.cls.info.bases.append(base_type)
+            ctx.cls.info.mro.insert(1, composable_sym.node)  # type: ignore[arg-type]
+
     return True
 
 

@@ -41,7 +41,9 @@ class SerialisableType(Protocol):
 IdentifierType = Union[str, Path, DataMemberABC]
 
 
-def _resolve_name(name: str, module_globals: dict[str, object] | None = None) -> type:
+def _resolve_name(
+    name: str, module_globals: dict[str, object] | None = None
+) -> type[Any]:
     """resolves a string name to a type, checking module_globals"""
     if module_globals and name in module_globals:
         result = module_globals[name]
@@ -128,7 +130,7 @@ def get_type_display_names(hint: object) -> frozenset[str]:
     return frozenset(names)
 
 
-def _get_concrete_classes(hint: object) -> set[type]:
+def _get_concrete_classes(hint: object) -> set[type[Any]]:
     """extracts concrete classes from a resolved type hint, walking Unions"""
     classes = set()
     origin = get_origin(hint)
