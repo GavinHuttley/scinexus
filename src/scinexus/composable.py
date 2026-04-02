@@ -42,6 +42,7 @@ _builtin_seqs = list, set, tuple
 
 T = TypeVar("T")
 R = TypeVar("R")
+_T = TypeVar("_T")
 
 
 def _make_logfile_name(process: object) -> str:
@@ -226,10 +227,10 @@ def _set_hints(
     return main_meth
 
 
-class source_proxy:
+class source_proxy(Generic[_T]):
     __slots__ = ("_obj", "_src", "_uuid")
 
-    def __init__(self, obj: typing.Any) -> None:
+    def __init__(self, obj: _T) -> None:
         self._obj = obj
         self._src = obj
         self._uuid = uuid4()
@@ -238,7 +239,7 @@ class source_proxy:
         return hash(self._uuid)
 
     @property
-    def obj(self) -> typing.Any:
+    def obj(self) -> _T:
         return self._obj
 
     def set_obj(self, obj: typing.Any) -> None:
@@ -282,7 +283,7 @@ class source_proxy:
         return self.obj.__eq__(other)
 
     def __len__(self) -> int:
-        return self.obj.__len__()
+        return self.obj.__len__()  # type: ignore[attr-defined]
 
     # pickling induces infinite recursion on python 3.10
     # only on Windows, so implementing the following methods explicitly
@@ -293,7 +294,7 @@ class source_proxy:
         self._obj, self._src, self._uuid = state
 
 
-def _proxy_input(dstore: Iterable[Any]) -> list[source_proxy]:
+def _proxy_input(dstore: Iterable[Any]) -> list[source_proxy[Any]]:
     inputs = []
     for e in dstore:
         if not e:
@@ -305,7 +306,7 @@ def _proxy_input(dstore: Iterable[Any]) -> list[source_proxy]:
     return inputs
 
 
-GetIdFuncType = typing.Callable[[source_proxy | snx_typing.HasSource], str | None]
+GetIdFuncType = typing.Callable[[source_proxy[Any] | snx_typing.HasSource], str | None]
 
 
 class propagate_source:
@@ -323,7 +324,7 @@ class propagate_source:
         self.id_from_source = id_from_source
 
     def __call__(
-        self, value: source_proxy | snx_typing.HasSource
+        self, value: source_proxy[Any] | snx_typing.HasSource
     ) -> snx_typing.HasSource:
         if not isinstance(value, source_proxy):
             return self.app(value)
