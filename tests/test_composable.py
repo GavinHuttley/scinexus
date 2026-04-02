@@ -1347,6 +1347,37 @@ def test_as_completed_string_input():
     assert len(results) == 1
 
 
+def test_as_completed_with_progress_instance():
+    from scinexus.progress import NoProgress
+
+    @define_app
+    class ac_prog:
+        def main(self, val: str) -> str:
+            return val.upper()
+
+    app = ac_prog()
+    results = list(app.as_completed(["a", "b"], show_progress=NoProgress()))
+    objs = [r.obj if isinstance(r, source_proxy) else r for r in results]
+    assert len(objs) == 2
+    assert "A" in objs
+
+
+def test_as_completed_with_tqdm_progress():
+    from scinexus.progress import TqdmProgress
+
+    @define_app
+    class ac_tqdm:
+        def main(self, val: int) -> int:
+            return val * 2
+
+    app = ac_tqdm()
+    results = list(
+        app.as_completed([1, 2, 3], show_progress=TqdmProgress(disable=True))
+    )
+    objs = [r.obj if isinstance(r, source_proxy) else r for r in results]
+    assert len(objs) == 3
+
+
 def test_writer_set_logger_default(tmp_path):
     @define_app(app_type=WRITER)
     class w_logger:

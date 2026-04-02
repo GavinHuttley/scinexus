@@ -1,3 +1,5 @@
+import os
+import sqlite3
 from pathlib import Path
 from pickle import dumps, loads
 
@@ -8,9 +10,12 @@ from scitrack import get_text_hexdigest
 from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import OVERWRITE, READONLY
 from scinexus.sqlite_data_store import (
+    _LOG_TABLE,
     _MEMORY,
+    _RESULT_TABLE,
     DataStoreSqlite,
     has_valid_schema,
+    open_sqlite_db_ro,
     open_sqlite_db_rw,
 )
 
@@ -43,6 +48,25 @@ def sample_citations():
         publisher="test",
     )
     return (cite1, cite2)
+
+
+@pytest.fixture
+def writable_store(tmp_dir):
+    path = tmp_dir / "writable.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    yield dstore
+    dstore.close()
+
+
+@pytest.fixture
+def populated_store(tmp_dir):
+    """A store with data, closed and ready for read-only access."""
+    path = tmp_dir / "populated.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    dstore.close()
+    return path
 
 
 def test_db_creation(tmp_dir):
@@ -436,3 +460,153 @@ def test_describe_sqlite_with_display(tmp_dir):
     finally:
         set_summary_display(None)
         dstore.close()
+
+
+def test_open_sqlite_db_ro_invalid_schema(tmp_dir):
+    path = tmp_dir / "bad_schema.sqlitedb"
+    db = sqlite3.connect(str(path))
+    db.execute("CREATE TABLE IF NOT EXISTS bogus(id INTEGER PRIMARY KEY)")
+    db.close()
+    with pytest.raises(ValueError, match="valid schema"):
+        open_sqlite_db_ro(path)
+
+
+def test_lock_raises_when_db_none(tmp_dir):
+    path = tmp_dir / "lock_none.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    # _db is None before first access to .db property
+    with pytest.raises(RuntimeError, match="unexpectedly None"):
+        dstore.lock()
+
+
+def test_lock_overwrite_on_locked_db(tmp_dir):
+    path = tmp_dir / "lock_ow.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    _ = dstore.db  # opens and locks
+    # fake a different pid in the lock
+    dstore._db.execute(  # noqa: SLF001
+        "UPDATE state SET lock_pid=? WHERE state_id=1",
+        (os.getpid() + 1,),
+    )
+    dstore2 = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore2._db = dstore._db  # noqa: SLF001
+    with pytest.raises(OSError, match="locked"):
+        dstore2.lock()
+    dstore.close()
+
+
+def test_lock_update_existing_state(writable_store):
+    writable_store.unlock()
+    assert not writable_store.locked
+    # re-lock: state row exists but lock_pid is NULL → UPDATE path
+    writable_store.lock()
+    assert writable_store.locked
+
+
+def test_unlock_readonly(populated_store):
+    ro = DataStoreSqlite(populated_store, mode=READONLY)
+    ro.unlock()  # should be a no-op, no error
+    ro.close()
+
+
+def test_unlock_already_unlocked(writable_store):
+    writable_store.unlock()
+    assert not writable_store.locked
+    writable_store.unlock()  # should be a no-op
+
+
+def test_write_duplicate_not_added_to_completed(writable_store):
+    writable_store.write(unique_id="r1", data="d1_updated")
+    assert len(writable_store.completed) == 1
+
+
+def test_write_log_with_table_prefix(tmp_dir, DATA_DIR):
+    path = tmp_dir / "log_prefix.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    log_text = (DATA_DIR / "scitrack.log").read_text()
+    dstore.write_log(unique_id=f"{_LOG_TABLE}/test.log", data=log_text)
+    assert len(dstore.logs) == 1
+    dstore.close()
+
+
+def test_write_not_completed_with_table_prefix(tmp_dir):
+    path = tmp_dir / "nc_prefix.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    nc = NotCompleted(NotCompletedType.FAIL, "dummy", "msg", source="src")
+    dstore.write_not_completed(unique_id=f"{_RESULT_TABLE}/nc1", data=nc.to_json())
+    assert len(dstore.not_completed) == 1
+    dstore.close()
+
+
+def test_write_citations_update_existing(tmp_dir, sample_citations):
+    path = tmp_dir / "cite_update.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write_citations(data=sample_citations)
+    # write again to trigger UPDATE path
+    dstore.write_citations(data=(sample_citations[0],))
+    loaded = dstore._load_citations()  # noqa: SLF001
+    assert len(loaded) == 1
+    dstore.close()
+
+
+def test_load_citations_no_table(tmp_dir):
+    path = tmp_dir / "no_cite_table.sqlitedb"
+    # create db without citations table
+    db = sqlite3.connect(str(path))
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS state"
+        "(state_id INTEGER PRIMARY KEY, record_type TEXT, lock_pid INTEGER)",
+    )
+    db.execute(
+        f"CREATE TABLE IF NOT EXISTS {_LOG_TABLE}"
+        "(log_id INTEGER PRIMARY KEY, log_name TEXT, date timestamp, data BLOB)",
+    )
+    db.execute(
+        f"CREATE TABLE IF NOT EXISTS {_RESULT_TABLE}"
+        "(record_id TEXT PRIMARY KEY, log_id INTEGER, md5 BLOB, is_completed INTEGER, data BLOB)",
+    )
+    db.close()
+    dstore = DataStoreSqlite(path, mode=READONLY)
+    result = dstore._load_citations()  # noqa: SLF001
+    assert result == []
+    dstore.close()
+
+
+def test_describe_locked_different_pid(writable_store):
+    writable_store._db.execute(  # noqa: SLF001
+        "UPDATE state SET lock_pid=? WHERE state_id=1",
+        (os.getpid() + 1,),
+    )
+    result = writable_store._describe()  # noqa: SLF001
+    assert "Locked db store" in result["title"]
+    assert str(os.getpid() + 1) in result["title"]
+
+
+def test_describe_unlocked(writable_store):
+    writable_store.unlock()
+    result = writable_store._describe()  # noqa: SLF001
+    assert result["title"] == "Unlocked db store."
+
+
+def test_record_type_getter_and_setter(writable_store):
+    from scinexus.misc import get_object_provenance
+
+    writable_store.record_type = str  # set using a type object
+    assert writable_store.record_type == get_object_provenance(str)
+
+
+def test_record_type_overwrite_error(writable_store):
+    writable_store.record_type = str
+    with pytest.raises(OSError, match="cannot overwrite"):
+        writable_store.record_type = int
+
+
+def test_summary_not_completed(tmp_dir):
+    path = tmp_dir / "summary_nc.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    nc = NotCompleted(NotCompletedType.FAIL, "dummy", "test msg", source="src")
+    dstore.write_not_completed(unique_id="nc1", data=nc.to_json())
+    result = dstore._summary_not_completed()  # noqa: SLF001
+    assert isinstance(result, list)
+    assert len(result) == 1
+    dstore.close()
