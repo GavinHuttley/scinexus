@@ -65,10 +65,7 @@ def _get_compression_open(
     if not (path or compression):
         msg = "either path or compression argument must be provided"
         raise ValueError(msg)
-    if compression is None:
-        if path is None:
-            msg = "path is required when compression is None"
-            raise ValueError(msg)
+    if compression is None and path is not None:
         _, compression = get_format_suffixes(path)
     return None if compression is None else _compression_handlers.get(compression)
 
@@ -335,7 +332,8 @@ class atomic_write:
 
         if self._in_zip is None:
             msg = "in_zip path is unexpectedly None"
-            raise ValueError(msg)
+            raise RuntimeError(msg)
+
         with ZipFile(self._in_zip, "a") as out:
             out.write(str(src), arcname=self._path)
 
