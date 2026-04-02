@@ -1,10 +1,18 @@
 import multiprocessing
+import os
 import time
+from unittest.mock import patch
 
 import numpy
+import pytest
 
 from scinexus import parallel
-from scinexus.parallel import as_completed
+from scinexus.parallel import (
+    PicklableAndCallable,
+    as_completed,
+    get_default_chunksize,
+    get_size,
+)
 
 
 def get_process_value(n):
@@ -77,3 +85,101 @@ def test_as_completed():
     data = list(range(10))
     result = sorted(as_completed(_double, data, use_mpi=False))
     assert result == sorted(x * 2 for x in data)
+
+
+def test_get_size():
+    """get_size returns cpu_count when not using MPI"""
+    assert get_size() == multiprocessing.cpu_count()
+
+
+def test_get_default_chunksize_exact():
+    """chunksize with no remainder"""
+    assert get_default_chunksize(range(16), 4) == 1
+
+
+def test_get_default_chunksize_remainder():
+    """chunksize rounds up when there is a remainder"""
+    assert get_default_chunksize(range(17), 4) == 2
+
+
+def test_picklable_and_callable():
+    """PicklableAndCallable wraps and delegates calls"""
+    wrapped = PicklableAndCallable(_double)
+    assert wrapped(5) == 10
+
+
+def test_imap_invalid_if_serial():
+    """invalid if_serial raises ValueError"""
+    with pytest.raises(ValueError, match="invalid choice"):
+        list(parallel.imap(_double, [1], if_serial="invalid"))
+
+
+def test_imap_max_workers_too_large():
+    """max_workers >= cpu_count raises ValueError"""
+    n = multiprocessing.cpu_count()
+    with pytest.raises(ValueError, match="max_workers"):
+        list(parallel.imap(_double, [1], max_workers=n))
+
+
+def test_as_completed_invalid_if_serial():
+    """invalid if_serial raises ValueError in as_completed"""
+    with pytest.raises(ValueError, match="invalid choice"):
+        list(as_completed(_double, [1], if_serial="invalid"))
+
+
+def test_as_completed_max_workers_clamped():
+    """large max_workers in _as_completed_mproc gets clamped"""
+    data = list(range(4))
+    result = sorted(as_completed(_double, data, max_workers=9999, use_mpi=False))
+    assert result == sorted(x * 2 for x in data)
+
+
+def test_imap_use_mpi_when_unavailable():
+    """imap(use_mpi=True) raises RuntimeError when MPI unavailable"""
+    with patch.object(parallel, "USING_MPI", False):
+        with pytest.raises(RuntimeError, match="Cannot use MPI"):
+            list(parallel.imap(_double, [1], use_mpi=True))
+
+
+def test_imap_non_sized_iterable():
+    """imap with a generator (non-Sized) defaults chunksize to 1"""
+
+    def gen():
+        yield from range(4)
+
+    result = list(parallel.imap(_double, gen(), max_workers=1, use_mpi=False))
+    assert sorted(result) == [0, 2, 4, 6]
+
+
+def test_get_rank_worker_process():
+    """get_rank parses rank from worker process name"""
+    mock_process = type("FakeProcess", (), {"name": "LokyProcess-3"})()
+    with patch("multiprocessing.current_process", return_value=mock_process):
+        assert parallel.get_rank() == 3
+
+
+def test_dont_use_mpi_env_var():
+    """DONT_USE_MPI env var disables MPI import"""
+    import importlib
+
+    with patch.dict("os.environ", {"DONT_USE_MPI": "1"}):
+        importlib.reload(parallel)
+        assert parallel.MPI is None
+        assert parallel.USING_MPI is False
+    # reload to restore original state
+    os.environ.pop("DONT_USE_MPI", None)
+    importlib.reload(parallel)
+
+
+def test_mpi_import_error_fallback():
+    """MPI is None when mpi4py cannot be imported"""
+    import importlib
+
+    import scinexus.parallel as par
+
+    with patch.dict("sys.modules", {"mpi4py": None, "mpi4py.futures": None}):
+        importlib.reload(par)
+        assert par.MPI is None
+        assert par.USING_MPI is False
+    # reload to restore original state
+    importlib.reload(par)
