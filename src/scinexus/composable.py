@@ -7,11 +7,11 @@ import time
 import traceback
 import types
 import typing
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from copy import copy, deepcopy
 from enum import Enum
 from pathlib import Path
-from typing import Generic, TypeVar
+from typing import Any, Generic, Self, TypeVar
 from uuid import uuid4
 
 from citeable import Citation
@@ -44,7 +44,7 @@ T = TypeVar("T")
 R = TypeVar("R")
 
 
-def _make_logfile_name(process) -> str:
+def _make_logfile_name(process: object) -> str:
     text = re.split(r"\s+\+\s+", str(process))
     parts = []
     for part in text:
@@ -108,7 +108,7 @@ class NotCompleted(int):
         result.source = source
         return result
 
-    def __getnewargs_ex__(self, *args, **kw):
+    def __getnewargs_ex__(self) -> tuple[tuple[Any, ...], dict[str, Any]]:
         return self._persistent[0], self._persistent[1]
 
     def __repr__(self) -> str:
@@ -119,7 +119,7 @@ class NotCompleted(int):
         source = self.source or "Unknown"
         return f'{name}(type={self.type.value}, origin={self.origin}, source="{source}", message="{self.message}")'
 
-    def to_rich_dict(self) -> dict:
+    def to_rich_dict(self) -> dict[str, Any]:
         """returns components for to_json"""
         return {
             "type": get_object_provenance(self),
@@ -149,7 +149,9 @@ GENERIC = AppType.GENERIC
 NON_COMPOSABLE = AppType.NON_COMPOSABLE
 
 
-def _get_raw_hints(main_func, min_params):
+def _get_raw_hints(
+    main_func: Callable[..., Any], min_params: int
+) -> tuple[object, object]:
     _no_value = inspect.Parameter.empty
     params = inspect.signature(main_func)
     if len(params.parameters) < min_params:
@@ -194,7 +196,7 @@ def _get_raw_hints(main_func, min_params):
     return first_param_type, return_type
 
 
-def _get_main_hints(klass: type) -> tuple:
+def _get_main_hints(klass: type) -> tuple[object, object]:
     """return raw type hints for main method
 
     Returns
@@ -215,7 +217,9 @@ def _get_main_hints(klass: type) -> tuple:
     return first_param_type, return_type
 
 
-def _set_hints(main_meth, first_param_type, return_type):
+def _set_hints(
+    main_meth: Callable[..., Any], first_param_type: object, return_type: object
+) -> Callable[..., Any]:
     """adds type hints to main"""
     main_meth.__annotations__["arg"] = first_param_type
     main_meth.__annotations__["return"] = return_type
@@ -289,7 +293,7 @@ class source_proxy:
         self._obj, self._src, self._uuid = state
 
 
-def _proxy_input(dstore) -> list:
+def _proxy_input(dstore: Iterable[Any]) -> list[source_proxy]:
     inputs = []
     for e in dstore:
         if not e:
@@ -314,7 +318,7 @@ class propagate_source:
     updated with result.
     """
 
-    def __init__(self, app, id_from_source: GetIdFuncType) -> None:
+    def __init__(self, app: AppBase[Any, Any], id_from_source: GetIdFuncType) -> None:
         self.app = app
         self.id_from_source = id_from_source
 
@@ -332,7 +336,9 @@ class propagate_source:
         return value
 
 
-def _init_subclass_setup(cls, app_type, skip_not_completed, cite):
+def _init_subclass_setup(
+    cls: Any, app_type: AppType | str, skip_not_completed: bool, cite: Citation | None
+) -> None:
     """Shared setup logic for __init_subclass__ and define_app."""
     app_type = AppType(app_type)
 
@@ -365,18 +371,18 @@ class AppBase(Generic[T, R]):
     _cite: Citation | None
     _input_type: type
     _return_type: type
-    _init_vals: dict
+    _init_vals: dict[str, Any]
     app_type: AppType
-    input: typing.Any
-    main: typing.Callable
+    input: Any
+    main: Callable[..., Any]
 
     def __init_subclass__(
         cls,
-        app_type=GENERIC,
-        skip_not_completed=True,
-        cite=None,
-        **kwargs,
-    ):
+        app_type: AppType | str = GENERIC,
+        skip_not_completed: bool = True,
+        cite: Citation | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init_subclass__(**kwargs)
         # Skip setup for intermediate bases and classes built by define_app
         if "_is_intermediate_base" in cls.__dict__ or getattr(
@@ -385,13 +391,13 @@ class AppBase(Generic[T, R]):
             return
         _init_subclass_setup(cls, app_type, skip_not_completed, cite)
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         obj = object.__new__(cls)
 
         if hasattr(cls, "_func_sig"):
             # we have a decorated function, the first parameter in the signature
             # is not given to constructor, so we create a new signature excluding that one
-            params = cls._func_sig.parameters
+            params = cls._func_sig.parameters  # type: ignore[attr-defined]
             init_sig = inspect.Signature(parameters=list(params.values())[1:])
             bargs = init_sig.bind_partial(*args, **kwargs)
         else:
@@ -404,12 +410,12 @@ class AppBase(Generic[T, R]):
         obj._init_vals = init_vals
         return obj
 
-    def __copy__(self):
+    def __copy__(self) -> Self:
         new = object.__new__(type(self))
         new.__dict__.update(self.__dict__)
         return new
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other: object) -> bool:
         if not isinstance(other, type(self)):
             return False
         return all(
@@ -438,7 +444,7 @@ class AppBase(Generic[T, R]):
             head._check_data_type = value
             head = getattr(head, "input", None)
 
-    def __call__(self, val: T, *args, **kwargs) -> R | NotCompleted:
+    def __call__(self, val: T, *args: Any, **kwargs: Any) -> R | NotCompleted:
         if val is None:
             return NotCompleted(
                 NotCompletedType.ERROR, self, "unexpected input value None", source=val
@@ -455,7 +461,7 @@ class AppBase(Generic[T, R]):
         if self._check_data_type:
             type_checked = self._validate_data_type(val)
             if not type_checked:
-                return type_checked
+                return type_checked  # type: ignore[return-value]
 
         try:
             result = self.main(val, *args, **kwargs)
@@ -470,7 +476,7 @@ class AppBase(Generic[T, R]):
             )
         return result
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         val = f"{self.input!r} + " if self.app_type is not LOADER and self.input else ""
         all_args = {**self._init_vals}
         args_items = all_args.pop("args", None)
@@ -489,7 +495,7 @@ class AppBase(Generic[T, R]):
 
     __str__ = __repr__
 
-    def _validate_data_type(self, data):
+    def _validate_data_type(self, data: Any) -> bool | NotCompleted:
         """checks data type matches defined compatible types using typeguard"""
         if isinstance(data, NotCompleted):
             if self._skip_not_completed:
@@ -516,12 +522,12 @@ class AppBase(Generic[T, R]):
 
     def as_completed(
         self,
-        dstore,
+        dstore: DataStoreABC | Iterable[Any] | str,
         parallel: bool = False,
-        par_kw: dict | None = None,
+        par_kw: dict[str, Any] | None = None,
         id_from_source: GetIdFuncType = get_unique_id,
         show_progress: bool | Progress = False,
-    ) -> Iterator:
+    ) -> Iterator[Any]:
         """invokes self composable function on the provided data store
 
         Parameters
@@ -611,7 +617,7 @@ class ComposableApp(AppBase[T, R]):
 
     _is_intermediate_base: bool = True
 
-    def __add__(self, other):
+    def __add__(self, other: ComposableApp[Any, Any]) -> ComposableApp[Any, Any]:
         if getattr(other, "app_type", None) not in {WRITER, LOADER, GENERIC}:
             msg = f"{other!r} is not composable"
             raise TypeError(msg)
@@ -659,14 +665,14 @@ class WriterApp(ComposableApp[T, R]):
 
     def apply_to(
         self,
-        dstore,
+        dstore: DataStoreABC | Iterable[Any] | str | Path,
         id_from_source: GetIdFuncType = get_unique_id,
         parallel: bool = False,
-        par_kw: dict | None = None,
+        par_kw: dict[str, Any] | None = None,
         logger: CachingLogger | None = None,
         cleanup: bool = True,
         show_progress: bool | Progress = False,
-    ):
+    ) -> DataStoreABC:
         """invokes self composable function on the provided data store
 
         Parameters
@@ -788,7 +794,7 @@ class WriterApp(ComposableApp[T, R]):
 
         return self.data_store
 
-    def set_logger(self, logger=None) -> None:
+    def set_logger(self, logger: CachingLogger | bool | None = None) -> None:
         if logger is False:
             self.logger = None
             return
@@ -803,7 +809,7 @@ class WriterApp(ComposableApp[T, R]):
         self.logger = logger
 
 
-def _class_from_func(func):
+def _class_from_func(func: Callable[..., Any]) -> type:
     """make a class based on func
 
     Notes
@@ -816,12 +822,12 @@ def _class_from_func(func):
 
     # these methods MUST be in function scope so that separate instances are
     # created for each decorated function
-    def _init(self, *args, **kwargs) -> None:
+    def _init(self: Any, *args: Any, **kwargs: Any) -> None:
         self._args = args
         self._kwargs = kwargs
         self._source_wrapped = None
 
-    def _main(self, arg, *args, **kwargs):
+    def _main(self: Any, arg: Any, *args: Any, **kwargs: Any) -> Any:
         kw_args = deepcopy(self._kwargs)
         kw_args = {**kw_args, **kwargs}
         args = (arg, *args, *deepcopy(self._args))
@@ -832,20 +838,20 @@ def _class_from_func(func):
     sig = inspect.signature(func)
     class_name = func.__name__
     _main = _set_hints(_main, *_get_raw_hints(func, 1))
-    summary, body = docstring_to_summary_rest(func.__doc__)
+    summary, body = docstring_to_summary_rest(func.__doc__ or "")
     func.__doc__ = None
 
     _class_dict = {"__init__": _init, "main": _main, "_user_func": staticmethod(func)}
 
     for method_name, method in _class_dict.items():
-        method.__name__ = method_name
-        method.__qualname__ = f"{class_name}.{method_name}"
+        method.__name__ = method_name  # type: ignore[attr-defined]
+        method.__qualname__ = f"{class_name}.{method_name}"  # type: ignore[attr-defined]
 
     result = types.new_class(class_name, (), exec_body=lambda x: x.update(_class_dict))
     result.__module__ = module  # necessary for pickle support
-    result._func_sig = sig
+    result._func_sig = sig  # type: ignore[attr-defined]
     result.__doc__ = summary
-    result.__init__.__doc__ = body
+    result.__init__.__doc__ = body  # type: ignore[misc]
     return result
 
 
@@ -875,7 +881,7 @@ _FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset(
 
 
 def define_app(
-    klass=None,
+    klass: type | Callable[..., Any] | None = None,
     *,
     app_type: AppType = GENERIC,
     skip_not_completed: bool = True,
@@ -971,7 +977,7 @@ def define_app(
 
     if hasattr(klass, "app_type"):
         msg = (
-            f"The class {klass.__name__!r} is already decorated, avoid using "
+            f"The class {klass.__name__!r} is already decorated, avoid using "  # type: ignore[union-attr]
             "inheritance from a decorated class."
         )
         raise TypeError(
@@ -980,7 +986,7 @@ def define_app(
 
     app_type = AppType(app_type)
 
-    def wrapped(klass):
+    def wrapped(klass: type | Callable[..., Any]) -> type:
         if inspect.isfunction(klass):
             klass = _class_from_func(klass)
         if not inspect.isclass(klass):
@@ -989,6 +995,7 @@ def define_app(
 
         # Select base class based on app_type
         composable = app_type is not NON_COMPOSABLE
+        base: type[AppBase[Any, Any]]
         if app_type is WRITER:
             base = WriterApp
             forbidden = _FORBIDDEN_WRITER
@@ -1032,12 +1039,12 @@ def define_app(
         # parameterised form in __orig_bases__ for type checkers)
         new_klass = types.new_class(
             klass.__name__,
-            (base[raw_input, raw_return],),
+            (base[raw_input, raw_return],),  # type: ignore[index]
             exec_body=lambda ns: ns.update(original_dict),
         )
         new_klass.__module__ = klass.__module__
         new_klass.__qualname__ = klass.__qualname__
-        del new_klass._define_app_pending
+        del new_klass._define_app_pending  # type: ignore[attr-defined]
 
         # Run setup once with the decorator's arguments
         _init_subclass_setup(new_klass, app_type, skip_not_completed, cite)
@@ -1047,18 +1054,18 @@ def define_app(
     return wrapped(klass) if klass else wrapped  # type: ignore[return-value]
 
 
-def is_app_composable(obj) -> bool:
+def is_app_composable(obj: object) -> bool:
     """checks whether obj has been decorated by define_app and it's app_type attribute is not NON_COMPOSABLE"""
-    return is_app(obj) and obj.app_type is not NON_COMPOSABLE
+    return is_app(obj) and obj.app_type is not NON_COMPOSABLE  # type: ignore[attr-defined]
 
 
-def is_app(obj) -> bool:
+def is_app(obj: object) -> bool:
     """checks whether obj has been decorated by define_app"""
     return hasattr(obj, "app_type")
 
 
 @register_deserialiser(get_object_provenance(NotCompleted))
-def deserialise_not_completed(data: dict) -> NotCompleted:
+def deserialise_not_completed(data: dict[str, Any]) -> NotCompleted:
     """deserialising NotCompletedResult"""
     data.pop("version", None)
     init = data.pop("not_completed_construction")

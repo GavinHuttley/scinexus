@@ -1,5 +1,7 @@
 """Selected utility functions."""
 
+from __future__ import annotations
+
 import inspect
 import re
 from typing import TYPE_CHECKING, ParamSpec, TypeVar
@@ -30,18 +32,18 @@ def get_object_provenance(obj: object) -> str:
 
 def extend_docstring_from(
     source: object, pre: bool = False
-) -> "Callable[[Callable[P, R]], Callable[P, R]]":
-    def docstring_inheriting_decorator(dest):
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
+    def docstring_inheriting_decorator(dest: Callable[P, R]) -> Callable[P, R]:
         parts = [source.__doc__ or "", dest.__doc__ or ""]
         # trim leading/trailing blank lines from parts
         for i, part in enumerate(parts):
-            part = part.split("\n")
-            if not part[0].strip():
-                part.pop(0)
-            if part and not part[-1].strip():
-                part.pop(-1)
+            lines = part.split("\n")
+            if not lines[0].strip():
+                lines.pop(0)
+            if lines and not lines[-1].strip():
+                lines.pop(-1)
 
-            parts[i] = "\n".join(part)
+            parts[i] = "\n".join(lines)
 
         if pre:
             parts.reverse()

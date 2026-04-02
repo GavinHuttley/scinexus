@@ -1,15 +1,18 @@
+from __future__ import annotations
+
 import contextlib
 import functools
 import shutil
 import uuid
 from bz2 import open as bzip_open
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from gzip import open as gzip_open
 from io import TextIOWrapper
 from lzma import open as lzma_open
 from os import PathLike, remove
 from pathlib import Path, PurePath
 from tempfile import mkdtemp
+from types import TracebackType
 from typing import IO, Any
 from urllib.parse import ParseResult, urlparse
 from urllib.request import urlopen
@@ -71,7 +74,7 @@ def _get_compression_open(
     return None if compression is None else _compression_handlers.get(compression)
 
 
-def open_zip(filename: PathType, mode: str = "r", **kwargs) -> IO:
+def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
     """open a single member zip-compressed file
 
     Note
@@ -151,7 +154,7 @@ def open_(filename: PathType, mode: str = "rt", **kwargs: Any) -> IO[Any]:
     return op(filename, mode, encoding=encoding, **kwargs)
 
 
-def open_url(url: str | ParseResult, mode="rt", **kwargs) -> IO:
+def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]:
     """open a url
 
     Parameters
@@ -194,7 +197,7 @@ def open_url(url: str | ParseResult, mode="rt", **kwargs) -> IO:
     return response if "b" in mode else TextIOWrapper(response, encoding=encoding)
 
 
-def _path_relative_to_zip_parent(zip_path, member_path):
+def _path_relative_to_zip_parent(zip_path: Path, member_path: Path) -> Path:
     """returns member_path relative to zip_path
 
     Parameters
@@ -220,9 +223,9 @@ class atomic_write:
     def __init__(
         self,
         path: PathType,
-        tmpdir=None,
-        in_zip=None,
-        mode="w",
+        tmpdir: PathType | None = None,
+        in_zip: PathType | bool | None = None,
+        mode: str = "w",
         encoding: str | None = None,
     ) -> None:
         """
@@ -243,29 +246,35 @@ class atomic_write:
             text encoding
         """
         path = Path(path).expanduser()
-        in_zip = Path(in_zip) if isinstance(in_zip, str) else in_zip
         _, cmp = get_format_suffixes(path)
-        if in_zip and cmp == "zip":
-            in_zip = path if isinstance(in_zip, bool) else in_zip
+
+        zip_path: Path | None = None
+        if in_zip:
+            if isinstance(in_zip, bool):
+                zip_path = path if cmp == "zip" else None
+            else:
+                zip_path = Path(in_zip)
+
+        if zip_path and cmp == "zip":
             path = Path(str(path)[: str(path).rfind(".zip")])
 
-        if in_zip:
-            path = _path_relative_to_zip_parent(in_zip, path)
+        if zip_path:
+            path = _path_relative_to_zip_parent(zip_path, path)
 
         self._path = path
         self._cmp = cmp
         self._mode = mode
         self._file: IO[Any] | None = None
         self._encoding = encoding
-        self._in_zip = in_zip
+        self._in_zip = zip_path
         self._tmppath = self._make_tmppath(tmpdir)
 
-        self.succeeded = None
+        self.succeeded: bool | None = None
         self._close_func = (
-            self._close_rename_zip if in_zip else self._close_rename_standard
+            self._close_rename_zip if zip_path else self._close_rename_standard
         )
 
-    def _make_tmppath(self, tmpdir):
+    def _make_tmppath(self, tmpdir: PathType | None) -> Path:
         """returns path of temporary file
 
         Parameters
@@ -309,7 +318,7 @@ class atomic_write:
     def __enter__(self) -> IO[Any]:
         return self._get_fileobj()
 
-    def _close_rename_standard(self, src) -> None:
+    def _close_rename_standard(self, src: Path) -> None:
         dest = Path(self._path)
         try:
             dest.unlink()
@@ -320,13 +329,24 @@ class atomic_write:
 
         shutil.rmtree(src.parent)
 
-    def _close_rename_zip(self, src) -> None:
+    def _close_rename_zip(self, src: Path) -> None:
+        if self._in_zip is None:
+            msg = "in_zip path is unexpectedly None"
+            raise ValueError(msg)
         with ZipFile(self._in_zip, "a") as out:
             out.write(str(src), arcname=self._path)
 
         shutil.rmtree(src.parent)
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        if self._file is None:
+            msg = "file object is unexpectedly None"
+            raise ValueError(msg)
         self._file.close()
         if exc_type is None:
             self._close_func(self._tmppath)
@@ -335,7 +355,7 @@ class atomic_write:
             self.succeeded = False
             shutil.rmtree(self._tmppath.parent)
 
-    def write(self, text) -> None:
+    def write(self, text: str | bytes) -> None:
         """writes text to file"""
         fileobj = self._get_fileobj()
         fileobj.write(text)
@@ -363,14 +383,16 @@ def get_format_suffixes(filename: PathType) -> tuple[str | None, str | None]:
     return suffix, cmp_suffix
 
 
-def remove_files(list_of_filepaths, error_on_missing=True) -> None:
+def remove_files(
+    list_of_filepaths: Iterable[PathType], error_on_missing: bool = True
+) -> None:
     """Remove list of filepaths, optionally raising an error if any are missing"""
-    missing = []
+    missing: list[str] = []
     for fp in list_of_filepaths:
         try:
             remove(fp)
         except OSError:
-            missing.append(fp)
+            missing.append(str(fp))
 
     if error_on_missing and missing:
         msg = "Some filepaths were not accessible: {}".format("\t".join(missing))

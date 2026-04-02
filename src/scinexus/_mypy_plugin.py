@@ -12,11 +12,12 @@ from mypy.nodes import ARG_POS, ARG_STAR, ARG_STAR2, Argument, Var
 from mypy.plugin import ClassDefContext, Plugin
 from mypy.plugins.common import add_method_to_class
 from mypy.types import AnyType, TypeOfAny, UnionType
+from mypy.types import Type as MypyType
 
 DEFINE_APP_FULLNAME = "scinexus.composable.define_app"
 
 
-def _get_main_return_type(ctx: ClassDefContext):
+def _get_main_return_type(ctx: ClassDefContext) -> MypyType | None:
     """Extract the return type from the ``main()`` method."""
     info = ctx.cls.info
     main_sym = info.names.get("main")

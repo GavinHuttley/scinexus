@@ -65,7 +65,7 @@ class register_datastore_reader:
 
         self._type_str = tuple(suffixes)
 
-    def __call__(self, func):
+    def __call__(self, func: type[DataStoreABC]) -> type[DataStoreABC]:
         for type_str in self._type_str:
             _datastore_reader_map[type_str] = func
         return func
@@ -82,7 +82,7 @@ def open_data_store(
     suffix: str | None = None,
     limit: int | None = None,
     mode: str | Mode = READONLY,
-    **kwargs,
+    **kwargs: Any,
 ) -> DataStoreABC:
     """returns DataStore instance of a type specified by the path suffix
 
@@ -180,7 +180,7 @@ class decompress:
         return self.decompressor(data)
 
 
-def as_dict(obj: typing.Any) -> dict:
+def as_dict(obj: typing.Any) -> dict[str, typing.Any]:
     """returns result of to_rich_dict method if it exists"""
     with contextlib.suppress(AttributeError):
         obj = obj.to_rich_dict()
@@ -212,13 +212,13 @@ class from_primitive:
 
 
 @define_app
-def to_json(data: dict) -> str:
+def to_json(data: dict[str, Any]) -> str:
     """Convert primitive python types to json string."""
     return json.dumps(data)
 
 
 @define_app
-def from_json(data: str) -> dict:
+def from_json(data: str) -> dict[str, Any]:
     """Convert json string to primitive python types."""
     return json.loads(data)
 
