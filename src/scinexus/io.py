@@ -2,7 +2,6 @@ import contextlib
 import json
 import pickle
 import typing
-import zipfile
 from collections.abc import Callable
 from gzip import compress as gzip_compress
 from gzip import decompress as gzip_decompress
@@ -97,6 +96,8 @@ def open_data_store(
     mode
         opening mode, either r, w, a as per file opening modes
     """
+    import zipfile
+
     mode = Mode(mode)
     if not isinstance(suffix, str | type(None)):
         msg = f"suffix {type(suffix)} not one of string or None"
@@ -159,6 +160,7 @@ class compress:
         self.compressor = compressor
 
     def main(self, data: bytes) -> bytes:
+        """compress bytes data using the configured compressor"""
         return self.compressor(data)
 
 
@@ -177,6 +179,7 @@ class decompress:
         self.decompressor = decompressor
 
     def main(self, data: bytes) -> bytes:
+        """decompress bytes data using the configured decompressor"""
         return self.decompressor(data)
 
 
@@ -192,6 +195,13 @@ class to_primitive:
     """convert an object to primitive python types suitable for serialisation"""
 
     def __init__(self, convertor: Callable[..., Any] = as_dict) -> None:
+        """
+        Parameters
+        ----------
+        convertor
+            callable that converts an object to primitive types, defaults
+            to ``as_dict``
+        """
         self.convertor = convertor
 
     def main(self, data: typing.Any) -> typing.Any:
@@ -204,6 +214,13 @@ class from_primitive:
     """deserialises from primitive python types"""
 
     def __init__(self, deserialiser: Callable[..., Any] = deserialise_object) -> None:
+        """
+        Parameters
+        ----------
+        deserialiser
+            callable that recreates an object from primitive types, defaults
+            to ``deserialise_object``
+        """
         self.deserialiser = deserialiser
 
     def main(self, data: typing.Any) -> typing.Any:

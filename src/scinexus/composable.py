@@ -18,7 +18,6 @@ from citeable import Citation
 from scitrack import CachingLogger  # type: ignore[import-untyped]
 from typeguard import TypeCheckError, check_type
 
-from scinexus import parallel as PAR
 from scinexus import typing as snx_typing
 from scinexus._version import __version__
 from scinexus.deserialise import register_deserialiser
@@ -228,6 +227,8 @@ def _set_hints(
 
 
 class source_proxy(Generic[_T]):
+    """wraps an object to track its source through app pipelines"""
+
     __slots__ = ("_obj", "_src", "_uuid")
 
     def __init__(self, obj: _T) -> None:
@@ -574,8 +575,10 @@ class AppBase(Generic[T, R]):
             return (_ for _ in ())
 
         if parallel:
+            from scinexus import parallel as snxpar
+
             par_kw = par_kw or {}
-            to_do: typing.Iterable = PAR.as_completed(app, mapped, **par_kw)
+            to_do: typing.Iterable = snxpar.as_completed(app, mapped, **par_kw)
         else:
             to_do = map(app, mapped)
 

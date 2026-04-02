@@ -75,9 +75,7 @@ def resolve_type_hint(
     if isinstance(hint, TypeVar):
         if hint.__bound__:
             bound = hint.__bound__
-            if isinstance(bound, str):
-                bound = _resolve_name(bound, module_globals)
-            elif isinstance(bound, ForwardRef):
+            if isinstance(bound, ForwardRef):
                 bound = _resolve_name(bound.__forward_arg__, module_globals)
             return bound
         if hint.__constraints__:

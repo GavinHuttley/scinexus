@@ -1,5 +1,9 @@
+import sys
+from unittest.mock import patch
+
 import pytest
 
+from scinexus import parallel
 from scinexus.parallel import (
     SIZE,
     USING_MPI,
@@ -106,3 +110,103 @@ def test_imap_mpi_invalid_if_serial():
     """invalid if_serial value should raise ValueError"""
     with pytest.raises(ValueError, match="invalid choice"):
         list(imap(_double, [1], use_mpi=True, if_serial="invalid"))
+
+
+@pytest.mark.skipif(not USING_MPI, reason="Not using MPI")
+def test_imap_mpi_if_serial_raise_size_1():
+    """if_serial='raise' with SIZE==1 raises RuntimeError"""
+    with patch.object(parallel, "SIZE", 1):
+        with pytest.raises(RuntimeError, match="Execution in serial"):
+            list(imap(_double, [1], use_mpi=True, if_serial="raise"))
+
+
+@pytest.mark.skipif(not USING_MPI, reason="Not using MPI")
+def test_imap_mpi_if_serial_warn_size_1():
+    """if_serial='warn' with SIZE==1 emits warning"""
+    with patch.object(parallel, "SIZE", 1):
+        with pytest.warns(UserWarning, match="Execution in serial"):
+            with pytest.raises(ZeroDivisionError):
+                list(imap(_double, [1], use_mpi=True, if_serial="warn"))
+
+
+@pytest.mark.skipif(not USING_MPI, reason="Not using MPI")
+def test_imap_mpi_non_sized_iterable():
+    """imap with a generator under MPI defaults chunksize to 1"""
+
+    def gen():
+        yield from range(4)
+
+    result = list(imap(_double, gen(), use_mpi=True))
+    assert sorted(result) == [0, 2, 4, 6]
+
+
+@pytest.mark.skipif(not USING_MPI, reason="Not using MPI")
+def test_as_completed_mpi_invalid_if_serial():
+    """invalid if_serial raises ValueError via as_completed with MPI"""
+    with pytest.raises(ValueError, match="invalid choice"):
+        list(as_completed(_double, [1], use_mpi=True, if_serial="invalid"))
+
+
+@pytest.mark.skipif(not USING_MPI, reason="Not using MPI")
+def test_as_completed_mpi_max_workers_warning():
+    """max_workers > SIZE emits warning in _as_completed_mpi"""
+    data = list(range(10))
+    with pytest.warns(UserWarning, match="max_workers too large"):
+        result = sorted(
+            as_completed(_double, data, use_mpi=True, max_workers=SIZE + 10)
+        )
+    assert result == sorted(x * 2 for x in data)
+
+
+@pytest.mark.skipif(not USING_MPI, reason="Not using MPI")
+def test_as_completed_mpi_if_serial_raise_size_1():
+    """_as_completed_mpi with SIZE==1 and if_serial='raise' raises RuntimeError"""
+    with patch.object(parallel, "SIZE", 1):
+        with pytest.raises(RuntimeError, match="Execution in serial"):
+            list(as_completed(_double, [1], use_mpi=True, if_serial="raise"))
+
+
+@pytest.mark.skipif(not USING_MPI, reason="Not using MPI")
+def test_as_completed_mpi_if_serial_warn_size_1():
+    """_as_completed_mpi with SIZE==1 and if_serial='warn' emits warning"""
+    with patch.object(parallel, "SIZE", 1):
+        with pytest.warns(UserWarning, match="Execution in serial"):
+            with pytest.raises(ZeroDivisionError):
+                list(
+                    as_completed(
+                        _double, list(range(4)), use_mpi=True, if_serial="warn"
+                    )
+                )
+
+
+@pytest.mark.skipif(not USING_MPI, reason="Not using MPI")
+def test_as_completed_mpi_if_serial_ignore_size_1():
+    """_as_completed_mpi with SIZE==1 and if_serial='ignore' does not raise serial error"""
+    with patch.object(parallel, "SIZE", 1), pytest.raises(ZeroDivisionError):
+        list(as_completed(_double, list(range(4)), use_mpi=True, if_serial="ignore"))
+
+
+@pytest.mark.skipif(not USING_MPI, reason="Not using MPI")
+def test_as_completed_mpi_not_using_mpi():
+    """_as_completed_mpi raises RuntimeError when USING_MPI is False"""
+    with patch.object(parallel, "USING_MPI", False):
+        with pytest.raises(RuntimeError, match="Cannot use MPI"):
+            list(as_completed(_double, [1], use_mpi=True))
+
+
+@pytest.mark.skipif(not USING_MPI, reason="Not using MPI")
+def test_as_completed_mpi_non_sized_iterable():
+    """_as_completed_mpi with generator defaults chunksize to 1"""
+
+    def gen():
+        yield from range(4)
+
+    result = sorted(as_completed(_double, gen(), use_mpi=True))
+    assert result == [0, 2, 4, 6]
+
+
+@pytest.mark.skipif(not USING_MPI, reason="Not using MPI")
+def test_is_master_process_mpi_server():
+    """is_master_process returns False when argv[0] is server.py"""
+    with patch.object(sys, "argv", ["server.py"]):
+        assert is_master_process() is False

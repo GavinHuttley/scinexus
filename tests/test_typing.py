@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, TypeVar, Union
+from typing import Any, ForwardRef, TypeVar, Union, get_args
 
 import pytest
 
@@ -7,6 +7,7 @@ from scinexus.data_store import DataMemberABC
 from scinexus.typing import (
     IdentifierType,
     SerialisableType,
+    _resolve_name,
     check_type_compatibility,
     get_type_display_names,
     resolve_type_hint,
@@ -136,3 +137,111 @@ def test_check_type_compatibility_issubclass_typeerror_same(broken_subclasscheck
 def test_check_type_compatibility_issubclass_typeerror_diff(broken_subclasscheck):
     """issubclass TypeError with different classes returns False"""
     assert check_type_compatibility(int, broken_subclasscheck) is False
+
+
+def test_resolve_name_non_type_in_globals():
+    """non-type value in module_globals falls through to TypeError"""
+    with pytest.raises(TypeError, match="cannot resolve"):
+        _resolve_name("foo", {"foo": 42})
+
+
+def test_resolve_type_hint_typevar_bound():
+    """TypeVar with bound resolves to the bound type"""
+    T = TypeVar("T", bound=int)
+    assert resolve_type_hint(T) is int
+
+
+def test_resolve_type_hint_typevar_bound_str():
+    """TypeVar with string bound resolved via module_globals"""
+
+    class Custom:
+        pass
+
+    T = TypeVar("T", bound="Custom")
+    resolved = resolve_type_hint(T, {"Custom": Custom})
+    assert resolved is Custom
+
+
+def test_resolve_type_hint_typevar_bound_forwardref():
+    """TypeVar with ForwardRef bound resolved via module_globals"""
+
+    class Custom:
+        pass
+
+    T = TypeVar("T", bound=ForwardRef("Custom"))
+    resolved = resolve_type_hint(T, {"Custom": Custom})
+    assert resolved is Custom
+
+
+def test_resolve_type_hint_typevar_constraints():
+    """TypeVar with constraints resolves to Union of constraints"""
+    T = TypeVar("T", int, str)
+    resolved = resolve_type_hint(T)
+    assert set(get_args(resolved)) == {int, str}
+
+
+def test_resolve_type_hint_union_type():
+    """PEP 604 X | Y syntax resolves correctly"""
+    resolved = resolve_type_hint(int | str)
+    assert set(get_args(resolved)) == {int, str}
+
+
+def test_resolve_type_hint_list():
+    """list[int] resolves correctly"""
+    resolved = resolve_type_hint(list[int])
+    assert get_args(resolved) == (int,)
+
+
+def test_resolve_type_hint_tuple():
+    """tuple[str, int] resolves correctly"""
+    resolved = resolve_type_hint(tuple[str, int])
+    assert get_args(resolved) == (str, int)
+
+
+def test_resolve_type_hint_set():
+    """set[int] resolves correctly"""
+    resolved = resolve_type_hint(set[int])
+    assert get_args(resolved) == (int,)
+
+
+def test_resolve_type_hint_forwardref():
+    """ForwardRef resolves via module_globals"""
+    resolved = resolve_type_hint(ForwardRef("int"), {"int": int})
+    assert resolved is int
+
+
+def test_get_type_display_names_list():
+    """list[int] returns inner type names"""
+    names = get_type_display_names(list[int])
+    assert names == frozenset({"int"})
+
+
+def test_get_type_display_names_tuple():
+    """tuple[str, int] returns all inner type names"""
+    names = get_type_display_names(tuple[str, int])
+    assert names == frozenset({"str", "int"})
+
+
+def test_check_type_compatibility_any_return():
+    """Any as return type is compatible with anything"""
+    assert check_type_compatibility(Any, int) is True
+
+
+def test_check_type_compatibility_any_input():
+    """Any as input type is compatible with anything"""
+    assert check_type_compatibility(int, Any) is True
+
+
+def test_check_type_compatibility_subclass():
+    """bool is subclass of int, so they are compatible"""
+    assert check_type_compatibility(bool, int) is True
+
+
+def test_check_type_compatibility_union_subclass():
+    """Union types with subclass relationship are compatible"""
+    assert check_type_compatibility(Union[bool, str], int) is True
+
+
+def test_check_type_compatibility_protocol_in_union():
+    """Union containing a Protocol is lenient"""
+    assert check_type_compatibility(Union[SerialisableType, int], str) is True

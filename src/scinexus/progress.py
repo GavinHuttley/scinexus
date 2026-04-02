@@ -57,6 +57,20 @@ class TqdmProgress(Progress):
         dynamic_ncols: bool = True,
         **tqdm_kwargs: Any,
     ) -> None:
+        """
+        Parameters
+        ----------
+        position
+            cursor position for the progress bar
+        mininterval
+            minimum update interval in seconds
+        bar_format
+            custom bar format string passed to tqdm
+        dynamic_ncols
+            whether to dynamically resize the bar to terminal width
+        **tqdm_kwargs
+            additional keyword arguments forwarded to tqdm
+        """
         self._position = position
         self._mininterval = mininterval
         self._bar_format = bar_format
@@ -106,10 +120,25 @@ class RichProgress(Progress):
         progress: Any = None,
         refresh_per_second: float = 10.0,
         disable: bool = False,
+        **rich_kwargs: Any,
     ) -> None:
+        """
+        Parameters
+        ----------
+        progress
+            an existing ``rich.progress.Progress`` instance, or None to
+            create one on first call
+        refresh_per_second
+            how often to refresh the display
+        disable
+            whether to disable progress output
+        **rich_kwargs
+            additional keyword arguments forwarded to ``rich.progress.Progress``
+        """
         self._progress = progress
         self._refresh_per_second = refresh_per_second
         self._disable = disable
+        self._rich_kwargs = rich_kwargs
 
     def __call__(
         self,
@@ -126,6 +155,7 @@ class RichProgress(Progress):
             self._progress = RProgress(
                 refresh_per_second=self._refresh_per_second,
                 disable=self._disable,
+                **self._rich_kwargs,
             )
             self._progress.start()
         task = self._progress.add_task(msg, total=total)
@@ -141,6 +171,7 @@ class RichProgress(Progress):
             progress=self._progress,
             refresh_per_second=self._refresh_per_second,
             disable=self._disable,
+            **self._rich_kwargs,
         )
 
 
