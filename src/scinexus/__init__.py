@@ -41,13 +41,13 @@ __all__ = [
 ]
 
 
-def open_data_store(*args, **kwargs) -> "DataStoreABC":
+def open_data_store(*args: "Any", **kwargs: "Any") -> "DataStoreABC":
     from scinexus.io import open_data_store as _open_data_store
 
     return _open_data_store(*args, **kwargs)
 
 
-def set_summary_display(*args, **kwargs) -> None:
+def set_summary_display(*args: "Any", **kwargs: "Any") -> None:
     from scinexus.data_store import set_summary_display as _ssd
 
     return _ssd(*args, **kwargs)

@@ -7,7 +7,7 @@ import re
 import sqlite3
 import weakref
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from scitrack import get_text_hexdigest  # type: ignore[import-untyped]
 
@@ -52,7 +52,7 @@ sqlite3.register_converter("timestamp", _datetime_from_iso)
 
 
 # create db
-def open_sqlite_db_rw(path: str | Path):
+def open_sqlite_db_rw(path: str | Path) -> sqlite3.Connection:
     """creates a new sqlitedb for read/write at path, can be an in-memory db
 
     Notes
@@ -86,7 +86,7 @@ def open_sqlite_db_rw(path: str | Path):
     return db
 
 
-def open_sqlite_db_ro(path):
+def open_sqlite_db_ro(path: str | Path) -> sqlite3.Connection:
     """returns db opened as read only
     Returns
     -------
@@ -105,7 +105,7 @@ def open_sqlite_db_ro(path):
     return db
 
 
-def has_valid_schema(db):
+def has_valid_schema(db: sqlite3.Connection) -> bool:
     # TODO: should be a full schema check
     query = "SELECT name FROM sqlite_master WHERE type='table'"
     result = db.execute(query).fetchall()
@@ -147,10 +147,10 @@ class DataStoreSqlite(DataStoreABC):
         self._log_id: int | None = None
         weakref.finalize(self, self.close)
 
-    def __getstate__(self) -> dict:
+    def __getstate__(self) -> dict[str, object]:
         return {**self._init_vals}
 
-    def __setstate__(self, state: dict) -> None:
+    def __setstate__(self, state: dict[str, Any]) -> None:
         # this will reset connections to read only db's
         obj = self.__class__(**state)
         self.__dict__.update(obj.__dict__)
@@ -174,13 +174,16 @@ class DataStoreSqlite(DataStoreABC):
         return self._limit
 
     @property
-    def db(self):
+    def db(self) -> sqlite3.Connection:
         if self._db is None:
             db_func = open_sqlite_db_ro if self.mode is READONLY else open_sqlite_db_rw
             self._db = db_func(self.source)
             self._open = True
             self.lock()
 
+        if self._db is None:
+            msg = "database connection is unexpectedly None"
+            raise ValueError(msg)
         return self._db
 
     def _init_log(self) -> None:
@@ -363,7 +366,7 @@ class DataStoreSqlite(DataStoreABC):
             vals = [os.getpid()]
         self._db.execute(cmnd, tuple(vals))
 
-    def unlock(self, force=False) -> None:
+    def unlock(self, force: bool = False) -> None:
         """remove a lock if pid matches. If force, ignores pid. ignored if mode is READONLY"""
         if self.mode is READONLY:
             return
@@ -432,7 +435,7 @@ class DataStoreSqlite(DataStoreABC):
         self._not_completed.append(member)
         return member
 
-    def md5(self, unique_id: str) -> str | NoneType:  # we have it in base class
+    def md5(self, unique_id: str) -> str | None:
         """
         Parameters
         ----------
@@ -483,7 +486,7 @@ class DataStoreSqlite(DataStoreABC):
         ).fetchone()
         return result is not None
 
-    def _describe(self) -> dict:
+    def _describe(self) -> dict[str, object]:
         if self.locked and self._lock_id != os.getpid():
             title = f"Locked db store. Locked to pid={self._lock_id}, current pid={os.getpid()}."
         elif self.locked:
@@ -501,7 +504,7 @@ class DataStoreSqlite(DataStoreABC):
         return result["record_type"]
 
     @record_type.setter
-    def record_type(self, obj) -> None:
+    def record_type(self, obj: object) -> None:
         from scinexus.misc import get_object_provenance
 
         rt = self.record_type

@@ -35,13 +35,13 @@ class HasInfo(Protocol):
 
 @runtime_checkable
 class SerialisableType(Protocol):
-    def to_rich_dict(self) -> dict: ...
+    def to_rich_dict(self) -> dict[str, object]: ...
 
 
 IdentifierType = Union[str, Path, DataMemberABC]
 
 
-def _resolve_name(name: str, module_globals: dict | None = None) -> type:
+def _resolve_name(name: str, module_globals: dict[str, object] | None = None) -> type:
     """resolves a string name to a type, checking module_globals"""
     if module_globals and name in module_globals:
         result = module_globals[name]
@@ -52,7 +52,9 @@ def _resolve_name(name: str, module_globals: dict | None = None) -> type:
     raise TypeError(msg)
 
 
-def resolve_type_hint(hint, module_globals=None):
+def resolve_type_hint(
+    hint: object, module_globals: dict[str, object] | None = None
+) -> object:
     """walks a type hint tree and resolves all forward references to classes
 
     Parameters
@@ -103,7 +105,7 @@ def resolve_type_hint(hint, module_globals=None):
     return _resolve_name(hint, module_globals) if isinstance(hint, str) else hint
 
 
-def get_type_display_names(hint) -> frozenset[str]:
+def get_type_display_names(hint: object) -> frozenset[str]:
     """extracts human-readable class names from a resolved type hint
 
     Parameters
@@ -126,7 +128,7 @@ def get_type_display_names(hint) -> frozenset[str]:
     return frozenset(names)
 
 
-def _get_concrete_classes(hint) -> set[type]:
+def _get_concrete_classes(hint: object) -> set[type]:
     """extracts concrete classes from a resolved type hint, walking Unions"""
     classes = set()
     origin = get_origin(hint)
@@ -140,7 +142,7 @@ def _get_concrete_classes(hint) -> set[type]:
     return classes
 
 
-def _is_protocol(hint) -> bool:
+def _is_protocol(hint: object) -> bool:
     """checks if a type hint is or contains a runtime-checkable Protocol"""
     if getattr(hint, "_is_protocol", False) and hint is not Protocol:
         return True
@@ -152,7 +154,7 @@ def _is_protocol(hint) -> bool:
     return False
 
 
-def check_type_compatibility(return_hint, input_hint) -> bool:
+def check_type_compatibility(return_hint: object, input_hint: object) -> bool:
     """composition-time check: is the return type compatible with the input type?
 
     Parameters

@@ -13,7 +13,7 @@ from enum import Enum
 from functools import singledispatch
 from io import TextIOWrapper
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, overload
 
 from scitrack import get_text_hexdigest  # type: ignore[import-untyped]
 
@@ -23,7 +23,7 @@ from scinexus.parallel import is_master_process
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Callable, Iterator
-    from typing import Any
+    from typing import Any, Self
 
     from citeable import CitationBase
 
@@ -109,7 +109,7 @@ class DataMemberABC(ABC):
 
     @property
     @abstractmethod
-    def unique_id(self): ...
+    def unique_id(self) -> str: ...
 
     def __str__(self) -> str:
         return self.unique_id
@@ -120,7 +120,7 @@ class DataMemberABC(ABC):
     def read(self) -> str | bytes:
         return self.data_store.read(self.unique_id)
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         """to check equality of members and check existence of a
         member in a list of members"""
         return isinstance(other, type(self)) and (self.data_store, self.unique_id) == (
@@ -129,18 +129,18 @@ class DataMemberABC(ABC):
         )
 
     @property
-    def md5(self):
+    def md5(self) -> str | None:
         return self.data_store.md5(self.unique_id)
 
 
 class DataStoreABC(ABC):
     """Abstract base class for DataStore"""
 
-    _init_vals: dict
+    _init_vals: dict[str, Any]
     _completed: list[DataMemberABC]
     _not_completed: list[DataMemberABC]
 
-    def __new__(cls, *args, **kwargs):
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         obj = object.__new__(cls)
 
         init_sig = inspect.signature(cls.__init__)
@@ -181,13 +181,17 @@ class DataStoreABC(ABC):
         sample = f"{list(self[:2])}..." if num > 2 else list(self)
         return f"{num}x member {name}(source='{self.source}', members={sample})"
 
-    def __getitem__(self, index):
+    @overload
+    def __getitem__(self, index: int) -> DataMemberABC: ...
+    @overload
+    def __getitem__(self, index: slice) -> list[DataMemberABC]: ...
+    def __getitem__(self, index: int | slice) -> DataMemberABC | list[DataMemberABC]:
         return self.members[index]
 
     def __len__(self) -> int:
         return len(self.members)
 
-    def __contains__(self, identifier) -> bool:
+    def __contains__(self, identifier: object) -> bool:
         """whether relative identifier has been stored"""
         return any(m.unique_id == identifier for m in self)
 
@@ -218,7 +222,7 @@ class DataStoreABC(ABC):
     def members(self) -> list[DataMemberABC]:
         return self.completed + self.not_completed
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[DataMemberABC]:
         yield from self.members
 
     @property
@@ -269,7 +273,7 @@ class DataStoreABC(ABC):
 
     summary_not_completed = _summary_property(_summary_not_completed)
 
-    def _describe(self) -> dict:
+    def _describe(self) -> dict[str, object]:
         num_not_completed = len(self.not_completed)
         num_completed = len(self.completed)
         num_logs = len(self.logs)
@@ -284,7 +288,7 @@ class DataStoreABC(ABC):
     @abstractmethod
     def drop_not_completed(self, *, unique_id: str | None = None) -> None: ...
 
-    def _validate(self) -> dict:
+    def _validate(self) -> dict[str, object]:
         correct_md5 = len(self.members)
         missing_md5 = 0
         for m in self.members:
@@ -305,11 +309,11 @@ class DataStoreABC(ABC):
             "has_log": len(self.logs) > 0,
         }
 
-    def validate(self) -> dict:
+    def validate(self) -> dict[str, object]:
         return _apply_summary_display(self._validate(), name="validate")
 
     @abstractmethod
-    def md5(self, unique_id: str) -> str | NoneType:
+    def md5(self, unique_id: str) -> str | None:
         """
         Parameters
         ----------
@@ -383,7 +387,7 @@ class DataMember(DataMemberABC):
         return self._data_store
 
     @property
-    def unique_id(self):
+    def unique_id(self) -> str:
         return self._unique_id
 
 
@@ -470,7 +474,9 @@ class DataStoreDirectory(DataStoreABC):
         self._source_check_create(self._mode)
         self._limit = limit
 
-    def __contains__(self, item: str) -> bool:
+    def __contains__(self, item: object) -> bool:
+        if not isinstance(item, str):
+            return False
         if not _special_suffixes.search(item):
             item = f"{item}.{self.suffix}" if self.suffix not in item else item
         return super().__contains__(item)
@@ -676,7 +682,7 @@ class DataStoreDirectory(DataStoreABC):
         (self.source / _LOG_TABLE).mkdir(parents=True, exist_ok=True)
         _ = self._write(subdir=_LOG_TABLE, unique_id=unique_id, suffix="log", data=data)
 
-    def md5(self, unique_id: str) -> str | NoneType:
+    def md5(self, unique_id: str) -> str | None:
         """
         Parameters
         ----------
@@ -717,7 +723,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         mode: Mode | str = READONLY,
         suffix: str | None = None,
         limit: int | None = None,
-        verbose=False,
+        verbose: bool = False,
     ) -> None:
         self._mode = Mode(mode)
         if self._mode is not READONLY:
@@ -735,11 +741,11 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         self._limit = limit
 
     @property
-    def limit(self):
+    def limit(self) -> int | None:
         return self._limit
 
     @property
-    def mode(self):
+    def mode(self) -> Mode:
         return self._mode
 
     @property
@@ -780,7 +786,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         return self._completed
 
     @property
-    def not_completed(self):
+    def not_completed(self) -> list[DataMemberABC]:
         if not self._not_completed:
             self._not_completed = []
             num_matches = 0
@@ -908,7 +914,9 @@ def convert_directory_datastore(
     return out_dstore
 
 
-def make_record_for_json(identifier, data, completed):
+def make_record_for_json(
+    identifier: str, data: Any, completed: bool
+) -> dict[str, object]:
     """returns a dict for storage as json"""
     with contextlib.suppress(AttributeError):
         data = data.to_rich_dict()
@@ -917,7 +925,7 @@ def make_record_for_json(identifier, data, completed):
     return {"identifier": identifier, "data": data, "completed": completed}
 
 
-def load_record_from_json(data):
+def load_record_from_json(data: Any) -> tuple[str, Any, bool]:
     """returns identifier, data, completed status from json string"""
     if isinstance(data, str):
         data = json.loads(data)
