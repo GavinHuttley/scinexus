@@ -722,10 +722,6 @@ class WriterApp(ComposableApp[T, R]):
             self.input._source_wrapped = propagate_source(self.input, id_from_source)
             self._source_wrapped = propagate_source(self, id_from_source)
 
-        if not self.input:
-            msg = f"{self!r} is not part of a composed function"
-            raise RuntimeError(msg)
-
         if isinstance(dstore, str | Path):  # one filename
             dstore = [dstore]
         elif isinstance(dstore, DataStoreABC):
@@ -770,18 +766,14 @@ class WriterApp(ComposableApp[T, R]):
                 identifier=id_from_source(result),  # type: ignore[arg-type]
             )
             if self.logger:
+                assert logger is not None
                 md5 = getattr(member, "md5", None)
-                if logger is None:
-                    msg = "logger is unexpectedly None"
-                    raise RuntimeError(msg)
                 logger.log_message(str(member), label="output")
                 if md5:
                     logger.log_message(md5, label="output md5sum")
 
         if self.logger:
-            if logger is None:
-                msg = "logger is unexpectedly None"
-                raise RuntimeError(msg)
+            assert logger is not None
             taken = time.time() - start
             logger.log_message(f"{taken}", label="TIME TAKEN")
             log_file_path = Path(logger.log_file_path)
