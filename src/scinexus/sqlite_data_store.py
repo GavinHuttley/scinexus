@@ -198,13 +198,11 @@ class DataStoreSqlite(DataStoreABC):
 
     def close(self) -> None:
         """close the database connection"""
-        if getattr(self, "_db", None) is None:
+        db: sqlite3.Connection | None = getattr(self, "_db", None)
+        if db is None:
             return
-        if self._db is None:
-            msg = "database connection is unexpectedly None"
-            raise RuntimeError(msg)
         with contextlib.suppress(sqlite3.ProgrammingError):
-            self._db.close()
+            db.close()
         self._open = False
 
     def read(self, unique_id: str) -> str | bytes:
