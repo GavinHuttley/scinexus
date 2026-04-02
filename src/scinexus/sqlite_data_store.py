@@ -116,6 +116,8 @@ def has_valid_schema(db: sqlite3.Connection) -> bool:
 
 
 class DataStoreSqlite(DataStoreABC):
+    """data store backed by a SQLite database"""
+
     store_suffix = "sqlitedb"
 
     def __init__(
@@ -195,6 +197,7 @@ class DataStoreSqlite(DataStoreABC):
         ).fetchone()["log_id"]
 
     def close(self) -> None:
+        """close the database connection"""
         if getattr(self, "_db", None) is None:
             return
         if self._db is None:
@@ -317,6 +320,14 @@ class DataStoreSqlite(DataStoreABC):
         return DataMember(data_store=self, unique_id=unique_id)
 
     def drop_not_completed(self, *, unique_id: str | None = None) -> None:
+        """remove not-completed records from the database
+
+        Parameters
+        ----------
+        unique_id
+            if provided, only drop the record with this identifier,
+            otherwise drop all not-completed records
+        """
         vals: tuple[int] | tuple[int, str]
         if not unique_id:
             cmnd = f"DELETE FROM {_RESULT_TABLE} WHERE is_completed=?"
