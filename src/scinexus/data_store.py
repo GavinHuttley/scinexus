@@ -458,6 +458,8 @@ def _tidy_and_check_suffix(suffix: str | None) -> str:
 
 
 class DataStoreDirectory(DataStoreABC):
+    """data store backed by a directory on the filesystem"""
+
     def __init__(
         self,
         source: str | Path,
@@ -519,6 +521,14 @@ class DataStoreDirectory(DataStoreABC):
             return infile.read()
 
     def drop_not_completed(self, *, unique_id: str | None = None) -> None:
+        """remove not-completed records from the directory
+
+        Parameters
+        ----------
+        unique_id
+            if provided, only drop the record with this identifier,
+            otherwise drop all not-completed records
+        """
         unique_id = (unique_id or "").replace(f".{self.suffix}", "")
         unique_id = f"{unique_id}.json" if unique_id else unique_id
         nc_dir = self.source / _NOT_COMPLETED_TABLE
@@ -717,6 +727,8 @@ class DataStoreDirectory(DataStoreABC):
 
 
 class ReadOnlyDataStoreZipped(DataStoreABC):
+    """read-only data store backed by a zip archive"""
+
     def __init__(
         self,
         source: str | Path,
@@ -753,6 +765,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         return self._source
 
     def read(self, unique_id: str) -> str | bytes:
+        """reads data corresponding to identifier from the zip archive"""
         member_path = str(pathlib.Path(self.source.stem, unique_id)).replace("\\", "/")
         with zipfile.ZipFile(self.source) as archive:
             raw = archive.open(member_path)
@@ -833,6 +846,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         return None
 
     def drop_not_completed(self, *, unique_id: str | None = None) -> None:
+        """not supported on read-only zip data stores"""
         msg = "zip data stores are read only"
         raise TypeError(msg)
 
@@ -907,6 +921,17 @@ def convert_directory_datastore(
     outpath: Path,
     suffix: str | None = None,
 ) -> DataStoreABC:
+    """copy files matching suffix from one directory data store to another
+
+    Parameters
+    ----------
+    inpath
+        source directory
+    outpath
+        destination directory
+    suffix
+        file suffix to match
+    """
     out_dstore = DataStoreDirectory(source=outpath, mode=OVERWRITE, suffix=suffix)
     filenames = inpath.glob(f"*{suffix}")
     for fn in filenames:
