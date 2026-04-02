@@ -86,6 +86,8 @@ def is_master_process() -> bool:
 
 
 class PicklableAndCallable(Generic[P, R]):
+    """wraps a callable so it is picklable for use with MPI executors"""
+
     def __init__(self, func: Callable[P, R]) -> None:
         self.func = func
 
@@ -94,6 +96,15 @@ class PicklableAndCallable(Generic[P, R]):
 
 
 def get_default_chunksize(s: Sized, max_workers: int) -> int:
+    """compute a stable chunksize for distributing items across workers
+
+    Parameters
+    ----------
+    s
+        a sized collection of work items
+    max_workers
+        number of worker processes
+    """
     chunksize, remainder = divmod(len(s), max_workers * 4)
     if remainder:
         chunksize += 1
