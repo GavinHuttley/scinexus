@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Iterator
 from copy import copy, deepcopy
 from enum import Enum
 from pathlib import Path
-from typing import Any, Generic, Self, TypeVar
+from typing import Any, Generic, Literal, Self, TypeVar, overload
 from uuid import uuid4
 
 from citeable import Citation
@@ -74,7 +74,7 @@ class NotCompleted(int):
     origin: str
     message: str
     source: str | None
-    _persistent: tuple[tuple, dict]
+    _persistent: tuple[tuple[Any, ...], dict[str, Any]]
 
     def __new__(
         cls,
@@ -197,7 +197,7 @@ def _get_raw_hints(
     return first_param_type, return_type
 
 
-def _get_main_hints(klass: type) -> tuple[object, object]:
+def _get_main_hints(klass: type[Any]) -> tuple[object, object]:
     """return raw type hints for main method
 
     Returns
@@ -287,10 +287,10 @@ class source_proxy(Generic[_T]):
 
     # pickling induces infinite recursion on python 3.10
     # only on Windows, so implementing the following methods explicitly
-    def __getstate__(self) -> tuple:
+    def __getstate__(self) -> tuple[Any, Any, Any]:
         return self._obj, self._src, self._uuid
 
-    def __setstate__(self, state: tuple) -> None:
+    def __setstate__(self, state: tuple[Any, Any, Any]) -> None:
         self._obj, self._src, self._uuid = state
 
 
@@ -810,7 +810,7 @@ class WriterApp(ComposableApp[T, R]):
         self.logger = logger
 
 
-def _class_from_func(func: Callable[..., Any]) -> type:
+def _class_from_func(func: Callable[..., Any]) -> type[Any]:
     """make a class based on func
 
     Notes
@@ -881,13 +881,49 @@ _FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset(
 )
 
 
+@overload
 def define_app(
-    klass: type | Callable[..., Any] | None = None,
+    klass: type[Any] | Callable[..., Any],
+) -> type[ComposableApp[Any, Any]]: ...
+
+
+@overload
+def define_app(  # type: ignore[overload-overlap]
+    klass: None = None,
+    *,
+    app_type: Literal[AppType.NON_COMPOSABLE],
+    skip_not_completed: bool = ...,
+    cite: Citation | None = ...,
+) -> Callable[[type[Any] | Callable[..., Any]], type[AppBase[Any, Any]]]: ...
+
+
+@overload
+def define_app(  # type: ignore[overload-overlap]
+    klass: None = None,
+    *,
+    app_type: Literal[AppType.WRITER],
+    skip_not_completed: bool = ...,
+    cite: Citation | None = ...,
+) -> Callable[[type[Any] | Callable[..., Any]], type[WriterApp[Any, Any]]]: ...
+
+
+@overload
+def define_app(
+    klass: None = None,
+    *,
+    app_type: AppType = ...,
+    skip_not_completed: bool = ...,
+    cite: Citation | None = ...,
+) -> Callable[[type[Any] | Callable[..., Any]], type[ComposableApp[Any, Any]]]: ...
+
+
+def define_app(
+    klass: type[Any] | Callable[..., Any] | None = None,
     *,
     app_type: AppType = GENERIC,
     skip_not_completed: bool = True,
     cite: Citation | None = None,
-) -> type:
+) -> type[Any]:
     """decorator for building callable apps
 
     Parameters
@@ -987,7 +1023,7 @@ def define_app(
 
     app_type = AppType(app_type)
 
-    def wrapped(klass: type | Callable[..., Any]) -> type:
+    def wrapped(klass: type[Any] | Callable[..., Any]) -> type[Any]:
         if inspect.isfunction(klass):
             klass = _class_from_func(klass)
         if not inspect.isclass(klass):
