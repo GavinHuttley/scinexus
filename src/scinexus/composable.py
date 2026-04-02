@@ -228,6 +228,8 @@ def _set_hints(
 
 
 class source_proxy(Generic[_T]):
+    """wraps an object to track its source through app pipelines"""
+
     __slots__ = ("_obj", "_src", "_uuid")
 
     def __init__(self, obj: _T) -> None:
