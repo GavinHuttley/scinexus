@@ -319,7 +319,7 @@ class propagate_source:
     updated with result.
     """
 
-    def __init__(self, app: AppBase[Any, Any], id_from_source: GetIdFuncType) -> None:
+    def __init__(self, app: "AppBase[Any, Any]", id_from_source: GetIdFuncType) -> None:
         self.app = app
         self.id_from_source = id_from_source
 
@@ -618,7 +618,7 @@ class ComposableApp(AppBase[T, R]):
 
     _is_intermediate_base: bool = True
 
-    def __add__(self, other: ComposableApp[Any, Any]) -> ComposableApp[Any, Any]:
+    def __add__(self, other: "ComposableApp[Any, Any]") -> "ComposableApp[Any, Any]":
         if getattr(other, "app_type", None) not in {WRITER, LOADER, GENERIC}:
             msg = f"{other!r} is not composable"
             raise TypeError(msg)
