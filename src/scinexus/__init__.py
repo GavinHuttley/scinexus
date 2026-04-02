@@ -13,14 +13,10 @@ from scinexus.composable import (
     is_app,
     is_app_composable,
 )
-from scinexus.progress import Progress
+from scinexus.progress import Progress, get_progress, set_default_progress
 
 if _typing.TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import Callable
     from typing import Any
-
-    from scinexus.data_store import DataStoreABC
-    from scinexus.progress import ProgressType
 
 __all__ = [
     "AppBase",
@@ -40,34 +36,19 @@ __all__ = [
     "set_summary_display",
 ]
 
-
-def open_data_store(*args: "Any", **kwargs: "Any") -> "DataStoreABC":
-    from scinexus.io import open_data_store as _open_data_store
-
-    return _open_data_store(*args, **kwargs)
-
-
-def set_summary_display(*args: "Any", **kwargs: "Any") -> None:
-    from scinexus.data_store import set_summary_display as _ssd
-
-    return _ssd(*args, **kwargs)
+_LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "open_data_store": ("scinexus.io", "open_data_store"),
+    "set_summary_display": ("scinexus.data_store", "set_summary_display"),
+    "get_summary_display": ("scinexus.data_store", "get_summary_display"),
+}
 
 
-def get_summary_display() -> "Callable[..., Any] | None":
-    from scinexus.data_store import get_summary_display as _gsd
+def __getattr__(name: str) -> "Any":
+    if name in _LAZY_IMPORTS:
+        module_path, attr = _LAZY_IMPORTS[name]
+        import importlib
 
-    return _gsd()
-
-
-def get_progress(show_progress: "bool | Progress" = False) -> Progress:
-    from scinexus.progress import get_progress as _gp
-
-    return _gp(show_progress)
-
-
-def set_default_progress(
-    progress: "ProgressType | Progress | None" = None,
-) -> None:
-    from scinexus.progress import set_default_progress as _sdp
-
-    _sdp(progress)
+        mod = importlib.import_module(module_path)
+        return getattr(mod, attr)
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
