@@ -45,6 +45,13 @@ class register_deserialiser:
 
 
 def get_class(provenance: str) -> type:
+    """resolve a dotted provenance string to the corresponding class
+
+    Parameters
+    ----------
+    provenance
+        fully qualified class name, e.g. ``'scinexus.composable.NotCompleted'``
+    """
     index = provenance.rfind(".")
     if index <= 0:
         msg = (
@@ -62,6 +69,13 @@ _pat = re.compile("[a-z]")
 
 
 def str_to_version(v: str) -> tuple[str, ...]:
+    """parse a version string into a tuple of components
+
+    Parameters
+    ----------
+    v
+        version string, e.g. ``'2024.8.7a3'``
+    """
     if letter := _pat.search(v):
         return tuple(
             f"{v[: letter.start()]}.{letter.group()}.{letter.end():}".split(".")
