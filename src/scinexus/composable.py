@@ -7,7 +7,7 @@ import time
 import traceback
 import types
 import typing
-from collections.abc import Generator
+from collections.abc import Iterator
 from copy import copy, deepcopy
 from enum import Enum
 from pathlib import Path
@@ -19,11 +19,11 @@ from scitrack import CachingLogger  # type: ignore[import-untyped]
 from typeguard import TypeCheckError, check_type
 
 from scinexus import parallel as PAR
-from scinexus import progress_display as UI
 from scinexus import typing as snx_typing
 from scinexus._version import __version__
 from scinexus.deserialise import register_deserialiser
 from scinexus.misc import docstring_to_summary_rest, get_object_provenance
+from scinexus.progress import Progress, get_progress
 from scinexus.typing import (
     check_type_compatibility,
     get_type_display_names,
@@ -514,15 +514,14 @@ class AppBase(Generic[T, R]):
             msg = f"invalid data type, '{class_name}' not in {', '.join(sorted(expected))}"
             return NotCompleted(NotCompletedType.ERROR, self, message=msg, source=data)
 
-    @UI.display_wrap
     def as_completed(
         self,
         dstore,
         parallel: bool = False,
         par_kw: dict | None = None,
         id_from_source: GetIdFuncType = get_unique_id,
-        **kwargs,
-    ) -> Generator:
+        show_progress: bool | Progress = False,
+    ) -> Iterator:
         """invokes self composable function on the provided data store
 
         Parameters
@@ -537,10 +536,10 @@ class AppBase(Generic[T, R]):
             member of dstore.
         par_kw
             dict of values for configuring parallel execution.
-        kwargs
-            setting a show_progress boolean keyword value here
-            affects progress display code, other arguments are passed to
-            the progress bar display_wrap decorator
+        show_progress : bool or Progress
+            controls progress bar display. Pass ``True`` for the default
+            progress bar, ``False`` to disable, or a ``Progress`` instance
+            for a custom backend.
 
         Notes
         -----
@@ -559,8 +558,6 @@ class AppBase(Generic[T, R]):
                 else self._source_wrapped
             )
 
-        ui = kwargs.pop("ui")
-
         if isinstance(dstore, str):
             dstore = [dstore]
         elif isinstance(dstore, DataStoreABC):
@@ -575,7 +572,8 @@ class AppBase(Generic[T, R]):
         else:
             to_do = map(app, mapped)
 
-        return ui.series(to_do, count=len(mapped), **kwargs)
+        progress = get_progress(show_progress)
+        return progress(to_do, total=len(mapped))
 
     def _get_citations(self) -> tuple[Citation, ...]:
         """Return citations for this app and all composed input apps."""
@@ -667,7 +665,7 @@ class WriterApp(ComposableApp[T, R]):
         par_kw: dict | None = None,
         logger: CachingLogger | None = None,
         cleanup: bool = True,
-        show_progress: bool = False,
+        show_progress: bool | Progress = False,
     ):
         """invokes self composable function on the provided data store
 

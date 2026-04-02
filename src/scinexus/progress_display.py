@@ -1,240 +1,100 @@
+"""Deprecated module — use ``scinexus.progress`` instead.
+
+All public names in this module emit ``DeprecationWarning`` on use.
+Scheduled for removal in version 2027.1.
+"""
+
 from __future__ import annotations
 
 import functools
-import io
-import sys
 import threading
-import time
-from collections.abc import Sized
 from typing import TYPE_CHECKING, ParamSpec, TypeVar
 
+from scinexus.warning import deprecated, deprecated_callable
+
 if TYPE_CHECKING:  # pragma: no cover
-    from collections.abc import Callable, Collection, Generator, Iterable
-    from collections.abc import Sequence as PySeq
-    from typing import Any, Self
-
-    from tqdm import notebook, tqdm  # type: ignore[import-untyped]
-
-
-from scinexus import parallel as PAR
-from scinexus.misc import in_jupyter
+    from collections.abc import Callable
+    from typing import Any
 
 P = ParamSpec("P")
 R = TypeVar("R")
 T = TypeVar("T")
 
+_REMOVAL_VERSION = "2026.9"
 
-class LogFileOutput:
-    """A fake progress bar for when progress bars are impossible"""
 
-    def __init__(self, **kw: Any) -> None:
-        self.n: float = 0
-        self.message = ""
-        self.t0 = time.time()
-        self.lpad = ""
-        self.output = sys.stdout  # sys.stderr
+class LogFileOutput:  # pragma: no cover
+    """Deprecated — no replacement, use ``NoProgress`` instead."""
 
-    def set_description(self, desc: str = "", refresh: bool = False) -> None:
-        self.message = desc
-
-    def close(self) -> None:
-        pass
-
-    def refresh(self) -> None:
-        if self.message:
-            delta = f"+{int(time.time() - self.t0)}"
-            progress = int(100 * self.n + 0.5)
-            print(
-                "%s %5s %3i%% %s" % (self.lpad, delta, progress, str(self.message)),
-                file=self.output,
-            )
-
-    @classmethod
-    def write(cls, *args: Any, **kwargs: Any) -> None:
+    @deprecated_callable(
+        version=_REMOVAL_VERSION,
+        reason="use scinexus.progress.NoProgress instead",
+        is_discontinued=True,
+    )
+    def __init__(self, **kw: Any) -> None:  # pragma: no cover
         pass
 
 
-TProgDisplay = type["tqdm | notebook.tqdm | LogFileOutput"]
+class ProgressContext:  # pragma: no cover
+    """Deprecated — use ``scinexus.progress.TqdmProgress`` instead."""
 
-
-class ProgressContext:
+    @deprecated_callable(
+        version=_REMOVAL_VERSION,
+        reason="use scinexus.progress.TqdmProgress instead",
+        new="scinexus.progress.TqdmProgress",
+    )
     def __init__(
         self,
-        progress_bar_type: TProgDisplay | None = None,
+        progress_bar_type: Any = None,
         depth: int = -1,
         message: str | None = None,
         mininterval: float = 1.0,
     ) -> None:
-
-        self.progress_bar_type = progress_bar_type
-        self.progress_bar: tqdm[Any] | notebook.tqdm[Any] | LogFileOutput | None = None
-        self.progress: float = 0
-        self.depth = depth
-        self.message = message
-        self.mininterval = mininterval
-
-    def set_new_progress_bar(self) -> None:
-        if self.progress_bar_type:
-            self.progress_bar = self.progress_bar_type(
-                total=1,
-                position=self.depth,
-                leave=True,
-                bar_format="{desc} {percentage:3.0f}%|{bar}|{elapsed}<{remaining}",
-                mininterval=self.mininterval,
-                dynamic_ncols=True,
-            )
-
-    def subcontext(self, *args: Any, **kw: Any):
-        return ProgressContext(
-            progress_bar_type=self.progress_bar_type,
-            depth=self.depth + 1,
-            message=self.message,
-            mininterval=self.mininterval,
-        )
-
-    def display(self, msg: str | None = None, progress: float | None = None) -> None:
-        if not self.progress_bar:
-            self.set_new_progress_bar()
-        updated = False
-        if self.progress_bar is None:
-            msg = "progress bar was not initialised"
-            raise ValueError(msg)
-        if progress is not None:
-            self.progress = min(progress, 1.0)
-            self.progress_bar.n = self.progress
-            updated = True
-        else:
-            self.progress_bar.n = 1
-        if msg is not None and msg != self.message:
-            self.message = msg
-            self.progress_bar.set_description(self.message, refresh=False)
-            updated = True
-        if updated:
-            self.progress_bar.refresh()
-
-    def done(self) -> None:
-        if self.progress_bar:
-            self.progress_bar.close()
-            self.progress_bar = None
-
-    def series(
-        self,
-        items: Iterable[T],
-        noun: str = "",
-        labels: PySeq[str] | None = None,
-        start: float | None = None,
-        end: float = 1.0,
-        count: int | None = None,
-    ) -> Generator[T]:
-        """Wrap a looped-over list with a progress bar"""
-        # TODO optimise label creation
-        if count is None:
-            if not isinstance(items, Sized):
-                items = list(items)
-            count = len(items)
-        if count == 0:
-            # nothing to do
-            return
-
-        if start is None:
-            start = 0.0
-        step = (end - start) / count
-        if labels:
-            if len(labels) != count:
-                msg = f"length of labels ({len(labels)}) does not match count ({count})"
-                raise ValueError(msg)
-        elif count == 1:
-            labels = [""]
-        else:
-            if noun:
-                noun += " "
-            template = f"{noun}%{len(str(count))}d/{count}"
-            labels = [template % (i + 1) for i in range(count)]
-        for i, item in enumerate(items):
-            self.display(msg=labels[i], progress=start + step * i)
-            yield item
-        self.display(progress=end)
-
-    def write(self, *args: Any, **kw: Any) -> None:
-        if self.progress_bar_type and len(kw) < 3 and not in_jupyter():
-            self.progress_bar_type.write(*args, **kw)
-        else:
-            pass
-
-    def imap(
-        self,
-        f: Callable[[T], R],
-        s: Collection[T],
-        mininterval: float = 1.0,
-        parallel: bool = False,
-        par_kw: dict[str, Any] | None = None,
-        **kw: Any,
-    ) -> Generator[R]:
-        self.mininterval = mininterval
-        if parallel:
-            # TODO document parallel.map arguments
-            par_kw = par_kw or {}
-            results: Iterable[R] = PAR.imap(f, s, **par_kw)
-        else:
-            results = map(f, s)
-        yield from self.series(results, count=len(s), **kw)
-
-    def map(self, f: Callable[[T], R], s: Collection[T], **kw: Any):
-        return list(self.imap(f, s, **kw))
-
-
-class NullContext(ProgressContext):
-    """A UI context which discards all output.  Useful on secondary MPI cpus,
-    and other situations where all output is suppressed"""
-
-    def subcontext(self, *args: Any, **kw: Any) -> Self:
-        return self
-
-    def display(self, *args: Any, **kw: Any) -> None:
-        pass
-
-    def done(self) -> None:
         pass
 
 
-NULL_CONTEXT = NullContext()
-CURRENT = threading.local()
-CURRENT.context = None
+class NullContext:  # pragma: no cover
+    """Deprecated — use ``scinexus.progress.NoProgress`` instead."""
+
+    @deprecated_callable(
+        version=_REMOVAL_VERSION,
+        reason="use scinexus.progress.NoProgress instead",
+        new="scinexus.progress.NoProgress",
+    )
+    def __init__(self) -> None:
+        pass
 
 
-def display_wrap(slow_function: Callable[P, R]) -> Callable[P, R]:
-    """Decorator which give the function its own UI context.
-    The function will receive an extra argument, 'ui',
-    which is used to report progress etc."""
+@deprecated_callable(
+    version=_REMOVAL_VERSION,
+    reason="use scinexus.progress.get_progress instead",
+    new="scinexus.progress.get_progress",
+)
+def display_wrap(slow_function: Callable[P, R]) -> Callable[P, R]:  # pragma: no cover
+    """Deprecated — use ``get_progress`` instead of the decorator pattern."""
 
     @functools.wraps(slow_function)
     def f(*args: P.args, **kw: P.kwargs) -> R:
-        if getattr(CURRENT, "context", None) is None:
-            from tqdm import notebook, tqdm
-
-            klass: type[tqdm | notebook.tqdm | LogFileOutput] | None
-            if sys.stdout.isatty():
-                klass = tqdm
-            elif in_jupyter():
-                klass = notebook.tqdm
-            elif isinstance(sys.stdout, io.FileIO):
-                klass = LogFileOutput
-            else:
-                klass = None
-
-            if klass is None:
-                CURRENT.context = NULL_CONTEXT
-            else:
-                CURRENT.context = ProgressContext(klass)
-        parent = CURRENT.context
-        show_progress = kw.pop("show_progress", None)
-        subcontext = NULL_CONTEXT if show_progress is False else parent.subcontext()
-        kw["ui"] = CURRENT.context = subcontext
-        try:
-            result = slow_function(*args, **kw)
-        finally:
-            CURRENT.context = parent
-            subcontext.done()
-        return result
+        kw.pop("show_progress", None)
+        return slow_function(*args, **kw)
 
     return f
+
+
+CURRENT = threading.local()
+
+
+def __getattr__(name: str) -> Any:  # pragma: no cover
+    if name == "NULL_CONTEXT":
+        deprecated(
+            "module",
+            "NULL_CONTEXT",
+            "scinexus.progress.NoProgress()",
+            _REMOVAL_VERSION,
+            "use scinexus.progress.NoProgress() instead",
+        )
+        from scinexus.progress import NoProgress
+
+        return NoProgress()
+    msg = f"module {__name__!r} has no attribute {name!r}"
+    raise AttributeError(msg)
