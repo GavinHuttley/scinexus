@@ -233,3 +233,50 @@ def test_summary_display_applied(fasta_dir):
         assert "describe" in calls
     finally:
         scinexus.set_summary_display(orig)
+
+
+def test_register_datastore_reader_duplicate_none():
+    from scinexus.io import _datastore_reader_map, register_datastore_reader
+
+    assert None in _datastore_reader_map
+    with pytest.raises(ValueError, match="already in"):
+        register_datastore_reader(None)
+
+
+def test_register_datastore_reader_non_string():
+    from scinexus.io import register_datastore_reader
+
+    with pytest.raises(TypeError, match="is not a string"):
+        register_datastore_reader(123)
+
+
+def test_register_datastore_reader_empty_string():
+    from scinexus.io import register_datastore_reader
+
+    with pytest.raises(ValueError, match="white-space"):
+        register_datastore_reader("")
+
+
+def test_register_datastore_reader_duplicate_suffix():
+    from scinexus.io import register_datastore_reader
+
+    with pytest.raises(ValueError, match="already in"):
+        register_datastore_reader("zip")
+
+
+def test_open_data_store_unknown_suffix(tmp_dir):
+    path = tmp_dir / "test.xyz"
+    path.write_text("data")
+    with pytest.raises(KeyError):
+        open_data_store(path, suffix="fasta")
+
+
+def test_open_data_store_no_suffix_write_mode(tmp_dir):
+    outpath = tmp_dir / "newdir"
+    with pytest.raises(ValueError, match="suffix is required"):
+        open_data_store(outpath, mode="w")
+
+
+def test_open_data_store_memory_readonly():
+    with pytest.raises(NotImplementedError, match="readonly"):
+        open_data_store(":memory:", mode="r")

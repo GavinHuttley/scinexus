@@ -809,3 +809,239 @@ def test_summary_logs_continuation_line(write_dir):
     dstore.write_log(unique_id="test.log", data=log_path.read_text())
     rows = dstore._summary_logs()  # noqa: SLF001
     assert len(rows) == 1
+
+
+def test_data_member_str(ro_dstore):
+    member = ro_dstore[0]
+    assert str(member) == member.unique_id
+
+
+def test_data_member_repr(ro_dstore):
+    member = ro_dstore[0]
+    r = repr(member)
+    assert "DataMember" in r
+    assert member.unique_id in r
+
+
+def test_datastore_repr(ro_dstore):
+    r = repr(ro_dstore)
+    assert "DataStoreDirectory" in r
+    assert "source=" in r
+
+
+def test_contains_non_string(ro_dstore):
+    assert 42 not in ro_dstore
+
+
+def test_write_not_completed_readonly(ro_dstore):
+    with pytest.raises(OSError, match="readonly"):
+        ro_dstore.write_not_completed(unique_id="x", data="d")
+
+
+def test_write_log_readonly(ro_dstore):
+    with pytest.raises(OSError, match="readonly"):
+        ro_dstore.write_log(unique_id="x", data="d")
+
+
+def test_summary_logs_malformed_continuation():
+    from unittest.mock import MagicMock
+
+    log_text = "2024-01-01\t00:00:00\n\tcontinuation without key"
+    member = MagicMock()
+    member.read.return_value = log_text
+    member.unique_id = "bad.log"
+
+    class FakeDS(DataStoreDirectory):
+        @property
+        def logs(self):
+            return [member]
+
+    fake = FakeDS.__new__(FakeDS)
+    fake._completed = []  # noqa: SLF001
+    fake._not_completed = []  # noqa: SLF001
+    fake._init_vals = {}  # noqa: SLF001
+    with pytest.raises(ValueError, match="malformed log data"):
+        fake._summary_logs()  # noqa: SLF001
+
+
+def test_tidy_and_check_suffix_empty():
+    from scinexus.data_store import _tidy_and_check_suffix
+
+    with pytest.raises(ValueError, match="suffix is required"):
+        _tidy_and_check_suffix(None)
+
+    with pytest.raises(ValueError, match="suffix is required"):
+        _tidy_and_check_suffix("*")
+
+    with pytest.raises(ValueError, match="suffix is required"):
+        _tidy_and_check_suffix(".**")
+
+
+def test_summary_not_completeds_with_bytes():
+    from unittest.mock import MagicMock
+
+    members = []
+    for i in range(3):
+        m = MagicMock()
+        m.read.return_value = b"binary data"
+        m.unique_id = f"item_{i}"
+        members.append(m)
+    result = summary_not_completeds(members)
+    assert result == []
+
+
+def test_summary_not_completeds_with_deserialise(write_dir):
+    dstore = DataStoreDirectory(write_dir, suffix="txt", mode=OVERWRITE)
+    from scinexus.composable import NotCompleted, NotCompletedType
+
+    for i in range(3):
+        nc = NotCompleted(
+            NotCompletedType.ERROR, "myapp", f"error msg {i}", source=f"s{i}"
+        )
+        dstore.write_not_completed(unique_id=f"deser_{i}.json", data=nc.to_json())
+    rows = summary_not_completeds(dstore.not_completed, deserialise=lambda x: x)
+    assert len(rows) >= 1
+
+
+def test_summary_not_completeds_long_sources(write_dir):
+    dstore = DataStoreDirectory(write_dir, suffix="txt", mode=OVERWRITE)
+    from scinexus.composable import NotCompleted, NotCompletedType
+
+    for i in range(10):
+        long_source = f"very_long_source_name_for_item_{i}_padding"
+        nc = NotCompleted(
+            NotCompletedType.ERROR,
+            "myapp",
+            f"error msg {i}",
+            source=long_source,
+        )
+        dstore.write_not_completed(unique_id=f"long_{i}.json", data=nc.to_json())
+    rows = summary_not_completeds(dstore.not_completed)
+    assert len(rows) >= 1
+    for row in rows:
+        if len(row["source"]) > 45:
+            assert row["source"].endswith("...")
+
+
+def test_get_data_source_data_member(ro_dstore):
+    member = ro_dstore[0]
+    result = get_data_source(member)
+    assert result == member.unique_id
+
+
+def test_zipped_not_completed_with_limit(tmp_path):
+    from scinexus.composable import NotCompleted, NotCompletedType
+
+    src = tmp_path / "src"
+    src.mkdir()
+    nc_dir = src / "not_completed"
+    nc_dir.mkdir()
+    (src / "a.txt").write_text("data")
+    for i in range(5):
+        nc = NotCompleted(NotCompletedType.ERROR, "test", f"msg {i}", source=f"s{i}")
+        (nc_dir / f"nc_{i}.json").write_text(nc.to_json())
+    zpath = shutil.make_archive(str(src), "zip", root_dir=src.parent, base_dir=src.name)
+    zstore = ReadOnlyDataStoreZipped(zpath, suffix="txt", limit=2)
+    assert len(zstore.not_completed) == 2
+
+
+def test_zipped_mode_property(zipped_basic):
+    zstore = ReadOnlyDataStoreZipped(zipped_basic, suffix="fasta")
+    assert zstore.mode is READONLY
+
+
+def _make_minimal_ds(mode=OVERWRITE):
+    from scinexus.data_store import DataStoreABC
+
+    class MinimalDS(DataStoreABC):
+        @property
+        def source(self):
+            return "test"
+
+        @property
+        def mode(self):
+            return mode
+
+        @property
+        def limit(self):
+            return None
+
+        def read(self, unique_id):
+            return ""
+
+        def write(self, *, unique_id, data):
+            super().write(unique_id=unique_id, data=data)
+
+        def write_not_completed(self, *, unique_id, data):
+            super().write_not_completed(unique_id=unique_id, data=data)
+
+        def write_log(self, *, unique_id, data):
+            super().write_log(unique_id=unique_id, data=data)
+
+        @property
+        def logs(self):
+            return []
+
+        @property
+        def completed(self):
+            return []
+
+        @property
+        def not_completed(self):
+            return []
+
+        def drop_not_completed(self, *, unique_id=None):
+            pass
+
+        def md5(self, unique_id):
+            return None
+
+    return MinimalDS()
+
+
+def test_base_write_citations_warns():
+    ds = _make_minimal_ds()
+    with pytest.warns(UserWarning, match="does not support saving citations"):
+        ds.write_citations(data=(object(),))
+
+
+def test_base_summary_citations_warns():
+    ds = _make_minimal_ds()
+    with pytest.warns(UserWarning, match="does not support saving citations"):
+        result = ds._summary_citations()  # noqa: SLF001
+    assert result == []
+
+
+def test_base_load_citations_returns_empty():
+    ds = _make_minimal_ds()
+    assert ds._load_citations() == []  # noqa: SLF001
+
+
+def test_base_write_not_completed_readonly():
+    ds = _make_minimal_ds(mode=READONLY)
+    with pytest.raises(OSError, match="readonly"):
+        ds.write_not_completed(unique_id="x", data="d")
+
+
+def test_base_write_log_readonly():
+    ds = _make_minimal_ds(mode=READONLY)
+    with pytest.raises(OSError, match="readonly"):
+        ds.write_log(unique_id="x", data="d")
+
+
+def test_base_write_citations_empty_data():
+    ds = _make_minimal_ds()
+    ds.write_citations(data=())
+
+
+@pytest.mark.mpi
+def test_source_check_create_not_master(tmp_path):
+    from unittest.mock import patch
+
+    from scinexus import data_store as ds_mod
+
+    target = tmp_path / "should_not_exist"
+    with patch.object(ds_mod, "is_master_process", return_value=False):
+        dstore = DataStoreDirectory(target, suffix="txt", mode=OVERWRITE)
+    assert not target.exists()
+    assert dstore.source == target

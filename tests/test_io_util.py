@@ -455,3 +455,46 @@ def test_open_url_gzip_mode(gzip_uri, mode):
         got = infile.read()
     expect_type = bytes if "b" in mode else str
     assert isinstance(got, expect_type)
+
+
+def test_get_compression_open_no_args():
+    from scinexus.io_util import _get_compression_open
+
+    with pytest.raises(ValueError, match="either path or compression"):
+        _get_compression_open()
+
+
+def test_open_via_url(DATA_DIR):
+    uri = (DATA_DIR / "sample.tsv").absolute().as_uri()
+    with open_(uri) as infile:
+        got = infile.read()
+    assert len(got) > 0
+
+
+def test_atomic_write_tmpdir_not_exist(tmp_path):
+    from scinexus.io_util import atomic_write
+
+    bad_tmpdir = tmp_path / "nonexistent_tmpdir"
+    with pytest.raises(FileNotFoundError, match="does not exist"):
+        atomic_write(tmp_path / "test.txt", tmpdir=bad_tmpdir, mode="w")
+
+
+def test_close_rename_zip_in_zip_none(tmp_path):
+    path = tmp_path / "test.txt"
+    zip_path = tmp_path / "test.zip"
+    aw = atomic_write(path, in_zip=zip_path, mode="w")
+    aw._in_zip = None  # noqa: SLF001
+    with pytest.raises(RuntimeError, match="in_zip path is unexpectedly None"):
+        aw._close_rename_zip(aw._tmppath)  # noqa: SLF001
+
+
+def test_atomic_write_exit_without_enter(tmp_path):
+    aw = atomic_write(tmp_path / "test.txt", mode="w")
+    with pytest.raises(ValueError, match="file object is unexpectedly None"):
+        aw.__exit__(None, None, None)
+
+
+def test_iter_splitlines_url(DATA_DIR):
+    uri = (DATA_DIR / "sample.tsv").absolute().as_uri()
+    got = list(iter_splitlines(uri))
+    assert len(got) > 0

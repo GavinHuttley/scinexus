@@ -610,3 +610,73 @@ def test_summary_not_completed(tmp_dir):
     assert isinstance(result, list)
     assert len(result) == 1
     dstore.close()
+
+
+def test_db_property_none_after_open(tmp_dir):
+    from unittest.mock import patch
+
+    path = tmp_dir / "db_none.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    with (
+        patch("scinexus.sqlite_data_store.open_sqlite_db_rw", return_value=None),
+        patch.object(dstore, "lock"),
+    ):
+        with pytest.raises(ValueError, match="unexpectedly None"):
+            _ = dstore.db
+
+
+def test_write_member_none(tmp_dir):
+    from unittest.mock import patch
+
+    path = tmp_dir / "write_none.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    with patch.object(dstore, "_write", return_value=None):
+        with pytest.raises(RuntimeError, match="failed to produce a member"):
+            dstore.write(unique_id="r1", data="d1")
+    dstore.close()
+
+
+def test_write_not_completed_member_none(tmp_dir):
+    from unittest.mock import patch
+
+    path = tmp_dir / "nc_none.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    nc = NotCompleted(NotCompletedType.FAIL, "dummy", "msg", source="src")
+    with patch.object(dstore, "_write", return_value=None):
+        with pytest.raises(RuntimeError, match="failed to produce a member"):
+            dstore.write_not_completed(unique_id="nc1", data=nc.to_json())
+    dstore.close()
+
+
+def test_write_citations_no_table(tmp_dir, sample_citations):
+    path = tmp_dir / "no_cite_write.sqlitedb"
+    db = sqlite3.connect(str(path))
+    db.execute(
+        "CREATE TABLE IF NOT EXISTS state"
+        "(state_id INTEGER PRIMARY KEY, record_type TEXT, lock_pid INTEGER)",
+    )
+    db.execute(
+        f"CREATE TABLE IF NOT EXISTS {_LOG_TABLE}"
+        "(log_id INTEGER PRIMARY KEY, log_name TEXT, date timestamp, data BLOB)",
+    )
+    db.execute(
+        f"CREATE TABLE IF NOT EXISTS {_RESULT_TABLE}"
+        "(record_id TEXT PRIMARY KEY, log_id INTEGER, md5 BLOB, "
+        "is_completed INTEGER, data BLOB)",
+    )
+    db.close()
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    # Replace _db with a connection to the DB without citations table
+    # (the lazy db property would call open_sqlite_db_rw which creates it)
+    dstore._db = sqlite3.connect(  # noqa: SLF001
+        str(path),
+        detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
+    )
+    dstore._db.row_factory = sqlite3.Row  # noqa: SLF001
+    dstore._open = True  # noqa: SLF001
+    assert not dstore._has_citations_table()  # noqa: SLF001
+    dstore.write_citations(data=sample_citations)
+    assert dstore._has_citations_table()  # noqa: SLF001
+    loaded = dstore._load_citations()  # noqa: SLF001
+    assert len(loaded) == 2
+    dstore.close()

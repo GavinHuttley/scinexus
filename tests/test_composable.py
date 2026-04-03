@@ -25,7 +25,8 @@ from scinexus.composable import (
     propagate_source,
     source_proxy,
 )
-from scinexus.data_store import DataStoreDirectory, Mode, get_unique_id
+from scinexus.data_store import DataMember, DataStoreDirectory, Mode, get_unique_id
+from scinexus.deserialise import deserialise_object
 
 
 def test_composable():
@@ -1623,3 +1624,160 @@ def test_apply_to_with_logging(tmp_path):
     assert len(result) == 1
     # log file should have been written to the data store
     assert any("log" in str(m) for m in out_dstore.logs)
+
+
+def test_not_completed_to_json():
+    """NotCompleted.to_json returns valid JSON"""
+    import json
+
+    nc = NotCompleted(NotCompletedType.ERROR, "origin", "a message")
+    result = json.loads(nc.to_json())
+    assert result["type"] == "scinexus.composable.NotCompleted"
+
+
+def test_deserialise_not_completed():
+    """roundtrip NotCompleted through JSON deserialisation"""
+    nc = NotCompleted(NotCompletedType.ERROR, "origin", "msg")
+    data = nc.to_rich_dict()
+    result = deserialise_object(data)
+    assert isinstance(result, NotCompleted)
+    assert result.message == "msg"
+
+
+def test_app_main_exception_returns_not_completed():
+    """exception in main() returns NotCompleted instead of raising"""
+
+    @define_app
+    class raises_app:
+        def main(self, val: int) -> int:
+            msg = "boom"
+            raise ValueError(msg)
+
+    app = raises_app()
+    result = app(1)
+    assert isinstance(result, NotCompleted)
+    assert result.type is NotCompletedType.ERROR
+    assert "boom" in result.message
+
+
+def test_not_completed_source_raises():
+    """source that raises in get_data_source sets source to None"""
+
+    class BadSource:
+        @property
+        def source(self):
+            msg = "broken"
+            raise RuntimeError(msg)
+
+    nc = NotCompleted(NotCompletedType.ERROR, "origin", "msg", source=BadSource())
+    assert nc.source is None
+
+
+def test_composed_skip_not_completed_input():
+    """NotCompleted passed as first input to composed pipeline is returned"""
+
+    @define_app
+    class first:
+        def main(self, val: int) -> int:
+            return val + 1
+
+    @define_app
+    class second:
+        def main(self, val: int) -> int:
+            return val * 2
+
+    composed = first() + second()
+    nc = NotCompleted(NotCompletedType.ERROR, "test", "fail")
+    result = composed(nc)
+    assert isinstance(result, NotCompleted)
+    assert result is nc
+
+
+def test_apply_to_string_input(tmp_path):
+    """apply_to accepts a single string path as dstore"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item.txt").write_text("data")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: str) -> str:
+            from pathlib import Path
+
+            return Path(val).read_text()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    result = process.apply_to(str(src / "item.txt"), logger=False, show_progress=False)
+    assert len(result) == 1
+
+
+def test_apply_to_duplicate_id(tmp_path):
+    """apply_to raises ValueError for duplicate identifiers"""
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(2):
+        (src / f"item_{i}.txt").write_text(f"data {i}")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    with pytest.raises(ValueError, match="non-unique identifier"):
+        process.apply_to(
+            dstore,
+            id_from_source=lambda _: "same_id",
+            logger=False,
+            show_progress=False,
+        )
+
+
+def test_apply_to_skips_existing_items(tmp_path):
+    """apply_to skips items already in the data store"""
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(3):
+        (src / f"item_{i}.txt").write_text(f"data {i}")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out = tmp_path / "out"
+    out_dstore = DataStoreDirectory(out, mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    # pre-write one item so it already exists
+    out_dstore.write(unique_id="item_0", data="existing")
+    process.apply_to(dstore, logger=False, show_progress=False)
+    # item_0 skipped, items 1 and 2 written → total 3
+    assert len(out_dstore.completed) == 3
