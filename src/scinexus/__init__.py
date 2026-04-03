@@ -13,7 +13,12 @@ from scinexus.composable import (
     is_app,
     is_app_composable,
 )
-from scinexus.progress import Progress, get_progress, set_default_progress
+from scinexus.progress import (
+    Progress,
+    ProgressContext,
+    get_progress,
+    set_default_progress,
+)
 
 if _typing.TYPE_CHECKING:  # pragma: no cover
     from typing import Any
@@ -24,6 +29,7 @@ __all__ = [
     "NotCompleted",
     "NotCompletedType",
     "Progress",
+    "ProgressContext",
     "WriterApp",
     "__version__",
     "define_app",
