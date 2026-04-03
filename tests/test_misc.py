@@ -69,6 +69,61 @@ def test_extend_docstring_from_no_dest_doc():
     assert target.__doc__ == "This is a source docstring.\n"
 
 
+def test_extend_docstring_from_method_append():
+    class C:
+        @extend_docstring_from(_source)
+        def target(self):
+            """I am target."""
+
+    assert C.target.__doc__ == "This is a source docstring.\nI am target."
+
+
+def test_extend_docstring_from_method_prepend():
+    class C:
+        @extend_docstring_from(_source, pre=True)
+        def target(self):
+            """I am target."""
+
+    assert C.target.__doc__ == "I am target.\nThis is a source docstring."
+
+
+def test_extend_docstring_from_method_no_dest_doc():
+    class C:
+        @extend_docstring_from(_source)
+        def target(self):
+            pass
+
+    assert C.target.__doc__ == "This is a source docstring.\n"
+
+
+class _SourceClass:
+    """This is a class docstring."""
+
+
+def test_extend_docstring_from_class_append():
+    @extend_docstring_from(_SourceClass)
+    class Target:
+        """I am target."""
+
+    assert Target.__doc__ == "This is a class docstring.\nI am target."
+
+
+def test_extend_docstring_from_class_prepend():
+    @extend_docstring_from(_SourceClass, pre=True)
+    class Target:
+        """I am target."""
+
+    assert Target.__doc__ == "I am target.\nThis is a class docstring."
+
+
+def test_extend_docstring_from_class_no_dest_doc():
+    @extend_docstring_from(_SourceClass)
+    class Target:
+        pass
+
+    assert Target.__doc__ == "This is a class docstring.\n"
+
+
 def _foo1():
     """some text"""
 
