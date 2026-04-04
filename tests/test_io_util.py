@@ -236,6 +236,7 @@ def test_get_format_suffixes_pathlib(name, expect):
         ({}, False),
         ("not an existing path", False),
         ("(a,b,(c,d))", False),
+        ("(a:0.1,b:0.1,(c:0.1,d:0.1):0.1)", False),
         (__file__, True),
         (pathlib.Path(__file__), True),
         (NotCompleted("FAIL", "test", message="none", source="unknown"), False),
