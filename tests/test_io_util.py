@@ -1,7 +1,6 @@
 import bz2
 import gzip
 import pathlib
-import tempfile
 import zipfile
 from urllib.parse import urlparse
 
@@ -18,7 +17,6 @@ from scinexus.io_util import (
     open_,
     open_url,
     path_exists,
-    remove_files,
 )
 
 
@@ -163,26 +161,6 @@ def test_path_relative_to_zip_parent():
     for member in ("data/member.txt", "member.txt", "a/b/c/member.txt"):
         got = _path_relative_to_zip_parent(zip_path, pathlib.Path(member))
         assert got.parts[0] == "data"
-
-
-def test_remove_files():
-    """Remove files functions as expected"""
-    import os
-
-    test_filepaths = [
-        tempfile.NamedTemporaryFile(prefix="remove_files_test").name for _ in range(5)
-    ]
-
-    pytest.raises(OSError, remove_files, test_filepaths)
-    remove_files(test_filepaths, error_on_missing=False)
-
-    open(test_filepaths[2], "w").close()
-    pytest.raises(OSError, remove_files, test_filepaths)
-    assert not os.path.exists(test_filepaths[2])
-
-    open(test_filepaths[2], "w").close()
-    remove_files(test_filepaths, error_on_missing=False)
-    assert not os.path.exists(test_filepaths[2])
 
 
 @pytest.mark.parametrize(

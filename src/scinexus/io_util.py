@@ -5,11 +5,11 @@ import functools
 import shutil
 import uuid
 from bz2 import open as bzip_open
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterator
 from gzip import open as gzip_open
 from io import TextIOWrapper
 from lzma import open as lzma_open
-from os import PathLike, remove
+from os import PathLike
 from pathlib import Path, PurePath
 from tempfile import mkdtemp
 from types import TracebackType
@@ -382,22 +382,6 @@ def get_format_suffixes(filename: PathType) -> tuple[str | None, str | None]:
     else:
         suffix = None
     return suffix, cmp_suffix
-
-
-def remove_files(
-    list_of_filepaths: Iterable[PathType], error_on_missing: bool = True
-) -> None:
-    """Remove list of filepaths, optionally raising an error if any are missing"""
-    missing: list[str] = []
-    for fp in list_of_filepaths:
-        try:
-            remove(fp)
-        except OSError:
-            missing.append(str(fp))
-
-    if error_on_missing and missing:
-        msg = "Some filepaths were not accessible: {}".format("\t".join(missing))
-        raise OSError(msg)
 
 
 def path_exists(path: PathType) -> bool:
