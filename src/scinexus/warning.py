@@ -17,7 +17,7 @@ def deprecated(
     new: str,
     version: str,
     reason: str | None = None,
-    stack_level: int = 3,
+    stack_level: int = 4,
 ) -> None:
     """a convenience function for deprecating classes, functions, arguments.
 
@@ -50,7 +50,7 @@ def discontinued(
     old: str,
     version: str,
     reason: str | None = None,
-    stack_level: int = 3,
+    stack_level: int = 4,
 ) -> None:
     """convenience func to warn about discontinued attributes
 
@@ -89,7 +89,7 @@ def deprecated_args(
     reason: str,
     old_new: Sequence[tuple[str, str]] | None = None,
     discontinued: Sequence[str] | None = None,
-    stack_level: int = 2,
+    stack_level: int = 4,
 ) -> Callable[..., Any]:
     """
     A decorator that marks specific arguments of a function as deprecated.
@@ -186,7 +186,7 @@ def deprecated_callable(
     reason: str,
     new: str | None = None,
     is_discontinued: bool = False,
-    stack_level: int = 2,
+    stack_level: int = 4,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """
     A decorator that marks callables (function or method) as deprecated or discontinued..
