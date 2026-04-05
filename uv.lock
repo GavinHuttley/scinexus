@@ -783,12 +783,12 @@ test = [
 requires-dist = [
     { name = "charset-normalizer" },
     { name = "citeable" },
-    { name = "loky", specifier = "!=3.5.0" },
+    { name = "loky" },
     { name = "mpi4py", marker = "extra == 'mpi'" },
     { name = "rich", marker = "extra == 'rich'" },
     { name = "scitrack" },
     { name = "tqdm" },
-    { name = "typeguard", specifier = ">=4.0,<5" },
+    { name = "typeguard" },
 ]
 provides-extras = ["mpi", "rich"]
 

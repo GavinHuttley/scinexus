@@ -9,10 +9,10 @@ readme_renderer = "markdown"
 dependencies = [
     "charset_normalizer",
     "citeable",
-    "loky!=3.5.0",
     "scitrack",
     "tqdm",
-    "typeguard>=4.0,<5",
+    "typeguard",
+    "loky",
 ]
 
 [project.optional-dependencies]
