@@ -18,7 +18,6 @@ from scinexus.data_store import (
     READONLY,
     DataStoreDirectory,
     ReadOnlyDataStoreZipped,
-    convert_directory_datastore,
     get_data_source,
     get_summary_display,
     get_unique_id,
@@ -204,12 +203,6 @@ def test_data_member_eq(ro_dstore, fasta_dir):
     mem1 = next(m for m in ro_dstore.completed if m.unique_id == name)
     mem2 = next(m for m in ro_dstore2.completed if m.unique_id == name)
     assert mem1 != mem2
-
-
-def test_convert_directory_datastore(fasta_dir, tmp_dir):
-    outpath = tmp_dir / "converted"
-    new_dstore = convert_directory_datastore(fasta_dir, outpath, ".fasta")
-    assert len(new_dstore) > 0
 
 
 def test_fail_try_append(full_dstore, completed_objects):

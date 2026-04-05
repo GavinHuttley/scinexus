@@ -917,29 +917,6 @@ def _(data: DataMemberABC) -> str | None:
     return str(data.unique_id)
 
 
-def convert_directory_datastore(
-    inpath: Path,
-    outpath: Path,
-    suffix: str | None = None,
-) -> DataStoreABC:
-    """copy files matching suffix from one directory data store to another
-
-    Parameters
-    ----------
-    inpath
-        source directory
-    outpath
-        destination directory
-    suffix
-        file suffix to match
-    """
-    out_dstore = DataStoreDirectory(source=outpath, mode=OVERWRITE, suffix=suffix)
-    filenames = inpath.glob(f"*{suffix}")
-    for fn in filenames:
-        out_dstore.write(unique_id=fn.name, data=fn.read_text())
-    return out_dstore
-
-
 def make_record_for_json(
     identifier: str, data: Any, completed: bool
 ) -> dict[str, object]:

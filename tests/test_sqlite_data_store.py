@@ -8,7 +8,7 @@ from citeable import Software
 from scitrack import get_text_hexdigest
 
 from scinexus.composable import NotCompleted, NotCompletedType
-from scinexus.data_store import OVERWRITE, READONLY
+from scinexus.data_store import OVERWRITE, READONLY, DataMemberABC, DataStoreDirectory
 from scinexus.sqlite_data_store import (
     _LOG_TABLE,
     _MEMORY,
@@ -48,6 +48,41 @@ def sample_citations():
         publisher="test",
     )
     return (cite1, cite2)
+
+
+@pytest.fixture
+def nc_objects():
+    return {
+        f"id_{i}": NotCompleted(
+            NotCompletedType.ERROR, "location", "message", source=f"id_{i}"
+        )
+        for i in range(3)
+    }
+
+
+@pytest.fixture
+def sql_dstore(DATA_DIR, tmp_dir):
+    ro_dir_dstore = DataStoreDirectory(DATA_DIR, suffix="fasta")
+    path = tmp_dir / "data.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    for m in ro_dir_dstore:
+        dstore.write(data=m.read(), unique_id=m.unique_id)
+    return dstore
+
+
+@pytest.fixture
+def full_dstore_sqlite(tmp_dir, nc_objects, DATA_DIR):
+    path = tmp_dir / "full.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    for uid, obj in nc_objects.items():
+        dstore.write_not_completed(unique_id=uid, data=obj.to_json())
+    ro = DataStoreDirectory(DATA_DIR, suffix="fasta")
+    for m in ro:
+        dstore.write(unique_id=m.unique_id, data=m.read())
+    log_text = (DATA_DIR / "scitrack.log").read_text()
+    dstore.write_log(unique_id="scitrack.log", data=log_text)
+    yield dstore
+    dstore.close()
 
 
 @pytest.fixture
@@ -92,19 +127,35 @@ def test_open_sqlite_db_rw(tmp_dir):
 
 
 def test_rw_sql_dstore_mem():
+    """in memory dstore with multiple writes verified via SQL"""
     dstore = DataStoreSqlite(_MEMORY, mode=OVERWRITE)
-    dstore.write(unique_id="test_record", data="test data")
-    got = dstore.read("test_record")
-    assert got == "test data"
-    dstore.close()
+    records = {f"r{i}": f"data {i}" for i in range(3)}
+    for unique_id, data in records.items():
+        dstore.write(data=data, unique_id=unique_id)
+    expect = len(records)
+    query = f"SELECT count(*) as c FROM {_RESULT_TABLE} WHERE is_completed=?"
+    got = dstore.db.execute(query, (1,)).fetchone()["c"]
+    assert got == expect
+    assert len(dstore.completed) == expect
 
 
 def test_not_completed(tmp_dir):
+    """multiple not_completed records are stored and retrievable"""
+    nc_objects = {
+        f"id_{i}": NotCompleted(
+            NotCompletedType.ERROR, "location", "message", source=f"id_{i}"
+        )
+        for i in range(3)
+    }
     path = tmp_dir / "test_nc.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
-    nc = NotCompleted(NotCompletedType.FAIL, "dummy", "test message", source="src")
-    dstore.write_not_completed(unique_id="nc1", data=nc.to_json())
-    assert len(dstore.not_completed) == 1
+    for unique_id, obj in nc_objects.items():
+        dstore.write_not_completed(data=obj.to_json(), unique_id=unique_id)
+    expect = len(nc_objects)
+    query = f"SELECT count(*) as c FROM {_RESULT_TABLE} WHERE is_completed=?"
+    got = dstore.db.execute(query, (0,)).fetchone()["c"]
+    assert got == expect
+    assert len(dstore.not_completed) == expect
     dstore.close()
 
 
@@ -119,16 +170,13 @@ def test_logdata(tmp_dir, DATA_DIR):
     dstore.close()
 
 
-def test_drop_not_completed(tmp_dir):
-    path = tmp_dir / "test_drop_nc.sqlitedb"
-    dstore = DataStoreSqlite(path, mode=OVERWRITE)
-    nc = NotCompleted(NotCompletedType.FAIL, "dummy", "test message", source="src")
-    dstore.write_not_completed(unique_id="nc1", data=nc.to_json())
-    dstore.write_not_completed(unique_id="nc2", data=nc.to_json())
-    assert len(dstore.not_completed) == 2
+def test_drop_not_completed(nc_objects):
+    dstore = DataStoreSqlite(_MEMORY, mode=OVERWRITE)
+    for unique_id, obj in nc_objects.items():
+        dstore.write_not_completed(data=obj.to_json(), unique_id=unique_id)
+    assert len(dstore.not_completed) == len(nc_objects)
     dstore.drop_not_completed()
     assert len(dstore.not_completed) == 0
-    dstore.close()
 
 
 def test_contains(tmp_dir):
@@ -157,6 +205,7 @@ def test_members(tmp_dir):
     nc = NotCompleted(NotCompletedType.FAIL, "dummy", "msg", source="src")
     dstore.write_not_completed(unique_id="nc1", data=nc.to_json())
     assert len(dstore.members) == 2
+    assert all(isinstance(m, DataMemberABC) for m in dstore)
     dstore.close()
 
 
@@ -199,6 +248,16 @@ def test_read(tmp_dir):
     dstore.close()
 
 
+def test_read_all_record_types(full_dstore_sqlite):
+    """reading from completed, not_completed, and log records all return str"""
+    records = [
+        full_dstore_sqlite.completed[0],
+        full_dstore_sqlite.not_completed[0],
+        full_dstore_sqlite.logs[0],
+    ]
+    assert all(isinstance(r.read(), str) for r in records)
+
+
 def test_write_success_replaces_not_completed(tmp_dir):
     path = tmp_dir / "test_replace_nc.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
@@ -221,13 +280,16 @@ def test_read_log(tmp_dir, DATA_DIR):
     dstore.close()
 
 
-def test_write_text_binary(tmp_dir):
-    path = tmp_dir / "test_wb.sqlitedb"
-    dstore = DataStoreSqlite(path, mode=OVERWRITE)
-    dstore.write(unique_id="text_record", data="text data")
-    got = dstore.read("text_record")
-    assert got == "text data"
-    dstore.close()
+@pytest.mark.parametrize("binary", [False, True])
+def test_write_text_binary(binary):
+    """correctly write content whether text or binary data"""
+    dstore = DataStoreSqlite(_MEMORY, mode=OVERWRITE)
+    expect = "some text data"
+    if binary:
+        expect = dumps(expect)
+    m = dstore.write(unique_id="record", data=expect)
+    got = m.read()
+    assert got == expect
 
 
 def test_write_if_member_exists(tmp_dir):
@@ -266,12 +328,17 @@ def test_limit_on_writable(tmp_dir):
         DataStoreSqlite(path, mode=OVERWRITE, limit=10)
 
 
-def test_new_write_id_includes_table(tmp_dir):
-    path = tmp_dir / "test_id_table.sqlitedb"
-    dstore = DataStoreSqlite(path, mode=OVERWRITE)
-    dstore.write(unique_id="results/r1", data="d1")
-    assert "r1" in dstore
-    dstore.close()
+@pytest.mark.parametrize("table_name", ["", _RESULT_TABLE])
+def test_new_write_id_includes_table(table_name):
+    """correctly handles table name if included in unique id"""
+    dstore = DataStoreSqlite(_MEMORY, mode=OVERWRITE)
+    identifier = "test1.fasta"
+    if table_name:
+        identifier = str(Path(table_name) / identifier)
+    data = "test data"
+    m = dstore.write(unique_id=identifier, data=data)
+    got = dstore.read(m.unique_id)
+    assert got == data
 
 
 def test_is_locked(tmp_dir):
@@ -289,6 +356,10 @@ def test_lock_unlock(tmp_dir):
     assert dstore.locked
     dstore.unlock()
     assert not dstore.locked
+    dstore.lock()
+    assert dstore.locked
+    dstore.unlock()
+    assert not dstore.locked
     dstore.close()
 
 
@@ -298,6 +369,12 @@ def test_lock_firsttime(tmp_dir):
     # accessing db triggers lock
     _ = dstore.db
     assert dstore.locked
+    # delete state row and re-lock from empty state
+    dstore.db.execute("DELETE FROM state WHERE state_id=1")
+    dstore.lock()
+    assert dstore.locked
+    dstore.unlock()
+    assert not dstore.locked
     dstore.close()
 
 
@@ -362,6 +439,8 @@ def test_getitem(tmp_dir):
     dstore.write(unique_id="r2", data="d2")
     first = dstore[0]
     assert first.unique_id == "r1"
+    with pytest.raises(IndexError):
+        _ = dstore[len(dstore)]
     dstore.close()
 
 
@@ -404,6 +483,7 @@ def test_write_citations_sqlite(tmp_dir, sample_citations):
     loaded = dstore._load_citations()  # noqa: SLF001
     assert len(loaded) == 2
     assert loaded[0].title == "Tool One"
+    assert loaded[1].title == "Tool Two"
     dstore.close()
 
 
@@ -425,6 +505,7 @@ def test_write_bib_sqlite(tmp_dir, sample_citations):
     assert bib_path.exists()
     content = bib_path.read_text()
     assert "Tool One" in content
+    assert "Tool Two" in content
     dstore.close()
 
 
