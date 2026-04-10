@@ -3,6 +3,7 @@
 # TODO write more extensive docstring explaining limited use of these types
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from types import UnionType
 from typing import (
@@ -19,6 +20,36 @@ from typing import (
 from scinexus.data_store import DataMemberABC
 
 NESTED_HINTS = (Union, UnionType, list, tuple, set)
+
+_type_namespace_providers: list[Callable[[], dict[str, type]]] = []
+
+
+def register_type_namespace(
+    provider: Callable[[], dict[str, type]],
+) -> None:
+    """register a lazy namespace provider for forward-reference resolution
+
+    Parameters
+    ----------
+    provider
+        a zero-arg callable returning a dict of {name: type}. It is invoked
+        lazily (each time _resolve_name needs a fallback) so downstream
+        packages can defer heavy imports. Providers are responsible for
+        their own caching.
+
+    Notes
+    -----
+    Registration is idempotent: re-registering the same callable is a
+    no-op. Providers are consulted in registration order, and the first
+    provider that yields ``name`` wins.
+    """
+    if provider not in _type_namespace_providers:
+        _type_namespace_providers.append(provider)
+
+
+def _clear_type_namespace_providers() -> None:
+    """remove all registered namespace providers (intended for tests)"""
+    _type_namespace_providers.clear()
 
 
 @runtime_checkable
@@ -44,11 +75,22 @@ IdentifierType = Union[str, Path, DataMemberABC]
 def _resolve_name(
     name: str, module_globals: dict[str, object] | None = None
 ) -> type[Any]:
-    """resolves a string name to a type, checking module_globals"""
+    """resolves a string name to a type
+
+    Checks ``module_globals`` first, then falls back to any namespace
+    providers registered via :func:`register_type_namespace`.
+    """
     if module_globals and name in module_globals:
         result = module_globals[name]
         if isinstance(result, type):
             return result
+
+    for provider in _type_namespace_providers:
+        ns = provider()
+        if name in ns:
+            result = ns[name]
+            if isinstance(result, type):
+                return result
 
     msg = f"cannot resolve type name {name!r}"
     raise TypeError(msg)
