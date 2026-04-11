@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Iterator
 from copy import copy, deepcopy
 from enum import Enum
 from pathlib import Path
-from typing import Any, Generic, Literal, Self, TypeVar, overload
+from typing import Any, ClassVar, Generic, Literal, Self, TypeVar, overload
 from uuid import uuid4
 
 from citeable import Citation
@@ -380,7 +380,6 @@ class AppBase(Generic[T, R]):
 
     def __init_subclass__(
         cls,
-        app_type: AppType | str = GENERIC,
         skip_not_completed: bool = True,
         cite: Citation | None = None,
         **kwargs: Any,
@@ -391,6 +390,7 @@ class AppBase(Generic[T, R]):
             cls, "_define_app_pending", False
         ):
             return
+        app_type = getattr(cls, "_default_app_type", GENERIC)
         _init_subclass_setup(cls, app_type, skip_not_completed, cite)
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
@@ -664,6 +664,7 @@ class WriterApp(ComposableApp[T, R]):
     """Adds apply_to and set_logger for WRITER."""
 
     _is_intermediate_base: bool = True
+    _default_app_type: ClassVar[AppType] = WRITER
     data_store: DataStoreABC
     logger: CachingLogger | None
 
@@ -803,6 +804,46 @@ class WriterApp(ComposableApp[T, R]):
             src = Path(self.data_store.source).parent  # type: ignore[attr-defined]
             logger.log_file_path = str(src / _make_logfile_name(self))
         self.logger = logger
+
+
+class LoaderApp(ComposableApp[T, R]):
+    """Intermediate base class for LOADER apps.
+
+    Subclasses of ``LoaderApp`` are automatically assigned
+    ``app_type=LOADER``. Loaders sit at the start of a composed pipeline
+    and have no ``input`` attribute.
+
+    Examples
+    --------
+    Define a loader by inheritance::
+
+        class my_loader(LoaderApp):
+            def main(self, path):
+                return path
+    """
+
+    _is_intermediate_base: bool = True
+    _default_app_type: ClassVar[AppType] = LOADER
+
+
+class NonComposableApp(AppBase[T, R]):
+    """Intermediate base class for NON_COMPOSABLE apps.
+
+    Subclasses of ``NonComposableApp`` are automatically assigned
+    ``app_type=NON_COMPOSABLE``. Non-composable apps cannot participate
+    in pipeline composition via ``+``.
+
+    Examples
+    --------
+    Define a non-composable app by inheritance::
+
+        class my_app(NonComposableApp):
+            def main(self, val):
+                return val
+    """
+
+    _is_intermediate_base: bool = True
+    _default_app_type: ClassVar[AppType] = NON_COMPOSABLE
 
 
 def _class_from_func(func: Callable[..., Any]) -> type[Any]:

@@ -6,6 +6,8 @@ from scinexus._version import __version__
 from scinexus.composable import (
     AppBase,
     ComposableApp,
+    LoaderApp,
+    NonComposableApp,
     NotCompleted,
     NotCompletedType,
     WriterApp,
@@ -26,6 +28,8 @@ if _typing.TYPE_CHECKING:  # pragma: no cover
 __all__ = [
     "AppBase",
     "ComposableApp",
+    "LoaderApp",
+    "NonComposableApp",
     "NotCompleted",
     "NotCompletedType",
     "Progress",

@@ -10,12 +10,16 @@ from numpy import array, ndarray
 
 from scinexus import typing as snx_types
 from scinexus.composable import (
+    GENERIC,
     LOADER,
     NON_COMPOSABLE,
     WRITER,
     ComposableApp,
+    LoaderApp,
+    NonComposableApp,
     NotCompleted,
     NotCompletedType,
+    WriterApp,
     _get_raw_hints,
     _make_logfile_name,
     _proxy_input,
@@ -1456,6 +1460,42 @@ def test_writer_apply_to(tmp_path):
     assert len(result) == 3
 
 
+def test_writerapp_subclass_apply_to_writes_once(tmp_path) -> None:
+    """An inheritance-defined writer runs main() exactly once per input.
+
+    Regression test for the original bug where ``class X(WriterApp)``
+    ended up with ``app_type=GENERIC``, causing ``apply_to`` to feed
+    the writer's own output back into ``main`` on a second pass.
+    """
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(3):
+        (src / f"item_{i}.txt").write_text(f"data {i}")
+
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    call_count: list[str] = []
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    class inherited_writer(WriterApp):
+        def __init__(self, data_store: DataStoreDirectory) -> None:
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            call_count.append(identifier)
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    assert inherited_writer.app_type is WRITER
+    process = reader() + inherited_writer(data_store=out_dstore)
+    result = process.apply_to(dstore, logger=False, show_progress=False)
+    assert len(result) == 3
+    assert len(call_count) == 3
+
+
 def test_get_main_hints_no_main():
     from scinexus.composable import _get_main_hints
 
@@ -1481,6 +1521,51 @@ def test_init_subclass_slots():
 
             def main(self, val: int) -> int:
                 return val
+
+
+def test_writerapp_subclass_implies_writer() -> None:
+    """Inheriting WriterApp yields a WRITER without any class kwarg."""
+
+    class my_writer(WriterApp):
+        def __init__(self, data_store: DataStoreDirectory) -> None:
+            self.data_store = data_store
+
+        def main(self, data: int, identifier: str = "") -> int:
+            return data
+
+    assert my_writer.app_type is WRITER
+
+
+def test_loaderapp_subclass_implies_loader() -> None:
+    """Inheriting LoaderApp yields a LOADER and is not stripped of input."""
+
+    class my_loader(LoaderApp):
+        def main(self, path: str) -> str:
+            return path
+
+    assert my_loader.app_type is LOADER
+    # _init_subclass_setup only clears `cls.input` for non-LOADER apps.
+    assert "input" not in my_loader.__dict__
+
+
+def test_noncomposableapp_subclass_implies_non_composable() -> None:
+    """Inheriting NonComposableApp yields a NON_COMPOSABLE."""
+
+    class my_app(NonComposableApp[int, int]):
+        def main(self, val: int) -> int:
+            return val * 2
+
+    assert my_app.app_type is NON_COMPOSABLE
+
+
+def test_explicit_composableapp_subclass_is_generic() -> None:
+    """Direct ComposableApp subclasses still resolve to GENERIC."""
+
+    class my_app(ComposableApp[int, int]):
+        def main(self, val: int) -> int:
+            return val
+
+    assert my_app.app_type is GENERIC
 
 
 def test_validate_data_type_not_completed_skip_true():

@@ -4,7 +4,7 @@ import subprocess
 import sys
 import textwrap
 
-from scinexus import AppBase, ComposableApp
+from scinexus import ComposableApp, NonComposableApp
 from scinexus.composable import (
     NON_COMPOSABLE,
     NotCompleted,
@@ -23,7 +23,7 @@ class StrToInt(ComposableApp[str, int]):
         return int(val)
 
 
-class NonComp(AppBase[int, int], app_type=NON_COMPOSABLE):
+class NonComp(NonComposableApp[int, int]):
     def main(self, val: int) -> int:
         return val * 2
 
