@@ -28,3 +28,8 @@ def test_lazy_import_get_summary_display():
 def test_lazy_import_nonexistent():
     with pytest.raises(AttributeError, match="no attribute"):
         scinexus.no_such_attribute  # noqa: B018
+
+
+def test_lazy_open_data_store():
+    f = scinexus.open_data_store
+    assert callable(f)

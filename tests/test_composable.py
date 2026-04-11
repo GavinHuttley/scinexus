@@ -1,13 +1,20 @@
 import inspect
 import pickle
+import shutil
 from copy import copy
+from pathlib import Path
 from pickle import dumps, loads
 from unittest.mock import Mock
 
+import cogent3 as c3
 import pytest
 from citeable import Software
+from cogent3.app import typing as c3types
+from cogent3.util.union_dict import UnionDict
 from numpy import array, ndarray
+from scitrack import CachingLogger
 
+from scinexus import open_data_store
 from scinexus import typing as snx_types
 from scinexus.composable import (
     GENERIC,
@@ -37,6 +44,7 @@ from scinexus.data_store import (
     set_id_from_source,
 )
 from scinexus.deserialise import deserialise_object
+from scinexus.sqlite_data_store import DataStoreSqlite
 
 
 def test_composable():
@@ -2000,3 +2008,563 @@ def test_apply_to_skips_existing_items(tmp_path):
     process.apply_to(dstore, logger=False, show_progress=False)
     # item_0 skipped, items 1 and 2 written → total 3
     assert len(out_dstore.completed) == 3
+
+
+def test_triggers_bugcatcher():
+    """a composable that does not trap failures returns NotCompletedResult
+    requesting bug report"""
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: str) -> str:
+            return val.read()
+
+    read = reader()
+    read.main = lambda x: None
+    got = read("somepath.fasta")  # pylint: disable=not-callable
+    assert isinstance(got, NotCompleted)
+    assert got.type is NotCompletedType.BUG
+
+
+@pytest.mark.parametrize("func", [str, repr])
+def test_user_function_repr(func):
+    @define_app
+    def bar(val: float, num=3) -> float:
+        return val * num
+
+    got = func(bar(num=3))
+    assert got == "bar(num=3)"
+
+
+@pytest.fixture(params=[Path, None, str])
+def source_type(DATA_DIR, request):
+    fname = "brca1.fasta"
+    dstore = open_data_store(DATA_DIR, suffix="fasta")
+    if request.param is not None:
+        return request.param(DATA_DIR / fname)
+    return next((m for m in dstore if m.unique_id == fname), None)
+
+
+def test_composable_unwraps_source_proxy_as_completed(source_type):
+    app = c3.get_app("load_unaligned", format_name="fasta", moltype="dna")
+    result = next(iter(app.as_completed([source_type], show_progress=False)))
+    got = result.source
+    assert got.endswith("brca1.fasta")
+    assert not isinstance(got, source_proxy)
+
+
+def test_composable_unwraps_source_proxy_call(source_type):
+    app = c3.get_app("load_unaligned", format_name="fasta", moltype="dna")
+    result = app(source_type)
+    got = result.source
+    assert got.endswith("brca1.fasta")
+    assert not isinstance(got, source_proxy)
+
+
+def test_as_completed(DATA_DIR):
+    """correctly applies iteratively"""
+    dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
+    reader = c3.get_app("load_unaligned", format_name="fasta", moltype="dna")
+    got = list(reader.as_completed(dstore, show_progress=False))
+    assert len(got) == len(dstore)
+    # should also be able to apply the results to another composable func
+    min_length = c3.get_app("sample.min_length", 10)
+    got = list(min_length.as_completed(got, show_progress=False))
+    assert len(got) == len(dstore)
+    # should work on a chained function
+    proc = reader + min_length
+    got = list(proc.as_completed(dstore, show_progress=False))
+    assert len(got) == len(dstore)
+    # and works on a list of just strings
+    got = list(proc.as_completed([str(m) for m in dstore], show_progress=False))
+    assert len(got) == len(dstore)
+    # or a single string
+    path = str(Path(dstore[0].data_store.source) / dstore[0].unique_id)
+    got = list(proc.as_completed(path, show_progress=False))
+    assert len(got) == 1
+    assert got[0].__class__.__name__.endswith("SequenceCollection")
+
+
+@pytest.mark.parametrize("data", [(), ("", "")])
+def test_as_completed_empty_data(data):
+    """correctly applies iteratively"""
+    reader = c3.get_app("load_unaligned", format_name="fasta", moltype="dna")
+    min_length = c3.get_app("sample.min_length", 10)
+    proc = reader + min_length
+
+    # returns empty input
+    got = list(proc.as_completed(data))
+    assert got == []
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"a": 2},
+        UnionDict(a=2, source="blah.txt"),
+        c3.make_aligned_seqs(
+            {"a": "ACGT"},
+            info={"source": "blah.txt"},
+            moltype="dna",
+        ),
+    ],
+)
+def test_as_completed_w_wout_source(data):
+    from cogent3.app.typing import AlignedSeqsType
+
+    @define_app
+    def pass_through(val: dict | UnionDict | AlignedSeqsType) -> dict:
+        return val
+
+    app = pass_through()  # pylint: disable=not-callable,no-value-for-parameter
+    got = list(app.as_completed([data], show_progress=False))
+    assert bool(got), got
+
+
+@pytest.mark.parametrize("klass", [DataStoreDirectory, DataStoreSqlite])
+@pytest.mark.parametrize("cast", [str, Path])
+def test_apply_to_strings(DATA_DIR, tmp_dir, klass, cast):
+    """apply_to handles non-DataMember"""
+    dname = "test_apply_to_strings"
+    outpath = tmp_dir / dname
+
+    dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
+    dstore = [cast(str(m)) for m in dstore]
+    reader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    min_length = c3.get_app("min_length", 10)
+    kwargs = {"suffix": "fasta"} if klass == DataStoreDirectory else {}
+    writer = c3.get_app("write_seqs", data_store=klass(outpath, mode="w", **kwargs))
+    process = reader + min_length + writer
+    # create paths as strings
+    _ = process.apply_to(dstore, show_progress=False)
+    assert len(process.data_store.logs) == 1
+
+
+@pytest.mark.parametrize("klass", [DataStoreDirectory, DataStoreSqlite])
+@pytest.mark.parametrize("cast", [str, Path])
+def test_as_completed_strings(DATA_DIR, tmp_dir, klass, cast):
+    """as_completed handles non-DataMember"""
+    dname = "test_apply_to_strings"
+    outpath = tmp_dir / dname
+
+    dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
+    dstore = [cast(str(m)) for m in dstore]
+    reader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    min_length = c3.get_app("min_length", 10)
+    if klass == DataStoreDirectory:
+        writer = c3.get_app("write_seqs", klass(outpath, mode="w", suffix="fasta"))
+    else:
+        writer = c3.get_app("write_seqs", klass(outpath, mode="w"))
+    orig_length = len(writer.data_store)
+    process = reader + min_length + writer
+    # create paths as strings
+    got = list(process.as_completed(dstore, show_progress=False))
+    assert len(got) > orig_length
+
+
+def test_apply_to_non_unique_identifiers(tmp_dir):
+    """should fail if non-unique names"""
+    dstore = [
+        "brca1.fasta",
+        "brca1.fasta",
+    ]
+    reader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    min_length = c3.get_app("min_length", 10)
+    outpath = tmp_dir / "test_apply_to_non_unique_identifiers"
+    writer = c3.get_app(
+        "write_seqs",
+        DataStoreDirectory(outpath, mode="w", suffix="fasta"),
+    )
+    process = reader + min_length + writer
+    with pytest.raises(ValueError):
+        process.apply_to(dstore)
+
+
+def test_apply_to_logging(DATA_DIR, tmp_dir):
+    """correctly creates log file"""
+    dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
+    reader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    min_length = c3.get_app("min_length", 10)
+    out_dstore = open_data_store(tmp_dir / "delme.sqlitedb", mode="w")
+    writer = c3.get_app("write_db", out_dstore)
+    process = reader + min_length + writer
+    process.apply_to(dstore, show_progress=False)
+    # always creates a log
+    assert len(process.data_store.logs) == 1
+
+
+def test_apply_to_logger(DATA_DIR, tmp_dir):
+    """correctly uses user provided logger"""
+    dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
+    LOGGER = CachingLogger()
+    reader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    min_length = c3.get_app("min_length", 10)
+    out_dstore = open_data_store(tmp_dir / "delme.sqlitedb", mode="w")
+    writer = c3.get_app("write_db", out_dstore)
+    process = reader + min_length + writer
+    process.apply_to(dstore, show_progress=False, logger=LOGGER)
+    assert len(process.data_store.logs) == 1
+
+
+def test_apply_to_no_logger(DATA_DIR, tmp_dir):
+    """correctly uses user provided logger"""
+    dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
+    reader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    min_length = c3.get_app("min_length", 10)
+    out_dstore = open_data_store(tmp_dir / "delme.sqlitedb", mode="w")
+    writer = c3.get_app("write_db", out_dstore)
+    process = reader + min_length + writer
+    process.apply_to(dstore, show_progress=False, logger=False)
+    assert len(process.data_store.logs) == 0
+    assert process.logger is None
+
+
+@pytest.mark.parametrize("logger_val", [True, "somepath.log"])
+def test_apply_to_invalid_logger(DATA_DIR, tmp_dir, logger_val):
+    """incorrect logger value raises TypeError"""
+    dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
+    reader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    min_length = c3.get_app("min_length", 10)
+    out_dstore = open_data_store(tmp_dir / "delme.sqlitedb", mode="w")
+    writer = c3.get_app("write_db", out_dstore)
+    process = reader + min_length + writer
+    with pytest.raises(TypeError):
+        process.apply_to(dstore, show_progress=False, logger=logger_val)
+
+
+@pytest.fixture
+def fasta_dir(DATA_DIR, tmp_dir):
+    filenames = DATA_DIR.glob("*.fasta")
+    fasta_dir = tmp_dir / "fasta"
+    fasta_dir.mkdir(parents=True, exist_ok=True)
+    for fn in filenames:
+        dest = fasta_dir / fn.name
+        dest.write_text(fn.read_text())
+    return fasta_dir
+
+
+@pytest.fixture
+def log_data(DATA_DIR):
+    path = DATA_DIR / "scitrack.log"
+    return path.read_text()
+
+
+@pytest.fixture
+def ro_dstore(fasta_dir):
+    return DataStoreDirectory(fasta_dir, suffix="fasta", mode="r")
+
+
+@pytest.fixture
+def completed_objects(ro_dstore):
+    return {f"{Path(m.unique_id).stem}": m.read() for m in ro_dstore}
+
+
+@pytest.fixture
+def write_dir1(tmp_dir):
+    write_dir1 = tmp_dir / "write1"
+    write_dir1.mkdir(parents=True, exist_ok=True)
+    yield write_dir1
+    shutil.rmtree(write_dir1)
+
+
+@pytest.fixture
+def write_dir2(tmp_dir):
+    write_dir2 = tmp_dir / "write2"
+    write_dir2.mkdir(parents=True, exist_ok=True)
+    yield write_dir2
+    shutil.rmtree(write_dir2)
+
+
+@pytest.fixture
+def nc_objects():
+    return {
+        f"id_{i}": NotCompleted("ERROR", "location", "message", source=f"id_{i}")
+        for i in range(3)
+    }
+
+
+@pytest.fixture
+def nc_dstore(tmp_dir, nc_objects):
+    dstore = DataStoreDirectory(tmp_dir, suffix="fasta", mode="w")
+    for id_, data in nc_objects.items():
+        dstore.write_not_completed(unique_id=id_, data=data.to_json())
+
+    return dstore
+
+
+def test_apply_to_input_only_not_completed(DATA_DIR, nc_dstore, tmp_dir):
+    """correctly skips notcompleted"""
+    dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
+    # trigger creation of notcompleted
+    outpath = tmp_dir / "delme.sqlitedb"
+    out_dstore = open_data_store(outpath, mode="w")
+    writer = c3.get_app("write_db", out_dstore)
+    process = (
+        c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+        + c3.get_app("min_length", 3000)
+        + writer
+    )
+    process.apply_to(dstore, show_progress=False)
+    assert len(out_dstore.not_completed) == len(nc_dstore)
+
+
+def test_apply_to_makes_not_completed(DATA_DIR, tmp_dir):
+    """correctly creates notcompleted"""
+    dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
+    reader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    # trigger creation of notcompleted
+    min_length = c3.get_app("min_length", 3000)
+    out_dstore = open_data_store(tmp_dir / "delme.sqlitedb", mode="w")
+    writer = c3.get_app("write_db", out_dstore)
+    process = reader + min_length + writer
+    process.apply_to(dstore, show_progress=False)
+    assert len(out_dstore.not_completed) == 3
+
+
+def test_apply_to_not_partially_done(DATA_DIR, tmp_dir):
+    """correctly applies process when result already partially done"""
+    dstore = open_data_store(DATA_DIR, suffix="fasta")
+    num_records = len(dstore)
+    reader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    out_dstore = open_data_store(tmp_dir / "delme.sqlitedb", mode="w")
+    writer = c3.get_app("write_db", out_dstore)
+    # doing the first one
+    # turning off warning as apps are callable
+    _ = writer(reader(dstore[0]))  # pylint: disable=not-callable
+    writer.data_store.close()
+
+    out_dstore = open_data_store(tmp_dir / "delme.sqlitedb", mode="a")
+    writer = c3.get_app("write_db", out_dstore)
+    process = reader + writer
+    _ = process.apply_to(dstore, show_progress=False)
+    assert len(out_dstore) == num_records
+
+
+@pytest.fixture
+def full_dstore(write_dir1, nc_objects, completed_objects, log_data):
+    dstore = DataStoreDirectory(write_dir1, suffix="fasta", mode="w")
+    for id_, data in nc_objects.items():
+        dstore.write_not_completed(unique_id=id_, data=data.to_json())
+
+    for id_, data in completed_objects.items():
+        dstore.write(unique_id=id_, data=data)
+
+    dstore.write_log(unique_id="scitrack.log", data=log_data)
+    return dstore
+
+
+# @pytest.mark.xfail(reason="passes except when run in full test suite")
+@pytest.mark.parametrize("show", [True, False])
+def test_as_completed_progress(full_dstore, capsys, show):
+    loader = c3.get_app("load_unaligned", format_name="fasta", moltype="dna")
+    omit = c3.get_app("omit_degenerates")
+    app = loader + omit
+    list(app.as_completed(full_dstore.completed, show_progress=show))
+    result = capsys.readouterr().err.splitlines()
+    if show:
+        assert len(result) > 0
+        assert "100%" in result[-1]
+    else:
+        assert len(result) == 0
+
+
+def test_composite_pickleable():
+    """composable functions should be pickleable"""
+
+    read = c3.get_app("load_aligned", moltype="dna")
+    dumps(read)
+    trans = c3.get_app("select_translatable")
+    dumps(trans)
+    aln = c3.get_app("progressive_align", "nucleotide")
+    dumps(aln)
+    just_nucs = c3.get_app("omit_degenerates", moltype="dna")
+    dumps(just_nucs)
+    limit = c3.get_app("fixed_length", 1000, random=True)
+    dumps(limit)
+    mod = c3.get_app("model", "HKY85")
+    dumps(mod)
+    qt = c3.get_app("quick_tree")
+    dumps(qt)
+    proc = read + trans + aln + just_nucs + limit + mod
+    dumps(proc)
+
+
+@define_app
+def foo(val: c3types.AlignedSeqsType, *args, **kwargs) -> c3types.AlignedSeqsType:
+    return val[:4]
+
+
+def test_user_function():
+    """composable functions should be user definable"""
+
+    u_function = foo()
+
+    aln = c3.make_aligned_seqs(
+        [("a", "GCAAGCGTTTAT"), ("b", "GCTTTTGTCAAT")],
+        moltype="dna",
+    )
+    got = u_function(aln)
+
+    assert got.to_dict() == {"a": "GCAA", "b": "GCTT"}
+
+
+@define_app
+def foo_without_arg_kwargs(
+    val: c3types.AlignedSeqsType,
+) -> c3types.AlignedSeqsType:
+    return val[:4]
+
+
+def test_user_function_without_arg_kwargs():
+    """composable functions should be user definable"""
+
+    u_function = foo_without_arg_kwargs()
+
+    aln = c3.make_aligned_seqs(
+        [("a", "GCAAGCGTTTAT"), ("b", "GCTTTTGTCAAT")],
+        moltype="dna",
+    )
+    got = u_function(aln)
+
+    assert got.to_dict() == {"a": "GCAA", "b": "GCTT"}
+
+
+@define_app
+def bar(val: c3types.AlignedSeqsType, num=3) -> c3types.PairwiseDistanceType:
+    return val.distance_matrix(calc="hamming")
+
+
+def test_user_function_multiple():
+    """user defined composable functions should not interfere with each other"""
+    u_function_1 = foo()
+    u_function_2 = bar()
+
+    aln_1 = c3.make_aligned_seqs(
+        [("a", "GCAAGCGTTTAT"), ("b", "GCTTTTGTCAAT")],
+        moltype="dna",
+    )
+    data = {"s1": "ACGTACGTA", "s2": "GTGTACGTA"}
+    aln_2 = c3.make_aligned_seqs(data, moltype="dna")
+
+    got_1 = u_function_1(aln_1)
+    got_2 = u_function_2(aln_2)
+    assert got_1.to_dict() == {"a": "GCAA", "b": "GCTT"}
+    assert got_2 == {("s1", "s2"): 2.0, ("s2", "s1"): 2.0}
+
+
+def test_concat_not_composable():
+    concat = c3.get_app("concat")
+    assert not is_app_composable(concat)
+
+
+def test_cogent3_serialisable_compatible_with_serialisabletype(tmp_path):
+
+    @define_app
+    def foo(arg: str) -> c3types.TreeType:
+        # we're checking composability only
+        return c3.make_tree(arg, source="blah")
+
+    foo_instance = foo()
+    out = open_data_store(tmp_path / "out.sqlitedb", mode="w")
+    writer = c3.get_app("write_db", data_store=out)
+    loader = c3.get_app("load_db")
+    app = foo_instance + writer
+    result = app("(A:0.1,B:0.2);")  # pylint: disable=not-callable
+    got = loader(result)
+    assert not isinstance(got, NotCompleted)
+
+
+@pytest.mark.parametrize("klass", [DataStoreDirectory, DataStoreSqlite])
+def test_apply_to_writes_citations(DATA_DIR, tmp_dir, klass):
+    """apply_to writes citations to the data store"""
+    cite = _make_cite(title="Test Citation")
+
+    dstore = open_data_store(DATA_DIR, suffix="fasta", limit=2)
+    reader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+
+    @define_app(cite=cite)
+    class cited_step:
+        def main(self, val: c3types.AlignedSeqsType) -> c3types.AlignedSeqsType:
+            return val
+
+    outpath = (
+        tmp_dir / "cite_out"
+        if klass == DataStoreDirectory
+        else tmp_dir / "cite_out.sqlitedb"
+    )
+    kwargs = {"suffix": "fasta"} if klass == DataStoreDirectory else {}
+    out_dstore = open_data_store(outpath, mode="w", **kwargs)
+    writer = c3.get_app("write_seqs", data_store=out_dstore)
+
+    process = reader + cited_step() + writer
+    result_dstore = process.apply_to(dstore, show_progress=False)
+    loaded = result_dstore._load_citations()
+    assert len(loaded) >= 1
+    titles = [c.title for c in loaded]
+    assert "Test Citation" in titles
+
+
+@pytest.fixture
+def half_dstore1(write_dir1, nc_objects, completed_objects, log_data):
+    dstore = DataStoreDirectory(write_dir1, suffix="fasta", mode="w")
+    i = 0
+    for id_, data in nc_objects.items():
+        dstore.write_not_completed(unique_id=id_, data=data.to_json())
+        i += 1
+        if i >= len(nc_objects.items()) / 2:
+            break
+    i = 0
+    for id_, data in completed_objects.items():
+        dstore.write(unique_id=id_, data=data)
+        i += 1
+        if i >= len(completed_objects.items()) / 2:
+            break
+    dstore.write_log(unique_id="scitrack.log", data=log_data)
+    return dstore
+
+
+@pytest.fixture
+def half_dstore2(write_dir2, nc_objects, completed_objects, log_data):
+    dstore = DataStoreDirectory(write_dir2, suffix="fasta", mode="w")
+    for i, (id_, data) in enumerate(nc_objects.items()):
+        if i >= len(nc_objects.items()) / 2:
+            dstore.write_not_completed(unique_id=id_, data=data.to_json())
+    for i, (id_, data) in enumerate(completed_objects.items()):
+        if i >= len(completed_objects.items()) / 2:
+            dstore.write(unique_id=id_, data=data)
+    dstore.write_log(unique_id="scitrack.log", data=log_data)
+    return dstore
+
+
+def test_apply_to_only_appends(half_dstore1, half_dstore2):
+    half_dstore1 = open_data_store(
+        half_dstore1.source,
+        suffix=half_dstore1.suffix,
+        mode="a",
+    )
+    reader1 = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    min_length1 = c3.get_app("min_length", length=10)
+    writer1 = c3.get_app("write_seqs", data_store=half_dstore1)
+    process1 = reader1 + min_length1 + writer1
+
+    # create paths as strings
+    dstore1 = [
+        str(Path(m.data_store.source) / m.unique_id) for m in half_dstore1.completed
+    ]
+    # check does not modify dstore when applied to same records
+    orig_members = {m.unique_id for m in half_dstore1.members}
+    got = process1.apply_to(dstore1)
+    assert {m.unique_id for m in got.members} == orig_members
+
+    half_dstore2 = open_data_store(
+        half_dstore2.source,
+        suffix=half_dstore2.suffix,
+        mode="a",
+    )
+
+    reader2 = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    min_length2 = c3.get_app("min_length", length=10)
+    writer2 = c3.get_app("write_seqs", data_store=half_dstore2)
+    process2 = reader2 + min_length2 + writer2
+    # check not fail on append new records
+    _ = process2.apply_to(dstore1)

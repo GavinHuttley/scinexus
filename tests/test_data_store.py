@@ -29,6 +29,9 @@ from scinexus.data_store import (
     summary_not_completeds,
 )
 
+# over-ride cogent3 setting
+set_summary_display(None)
+
 
 @pytest.fixture
 def tmp_dir(tmp_path_factory):
