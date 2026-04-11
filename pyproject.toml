@@ -20,7 +20,9 @@ mpi = ["mpi4py"]
 rich = ["rich"]
 
 [dependency-groups]
+dev = ["zensical>=0.0.32"]
 test = [
+    "cogent3>=2026.3.23a0",
     "pytest",
     "pytest-cov",
     "pytest-xdist",
