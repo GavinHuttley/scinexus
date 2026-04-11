@@ -21,8 +21,13 @@ def DATA_DIR():
 
 
 @pytest.fixture
-def HOME_TMP_DIR(tmp_path):
-    return tmp_path
+def HOME_TMP_DIR() -> Iterator[Path]:
+    """makes a temporary directory"""
+    import tempfile
+
+    home = Path("~")
+    with tempfile.TemporaryDirectory(dir=home.expanduser()) as dn:
+        yield home / dn
 
 
 @pytest.fixture

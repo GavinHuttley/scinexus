@@ -10,8 +10,8 @@ from scitrack import get_text_hexdigest
 from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import OVERWRITE, READONLY, DataMemberABC, DataStoreDirectory
 from scinexus.sqlite_data_store import (
-    LOG_TABLE,
     _MEMORY,
+    LOG_TABLE,
     RESULT_TABLE,
     DataStoreSqlite,
     has_valid_schema,

@@ -1,17 +1,21 @@
 import json
 import pathlib
 import shutil
+from itertools import product
 from pathlib import Path
 from pickle import dumps, loads
 
+import cogent3 as c3
 import pytest
 from citeable import Software
+from cogent3.util.union_dict import UnionDict
 from scitrack import get_text_hexdigest
 
+from scinexus import open_data_store
 from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import (
-    CITATIONS_FILE,
     APPEND,
+    CITATIONS_FILE,
     MD5_TABLE,
     NOT_COMPLETED_TABLE,
     OVERWRITE,
@@ -1066,3 +1070,153 @@ def test_source_check_create_not_master(tmp_path):
         dstore = DataStoreDirectory(target, suffix="txt", mode=OVERWRITE)
     assert not target.exists()
     assert dstore.source == target
+
+
+def test_write_read_not_completed(nc_dstore):
+    nc_dstore.drop_not_completed()
+    assert len(nc_dstore.not_completed) == 0
+    nc = NotCompleted("ERROR", "test", "for tracing", source="blah")
+    writer = c3.get_app("write_seqs", data_store=nc_dstore)
+    writer.main(nc, identifier="blah")
+    assert len(nc_dstore.not_completed) == 1
+    got = nc_dstore.not_completed[0].read()
+    assert nc.to_json() == got
+
+
+def test_summary_logs_missing_field(nc_dstore):
+    log_path = Path(nc_dstore.source) / nc_dstore.logs[0].unique_id
+    data = [
+        l for l in log_path.read_text().splitlines() if "composable function" not in l
+    ]
+    log_path.write_text("\n".join(data))
+    # doesn't fail because of a missing field in the log data
+    assert isinstance(nc_dstore.summary_logs, list)
+
+
+@pytest.fixture
+def app_dstore_in(tmp_path):
+    in_path = tmp_path / "in_data"
+    in_path.mkdir(parents=True)
+    fasta_content = ">seq\nACGT"
+    with open(in_path / "one.fa", "w") as file:
+        file.write(fasta_content)
+
+    dstore_in = open_data_store(in_path, suffix=".fa", mode="r")
+    dstore_out = open_data_store(tmp_path / "data_out", suffix="fa", mode="w")
+    loader = c3.get_app("load_unaligned")
+    writer = c3.get_app("write_seqs", dstore_out)
+
+    pipe = loader + writer
+    return pipe, dstore_in
+
+
+def test_write_multiple_times_apply_to(app_dstore_in):
+    app, dstore_in = app_dstore_in
+    app.apply_to(dstore_in)
+    orig_length = len(app.data_store)
+    app.apply_to(dstore_in)
+    assert len(app.data_store) == orig_length
+
+
+def test_directory_data_store_write_compressed(tmp_path):
+    out = open_data_store(base_path=tmp_path / "demo", suffix="fa.gz", mode="w")
+    writer = c3.get_app("write_seqs", data_store=out)
+    seqs = c3.make_aligned_seqs(
+        {"s1": "CG--T", "s2": "CGTTT"},
+        moltype="dna",
+        info={"source": "test"},
+    )
+    got = writer(seqs)  # pylint: disable=not-callable
+    assert got, got
+
+
+def test_apply_to_not_completed(nc_dstore, tmp_path):
+    loader = c3.get_app("load_unaligned")
+    num_seqs = c3.get_app("take_n_seqs", number=3, fixed_choice=False)
+    out_dstore = open_data_store(tmp_path / "output", suffix="fa", mode="w")
+    writer = c3.get_app("write_seqs", data_store=out_dstore, format_name="fasta")
+    app = loader + num_seqs + writer
+    fini = app.apply_to(nc_dstore)
+    assert 0 < len(fini.completed) <= len(nc_dstore.completed)
+
+
+def test_summary_citations_directory(write_dir, sample_citations):
+    dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
+    dstore.write_citations(data=sample_citations)
+    cited = dstore.summary_citations
+    assert isinstance(cited, list)
+    assert len(cited) == 2
+    assert "app" in cited[0]
+    assert "citation" in cited[0]
+
+
+def test_write_bib_tilde_path(write_dir, sample_citations, HOME_TMP_DIR):
+    dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
+    dstore.write_citations(data=sample_citations)
+    bib_path = f"~/{HOME_TMP_DIR.name}/refs.bib"
+    dstore.write_bib(bib_path)
+    expected = pathlib.Path(bib_path).expanduser()
+    assert expected.exists()
+    content = expected.read_text()
+    assert "Tool One" in content
+    assert "Tool Two" in content
+
+
+def test_summary_citations_zipped(write_dir, sample_citations):
+    dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
+    dstore.write_citations(data=sample_citations)
+    source = pathlib.Path(dstore.source)
+    path = shutil.make_archive(
+        base_name=source.name,
+        format="zip",
+        base_dir=source.name,
+        root_dir=source.parent,
+    )
+    zipped = ReadOnlyDataStoreZipped(pathlib.Path(path), suffix="fasta")
+    cited = zipped.summary_citations
+    assert isinstance(cited, list)
+    assert len(cited) == 2
+
+
+def test_write_citations_zipped_raises(zipped_basic):
+    zipped = ReadOnlyDataStoreZipped(zipped_basic, suffix="fasta")
+    with pytest.raises(TypeError, match="read only"):
+        zipped.write_citations(data=(None,))
+
+
+def test_old_directory_store_without_citations(fasta_dir):
+    """Opening a directory store created before citations were added works."""
+    # fasta_dir has .fasta files but no .citations file
+    dstore = DataStoreDirectory(fasta_dir, suffix="fasta", mode=READONLY)
+    assert dstore._load_citations() == []
+    cited = dstore.summary_citations
+    assert isinstance(cited, list)
+    assert len(cited) == 0
+
+
+_types = tuple(product((dict, UnionDict), (str, Path)))
+
+
+@pytest.mark.parametrize(("container_type", "source_stype"), _types)
+def test_get_data_source_dict(container_type, source_stype):
+    """handles case where input is dict (sub)class instance with top level source key"""
+    value = source_stype("some/path.txt")
+    data = container_type(source=value)
+    got = get_data_source(data)
+    assert got == "path.txt"
+
+
+@pytest.mark.parametrize("klass", [str, Path])
+def test_get_data_source_seqcoll(klass):
+    """handles case where input is sequence collection object"""
+    from cogent3 import make_unaligned_seqs
+
+    value = klass("some/path.txt")
+    obj = make_unaligned_seqs(
+        {"seq1": "ACGG"},
+        moltype="dna",
+        info={"random_key": 1234},
+        source=value,
+    )
+    got = get_data_source(obj)
+    assert got == "path.txt"
