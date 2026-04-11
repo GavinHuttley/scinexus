@@ -10,10 +10,10 @@ from scitrack import get_text_hexdigest
 
 from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import (
-    _CITATIONS_FILE,
+    CITATIONS_FILE,
+    APPEND,
     MD5_TABLE,
     NOT_COMPLETED_TABLE,
-    APPEND,
     OVERWRITE,
     READONLY,
     DataStoreDirectory,
@@ -548,7 +548,7 @@ def test_zipped_md5(zipped_full, full_dstore):
 def test_write_citations_directory(write_dir, sample_citations):
     dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
     dstore.write_citations(data=sample_citations)
-    path = write_dir / _CITATIONS_FILE
+    path = write_dir / CITATIONS_FILE
     assert path.exists()
     loaded = dstore._load_citations()  # noqa: SLF001
     assert len(loaded) == 2
@@ -559,7 +559,7 @@ def test_write_citations_directory(write_dir, sample_citations):
 def test_write_citations_empty_directory(write_dir):
     dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
     dstore.write_citations(data=())
-    path = write_dir / _CITATIONS_FILE
+    path = write_dir / CITATIONS_FILE
     assert not path.exists()
 
 
@@ -608,10 +608,10 @@ def test_citations_file_not_in_completed(write_dir, sample_citations):
     dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
     dstore.write(unique_id="sample.fasta", data=">s1\nACGT\n")
     dstore.write_citations(data=sample_citations)
-    assert (write_dir / _CITATIONS_FILE).exists()
+    assert (write_dir / CITATIONS_FILE).exists()
     dstore._completed = []  # noqa: SLF001
     member_ids = {m.unique_id for m in dstore.completed}
-    assert _CITATIONS_FILE not in member_ids
+    assert CITATIONS_FILE not in member_ids
     assert "sample.fasta" in member_ids
 
 

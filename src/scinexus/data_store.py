@@ -32,7 +32,7 @@ MD5_TABLE = "md5"
 # used for log files, not-completed results
 _special_suffixes = re.compile(r"\.(log|json)$")
 
-_CITATIONS_FILE = "bibliography.citations"
+CITATIONS_FILE = "bibliography.citations"
 
 NoneType = type(None)
 
@@ -712,13 +712,13 @@ class DataStoreDirectory(DataStoreABC):
             return
         from citeable import to_jsons
 
-        path = self.source / _CITATIONS_FILE
+        path = self.source / CITATIONS_FILE
         path.write_text(to_jsons(data))
 
     def _load_citations(self) -> list[CitationBase]:
         from citeable import from_jsons
 
-        path = self.source / _CITATIONS_FILE
+        path = self.source / CITATIONS_FILE
         if not path.exists():
             return []
         return from_jsons(path.read_text())
@@ -873,7 +873,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
 
         from citeable import from_jsons
 
-        target = str(Path(self.source.stem, _CITATIONS_FILE)).replace("\\", "/")
+        target = str(Path(self.source.stem, CITATIONS_FILE)).replace("\\", "/")
         try:
             with zipfile.ZipFile(self.source) as archive:
                 data = archive.read(target).decode("utf-8")
