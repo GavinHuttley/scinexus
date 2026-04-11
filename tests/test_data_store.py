@@ -11,8 +11,8 @@ from scitrack import get_text_hexdigest
 from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import (
     _CITATIONS_FILE,
-    _MD5_TABLE,
-    _NOT_COMPLETED_TABLE,
+    MD5_TABLE,
+    NOT_COMPLETED_TABLE,
     APPEND,
     OVERWRITE,
     READONLY,
@@ -293,14 +293,14 @@ def test_not_completed(nc_dstore):
 def test_drop_not_completed(nc_dstore):
     num_completed = len(nc_dstore.completed)
     num_not_completed = len(nc_dstore.not_completed)
-    num_md5 = len(list((nc_dstore.source / _MD5_TABLE).glob("*.txt")))
+    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*.txt")))
     assert num_not_completed == 3
     assert num_completed == 6
     assert len(nc_dstore) == 9
     assert num_md5 == num_completed + num_not_completed
     nc_dstore.drop_not_completed()
     assert len(nc_dstore.not_completed) == 0
-    num_md5 = len(list((nc_dstore.source / _MD5_TABLE).glob("*.txt")))
+    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*.txt")))
     assert num_md5 == num_completed
 
 
@@ -345,13 +345,13 @@ def test_no_not_completed_subdir(nc_dstore):
     expect = f"{len(nc_dstore.completed) + len(nc_dstore.not_completed)}x member"
     assert str(nc_dstore).startswith(expect)
     nc_dstore.drop_not_completed()
-    assert not Path(nc_dstore.source / _NOT_COMPLETED_TABLE).exists()
+    assert not Path(nc_dstore.source / NOT_COMPLETED_TABLE).exists()
     expect = f"{len(nc_dstore.completed)}x member"
     assert str(nc_dstore).startswith(expect)
     expect = f"{len(nc_dstore)}x member"
     assert str(nc_dstore).startswith(expect)
     assert len(nc_dstore) == len(nc_dstore.completed)
-    not_dir = nc_dstore.source / _NOT_COMPLETED_TABLE
+    not_dir = nc_dstore.source / NOT_COMPLETED_TABLE
     not_dir.mkdir(exist_ok=True)
 
 
@@ -719,7 +719,7 @@ def test_validate_incorrect_md5(write_dir):
     dstore = DataStoreDirectory(write_dir, suffix="txt", mode=OVERWRITE)
     dstore.write(unique_id="item.txt", data="original")
     # corrupt the md5
-    md5_path = write_dir / _MD5_TABLE / "item.txt"
+    md5_path = write_dir / MD5_TABLE / "item.txt"
     md5_path.write_text("wrong_md5_value")
     result = dstore._validate()  # noqa: SLF001
     assert result["md5_incorrect"] == 1

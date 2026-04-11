@@ -10,9 +10,9 @@ from scitrack import get_text_hexdigest
 from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import OVERWRITE, READONLY, DataMemberABC, DataStoreDirectory
 from scinexus.sqlite_data_store import (
-    _LOG_TABLE,
+    LOG_TABLE,
     _MEMORY,
-    _RESULT_TABLE,
+    RESULT_TABLE,
     DataStoreSqlite,
     has_valid_schema,
     open_sqlite_db_ro,
@@ -133,7 +133,7 @@ def test_rw_sql_dstore_mem():
     for unique_id, data in records.items():
         dstore.write(data=data, unique_id=unique_id)
     expect = len(records)
-    query = f"SELECT count(*) as c FROM {_RESULT_TABLE} WHERE is_completed=?"
+    query = f"SELECT count(*) as c FROM {RESULT_TABLE} WHERE is_completed=?"
     got = dstore.db.execute(query, (1,)).fetchone()["c"]
     assert got == expect
     assert len(dstore.completed) == expect
@@ -152,7 +152,7 @@ def test_not_completed(tmp_dir):
     for unique_id, obj in nc_objects.items():
         dstore.write_not_completed(data=obj.to_json(), unique_id=unique_id)
     expect = len(nc_objects)
-    query = f"SELECT count(*) as c FROM {_RESULT_TABLE} WHERE is_completed=?"
+    query = f"SELECT count(*) as c FROM {RESULT_TABLE} WHERE is_completed=?"
     got = dstore.db.execute(query, (0,)).fetchone()["c"]
     assert got == expect
     assert len(dstore.not_completed) == expect
@@ -328,7 +328,7 @@ def test_limit_on_writable(tmp_dir):
         DataStoreSqlite(path, mode=OVERWRITE, limit=10)
 
 
-@pytest.mark.parametrize("table_name", ["", _RESULT_TABLE])
+@pytest.mark.parametrize("table_name", ["", RESULT_TABLE])
 def test_new_write_id_includes_table(table_name):
     """correctly handles table name if included in unique id"""
     dstore = DataStoreSqlite(_MEMORY, mode=OVERWRITE)
@@ -605,7 +605,7 @@ def test_write_log_with_table_prefix(tmp_dir, DATA_DIR):
     path = tmp_dir / "log_prefix.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     log_text = (DATA_DIR / "scitrack.log").read_text()
-    dstore.write_log(unique_id=f"{_LOG_TABLE}/test.log", data=log_text)
+    dstore.write_log(unique_id=f"{LOG_TABLE}/test.log", data=log_text)
     assert len(dstore.logs) == 1
     dstore.close()
 
@@ -614,7 +614,7 @@ def test_write_not_completed_with_table_prefix(tmp_dir):
     path = tmp_dir / "nc_prefix.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     nc = NotCompleted(NotCompletedType.FAIL, "dummy", "msg", source="src")
-    dstore.write_not_completed(unique_id=f"{_RESULT_TABLE}/nc1", data=nc.to_json())
+    dstore.write_not_completed(unique_id=f"{RESULT_TABLE}/nc1", data=nc.to_json())
     assert len(dstore.not_completed) == 1
     dstore.close()
 
@@ -639,11 +639,11 @@ def test_load_citations_no_table(tmp_dir):
         "(state_id INTEGER PRIMARY KEY, record_type TEXT, lock_pid INTEGER)",
     )
     db.execute(
-        f"CREATE TABLE IF NOT EXISTS {_LOG_TABLE}"
+        f"CREATE TABLE IF NOT EXISTS {LOG_TABLE}"
         "(log_id INTEGER PRIMARY KEY, log_name TEXT, date timestamp, data BLOB)",
     )
     db.execute(
-        f"CREATE TABLE IF NOT EXISTS {_RESULT_TABLE}"
+        f"CREATE TABLE IF NOT EXISTS {RESULT_TABLE}"
         "(record_id TEXT PRIMARY KEY, log_id INTEGER, md5 BLOB, is_completed INTEGER, data BLOB)",
     )
     db.close()
@@ -737,11 +737,11 @@ def test_write_citations_no_table(tmp_dir, sample_citations):
         "(state_id INTEGER PRIMARY KEY, record_type TEXT, lock_pid INTEGER)",
     )
     db.execute(
-        f"CREATE TABLE IF NOT EXISTS {_LOG_TABLE}"
+        f"CREATE TABLE IF NOT EXISTS {LOG_TABLE}"
         "(log_id INTEGER PRIMARY KEY, log_name TEXT, date timestamp, data BLOB)",
     )
     db.execute(
-        f"CREATE TABLE IF NOT EXISTS {_RESULT_TABLE}"
+        f"CREATE TABLE IF NOT EXISTS {RESULT_TABLE}"
         "(record_id TEXT PRIMARY KEY, log_id INTEGER, md5 BLOB, "
         "is_completed INTEGER, data BLOB)",
     )
