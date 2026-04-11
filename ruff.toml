@@ -59,6 +59,7 @@ ignore = [
     "FBT002",
     "PT011",
     "S311",    # Allow use of random
+    "S608",    # sql injection unlikely
     "PLR2004", # Magic number usage where appropriate
     "PLC0415", # Allow delayed imports
 ]
@@ -77,7 +78,6 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
     "ANN",
     "N802",
     "N803",
-    "S608",   # sql injection unlikely
     "S301",   # we allow pickling / unpickling in tests
 ]
 "noxfile.py" = [
