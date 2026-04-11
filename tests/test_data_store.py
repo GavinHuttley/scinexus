@@ -19,10 +19,12 @@ from scinexus.data_store import (
     DataStoreDirectory,
     ReadOnlyDataStoreZipped,
     get_data_source,
+    get_id_from_source,
     get_summary_display,
     get_unique_id,
     load_record_from_json,
     make_record_for_json,
+    set_id_from_source,
     set_summary_display,
     summary_not_completeds,
 )
@@ -436,6 +438,29 @@ def test_get_unique_id(name):
 def test_get_unique_id_none():
     got = get_unique_id(None)
     assert got is None
+
+
+def test_set_id_from_source_returns_default_initially(
+    reset_id_from_source: None,
+) -> None:
+    """Default extractor is `get_unique_id` when nothing is registered."""
+    assert get_id_from_source() is get_unique_id
+
+
+def test_set_id_from_source_registers_and_clears(
+    reset_id_from_source: None,
+) -> None:
+    """A registered function replaces the default; None restores it."""
+
+    def my_extractor(obj: object) -> str | None:
+        return f"custom-{obj}"
+
+    set_id_from_source(my_extractor)
+    assert get_id_from_source() is my_extractor
+    assert get_id_from_source()("foo") == "custom-foo"
+
+    set_id_from_source(None)
+    assert get_id_from_source() is get_unique_id
 
 
 @pytest.mark.parametrize("data", [{}, set(), {"info": {}}])

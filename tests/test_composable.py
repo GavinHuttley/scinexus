@@ -29,7 +29,13 @@ from scinexus.composable import (
     propagate_source,
     source_proxy,
 )
-from scinexus.data_store import DataMember, DataStoreDirectory, Mode, get_unique_id
+from scinexus.data_store import (
+    DataMember,
+    DataStoreDirectory,
+    Mode,
+    get_unique_id,
+    set_id_from_source,
+)
 from scinexus.deserialise import deserialise_object
 
 
@@ -1494,6 +1500,134 @@ def test_writerapp_subclass_apply_to_writes_once(tmp_path) -> None:
     result = process.apply_to(dstore, logger=False, show_progress=False)
     assert len(result) == 3
     assert len(call_count) == 3
+
+
+def test_apply_to_uses_registered_id_from_source(
+    tmp_path,
+    reset_id_from_source: None,
+) -> None:
+    """`apply_to` consults the globally registered ID extractor by default."""
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(3):
+        (src / f"item_{i}.txt").write_text(f"data {i}")
+
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    seen_ids: list[str | None] = []
+
+    def custom(obj: object) -> str | None:
+        result = get_unique_id(obj)
+        seen_ids.append(result)
+        return result
+
+    set_id_from_source(custom)
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store: DataStoreDirectory) -> None:
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    process.apply_to(dstore, logger=False, show_progress=False)
+
+    # `apply_to`'s input-id loop calls `custom` directly with input paths,
+    # so the seen IDs include the input filenames (suffix-stripped).
+    assert seen_ids
+    assert any(sid is not None and sid.startswith("item_") for sid in seen_ids)
+
+
+def test_apply_to_explicit_id_from_source_overrides_registered(
+    tmp_path,
+    reset_id_from_source: None,
+) -> None:
+    """An explicit ``id_from_source=`` argument wins over the registered func."""
+    registered_calls: list[object] = []
+    explicit_calls: list[object] = []
+
+    def registered(obj: object) -> str | None:
+        registered_calls.append(obj)
+        return get_unique_id(obj)
+
+    def explicit(obj: object) -> str | None:
+        explicit_calls.append(obj)
+        return get_unique_id(obj)
+
+    set_id_from_source(registered)
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.txt").write_text("data")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store: DataStoreDirectory) -> None:
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    process.apply_to(
+        dstore,
+        id_from_source=explicit,
+        logger=False,
+        show_progress=False,
+    )
+
+    assert explicit_calls, "explicit override should have been called"
+    assert not registered_calls, (
+        "registered func must not be called when explicit override is supplied"
+    )
+
+
+def test_not_completed_uses_registered_id_from_source(
+    reset_id_from_source: None,
+) -> None:
+    """`NotCompleted` normalises its source via the registered extractor."""
+
+    class WithSource:
+        source = "path/to/file.fasta"
+
+    def custom(obj: object) -> str | None:
+        return f"custom::{obj!r}"
+
+    set_id_from_source(custom)
+    nc = NotCompleted(NotCompletedType.ERROR, "test", "msg", source=WithSource())
+    assert nc.source is not None
+    assert nc.source.startswith("custom::")
+
+
+def test_not_completed_default_source_is_unique_id(
+    reset_id_from_source: None,
+) -> None:
+    """Without a registration, `NotCompleted.source` is the unique ID form.
+
+    Locks in the behaviour change: the default extractor strips file-format
+    suffixes (``seqs.fasta`` → ``seqs``), where the prior implementation
+    (calling ``get_data_source`` directly) returned the un-stripped form.
+    """
+
+    class WithSource:
+        source = "path/to/seqs.fasta"
+
+    nc = NotCompleted(NotCompletedType.ERROR, "test", "msg", source=WithSource())
+    assert nc.source == "seqs"
 
 
 def test_get_main_hints_no_main():

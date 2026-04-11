@@ -37,12 +37,14 @@ __all__ = [
     "WriterApp",
     "__version__",
     "define_app",
+    "get_id_from_source",
     "get_progress",
     "get_summary_display",
     "is_app",
     "is_app_composable",
     "open_data_store",
     "set_default_progress",
+    "set_id_from_source",
     "set_summary_display",
 ]
 
@@ -50,6 +52,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "open_data_store": ("scinexus.io", "open_data_store"),
     "set_summary_display": ("scinexus.data_store", "set_summary_display"),
     "get_summary_display": ("scinexus.data_store", "get_summary_display"),
+    "set_id_from_source": ("scinexus.data_store", "set_id_from_source"),
+    "get_id_from_source": ("scinexus.data_store", "get_id_from_source"),
 }
 
 

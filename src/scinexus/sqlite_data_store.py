@@ -284,13 +284,13 @@ class DataStoreSqlite(DataStoreABC):
         """
         Parameters
         ----------
-        table_name: str
+        table_name
             name of table to save data. It must be _RESULT_TABLE or _LOG_TABLE.
-        unique_id : str
+        unique_id
             unique identifier that data will be saved under.
-        data: str
+        data
             data to be saved.
-        is_completed: bool
+        is_completed
             flag to identify NotCompleted results
 
         Returns

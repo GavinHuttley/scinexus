@@ -32,7 +32,7 @@ class register_datastore_reader:
 
     Parameters
     ----------
-    args: str or sequence of str
+    args
         must be unique, a preceding '.' will be added if not already present
     """
 

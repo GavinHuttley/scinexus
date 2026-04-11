@@ -122,18 +122,18 @@ def imap(
     """
     Parameters
     ----------
-    f : callable
+    f
         function that operates on values in s
-    s : iterable
+    s
         series of inputs to f
-    max_workers : int or None
+    max_workers
         maximum number of workers. Defaults to 1-maximum available.
-    use_mpi : bool
+    use_mpi
         use MPI for parallel execution.
-    if_serial : str
+    if_serial
         action to take if conditions will result in serial execution. Valid
         values are 'raise', 'ignore', 'warn'. Defaults to 'raise'.
-    chunksize : int or None
+    chunksize
         Size of data chunks executed by worker processes. Defaults to None
         where stable chunksize is determined by get_default_chunksize()
 

@@ -50,6 +50,9 @@ READONLY = Mode.r
 # Summary display registry
 _summary_display_func: Callable[..., Any] | None = None
 
+# Unique-ID extractor registry
+_id_from_source_func: Callable[..., Any] | None = None
+
 
 def set_summary_display(func: Callable[..., Any] | None) -> None:
     """Set the function used to display data store summaries.
@@ -885,6 +888,43 @@ def get_unique_id(name: object) -> str | None:
         return None
     suffixes = ".".join(sfx for sfx in get_format_suffixes(name) if sfx)
     return re.sub(rf"[.]{suffixes}$", "", name)
+
+
+def set_id_from_source(func: Callable[..., Any] | None) -> None:
+    """Register a custom function for extracting unique IDs from data objects.
+
+    The registered function is consulted as the default by
+    :meth:`AppBase.as_completed` and :meth:`WriterApp.apply_to` to derive a
+    unique identifier for each input, and by :class:`NotCompleted` to
+    normalise the ``source=`` keyword on error records. Pass ``None`` to
+    clear the registration and restore the built-in :func:`get_unique_id`.
+
+    Parameters
+    ----------
+    func
+        A callable taking a single data object and returning a string
+        identifier (or ``None`` if no identifier can be extracted). The
+        callable must be picklable if scinexus apps will be executed in
+        parallel via ``loky`` / MPI.
+
+    Notes
+    -----
+    Per-call overrides via the ``id_from_source`` keyword on
+    :meth:`as_completed` and :meth:`apply_to` still take precedence over
+    the registered function. Register before constructing apps for the
+    cleanest behaviour.
+    """
+    global _id_from_source_func  # noqa: PLW0603
+    _id_from_source_func = func
+
+
+def get_id_from_source() -> Callable[..., Any]:
+    """Return the active unique-ID extractor.
+
+    Returns the function previously passed to :func:`set_id_from_source`,
+    or :func:`get_unique_id` if nothing has been registered.
+    """
+    return _id_from_source_func or get_unique_id
 
 
 @singledispatch

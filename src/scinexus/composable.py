@@ -33,8 +33,7 @@ from scinexus.warning import deprecated_callable
 from .data_store import (
     DataMember,
     DataStoreABC,
-    get_data_source,
-    get_unique_id,
+    get_id_from_source,
 )
 
 _builtin_seqs = list, set, tuple
@@ -85,19 +84,20 @@ class NotCompleted(int):
         """
         Parameters
         ----------
-        type : NotCompletedType or str
+        type
             the category of failure, e.g. NotCompletedType.ERROR
         origin
             where the instance was created, can be an instance
-        message : str
+        message
             descriptive message, succinct traceback
-        source : str or instance with .source or .info.source attributes
-            the data operated on that led to this result.
+        source
+            the data operated on that led to this result. May be a string
+            or an instance with ``.source`` or ``.info.source`` attributes.
         """
         type_ = NotCompletedType(type_)
         origin = _get_origin(origin)
         try:
-            source = get_data_source(source)
+            source = get_id_from_source()(source)
         except Exception:
             source = None
         result = int.__new__(cls, False)  # noqa: FBT003
@@ -527,7 +527,7 @@ class AppBase(Generic[T, R]):
         dstore: DataStoreABC | Iterable[Any] | str,
         parallel: bool = False,
         par_kw: dict[str, Any] | None = None,
-        id_from_source: GetIdFuncType = get_unique_id,
+        id_from_source: GetIdFuncType | None = None,
         show_progress: bool | Progress = False,
     ) -> Iterator[Any]:
         """invokes self composable function on the provided data store
@@ -537,14 +537,19 @@ class AppBase(Generic[T, R]):
         dstore
             a path, list of paths, or DataStore to which the process will be
             applied.
-        parallel : bool
+        parallel
             run in parallel, according to arguments in par_kwargs. If True,
             the last step of the composable function serves as the master
             process, with earlier steps being executed in parallel for each
             member of dstore.
         par_kw
             dict of values for configuring parallel execution.
-        show_progress : bool or Progress
+        id_from_source
+            extracts a unique identifier from each input. If not provided,
+            defaults to the function registered via
+            ``scinexus.data_store.set_id_from_source``, falling back to
+            ``scinexus.data_store.get_unique_id``.
+        show_progress
             controls progress bar display. Pass ``True`` for the default
             progress bar, ``False`` to disable, or a ``Progress`` instance
             for a custom backend.
@@ -555,6 +560,8 @@ class AppBase(Generic[T, R]):
         aggregates results. If run in serial, results are returned in the
         same order as provided.
         """
+        if id_from_source is None:
+            id_from_source = get_id_from_source()
         if self._source_wrapped is None:
             app = propagate_source(
                 self.input if self.app_type is WRITER else self, id_from_source
@@ -671,7 +678,7 @@ class WriterApp(ComposableApp[T, R]):
     def apply_to(
         self,
         dstore: DataStoreABC | Iterable[Any] | str | Path,
-        id_from_source: GetIdFuncType = get_unique_id,
+        id_from_source: GetIdFuncType | None = None,
         parallel: bool = False,
         par_kw: dict[str, Any] | None = None,
         logger: CachingLogger | None = None,
@@ -685,10 +692,13 @@ class WriterApp(ComposableApp[T, R]):
         dstore
             a path, list of paths, or DataStore to which the process will be
             applied.
-        id_from_source : callable
+        id_from_source
             makes the unique identifier from elements of dstore that will be
-            used for writing results
-        parallel : bool
+            used for writing results. If not provided, defaults to the
+            function registered via
+            ``scinexus.data_store.set_id_from_source``, falling back to
+            ``scinexus.data_store.get_unique_id``.
+        parallel
             run in parallel, according to arguments in par_kwargs. If True,
             the last step of the composable function serves as the master
             process, with earlier steps being executed in parallel for each
@@ -699,10 +709,10 @@ class WriterApp(ComposableApp[T, R]):
             Argument ignored if not an io.writer. If a scitrack logger not provided,
             one is created with a name that defaults to the composable function names
             and the process ID.
-        cleanup : bool
+        cleanup
             after copying of log files into the data store, it is deleted
             from the original location
-        show_progress : bool
+        show_progress
             controls progress bar display
 
         Returns
@@ -716,6 +726,8 @@ class WriterApp(ComposableApp[T, R]):
 
         If run in parallel, this instance spawns workers and aggregates results.
         """
+        if id_from_source is None:
+            id_from_source = get_id_from_source()
         if self.app_type is WRITER:
             if self.input is None:
                 msg = "writer app has no composed input"

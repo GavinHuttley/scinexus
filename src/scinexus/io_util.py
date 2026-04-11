@@ -157,9 +157,9 @@ def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]
 
     Parameters
     ----------
-    url : urllib.parse.ParseResult or str
+    url
         A url of file in http or https web address
-    mode : str
+    mode
         mode of reading file, 'rb', 'rt', 'r'
 
     Raises

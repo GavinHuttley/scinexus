@@ -101,21 +101,20 @@ def deprecated_args(
 
     Parameters
     ----------
-    version : str
+    version
         The version when the old arguments will be removed in calver
         format, e.g. 'YYYY.MM'
-    reason : str
+    reason
         Reason for deprecation or guidance on what to do
-    old-new : list[tuple[str, str]]
+    old-new
         A list of deprecated old and replacement new argument names.
-    discontinued : list[str]
+    discontinued
         Names of single or multiple arguments to be discontinued. This should
         only be applied to arguments that have no effect.
 
     Returns
     -------
-    Callable[..., Any]
-        The decorated function.
+    The decorated function.
 
     Warnings
     --------
@@ -192,21 +191,20 @@ def deprecated_callable(
     A decorator that marks callables (function or method) as deprecated or discontinued..
     Parameters
     ----------
-    version : str
+    version
         The version when it will be removed in calver format, e.g. 'YYYY.MM'
-    reason : str
+    reason
         Reason for deprecation or guidance on what to do
-    new : str
+    new
         If the callable is being replaced, this is the replacement, e.g. 'ClassName.new_method()'
-    is_discontinued : bool
+    is_discontinued
         If True the callable is being discontinued.
     stack_level
         as per warnings.warn
 
     Returns
     -------
-    Callable
-        The decorated callable.
+    The decorated callable.
 
     Warnings
     --------
