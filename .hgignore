@@ -40,3 +40,4 @@ venv*
 .venv*
 .mypy*
 CLAUDE.md
+site/*
