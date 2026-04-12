@@ -42,6 +42,7 @@ __all__ = [
     "get_summary_display",
     "is_app",
     "is_app_composable",
+    "open_",
     "open_data_store",
     "set_default_progress",
     "set_id_from_source",
@@ -49,6 +50,7 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "open_": ("scinexus.io_util", "open_"),
     "open_data_store": ("scinexus.io", "open_data_store"),
     "set_summary_display": ("scinexus.data_store", "set_summary_display"),
     "get_summary_display": ("scinexus.data_store", "get_summary_display"),

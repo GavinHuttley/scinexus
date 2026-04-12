@@ -30,6 +30,14 @@ def test_lazy_import_nonexistent():
         scinexus.no_such_attribute  # noqa: B018
 
 
-def test_lazy_open_data_store():
-    f = scinexus.open_data_store
-    assert callable(f)
+@pytest.mark.parametrize(
+    "attr",
+    [
+        "open_",
+        "open_data_store",
+        "set_summary_display",
+        "get_summary_display",
+    ],
+)
+def test_lazy_import(attr):
+    assert callable(getattr(scinexus, attr))
