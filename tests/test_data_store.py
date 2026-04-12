@@ -5,11 +5,16 @@ from itertools import product
 from pathlib import Path
 from pickle import dumps, loads
 
-import cogent3 as c3
 import pytest
 from citeable import Software
-from cogent3.util.union_dict import UnionDict
 from scitrack import get_text_hexdigest
+
+try:
+    import cogent3 as c3
+    from cogent3.util.union_dict import UnionDict
+except ImportError:
+    c3 = None
+    UnionDict = None
 
 from scinexus import open_data_store
 from scinexus.composable import NotCompleted, NotCompletedType
@@ -1072,6 +1077,7 @@ def test_source_check_create_not_master(tmp_path):
     assert dstore.source == target
 
 
+@pytest.mark.cogent3
 def test_write_read_not_completed(nc_dstore):
     nc_dstore.drop_not_completed()
     assert len(nc_dstore.not_completed) == 0
@@ -1095,6 +1101,7 @@ def test_summary_logs_missing_field(nc_dstore):
 
 @pytest.fixture
 def app_dstore_in(tmp_path):
+    pytest.importorskip("cogent3")
     in_path = tmp_path / "in_data"
     in_path.mkdir(parents=True)
     fasta_content = ">seq\nACGT"
@@ -1110,6 +1117,7 @@ def app_dstore_in(tmp_path):
     return pipe, dstore_in
 
 
+@pytest.mark.cogent3
 def test_write_multiple_times_apply_to(app_dstore_in):
     app, dstore_in = app_dstore_in
     app.apply_to(dstore_in)
@@ -1118,6 +1126,7 @@ def test_write_multiple_times_apply_to(app_dstore_in):
     assert len(app.data_store) == orig_length
 
 
+@pytest.mark.cogent3
 def test_directory_data_store_write_compressed(tmp_path):
     out = open_data_store(base_path=tmp_path / "demo", suffix="fa.gz", mode="w")
     writer = c3.get_app("write_seqs", data_store=out)
@@ -1130,6 +1139,7 @@ def test_directory_data_store_write_compressed(tmp_path):
     assert got, got
 
 
+@pytest.mark.cogent3
 def test_apply_to_not_completed(nc_dstore, tmp_path):
     loader = c3.get_app("load_unaligned")
     num_seqs = c3.get_app("take_n_seqs", number=3, fixed_choice=False)
@@ -1194,7 +1204,10 @@ def test_old_directory_store_without_citations(fasta_dir):
     assert len(cited) == 0
 
 
-_types = tuple(product((dict, UnionDict), (str, Path)))
+_dict_types = [dict]
+if UnionDict is not None:
+    _dict_types.append(UnionDict)
+_types = tuple(product(_dict_types, (str, Path)))
 
 
 @pytest.mark.parametrize(("container_type", "source_stype"), _types)
@@ -1206,6 +1219,7 @@ def test_get_data_source_dict(container_type, source_stype):
     assert got == "path.txt"
 
 
+@pytest.mark.cogent3
 @pytest.mark.parametrize("klass", [str, Path])
 def test_get_data_source_seqcoll(klass):
     """handles case where input is sequence collection object"""

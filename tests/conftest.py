@@ -2,12 +2,16 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
-from cogent3.app.typing import _get_resolution_namespace
 
 from scinexus.data_store import set_id_from_source
 from scinexus.typing import register_type_namespace
 
-register_type_namespace(_get_resolution_namespace)
+try:
+    from cogent3.app.typing import _get_resolution_namespace
+
+    register_type_namespace(_get_resolution_namespace)
+except ImportError:
+    pass
 
 
 @pytest.fixture

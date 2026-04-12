@@ -6,13 +6,19 @@ from pathlib import Path
 from pickle import dumps, loads
 from unittest.mock import Mock
 
-import cogent3 as c3
 import pytest
 from citeable import Software
-from cogent3.app import typing as c3types
-from cogent3.util.union_dict import UnionDict
 from numpy import array, ndarray
 from scitrack import CachingLogger
+
+try:
+    import cogent3 as c3
+    from cogent3.app import typing as c3types
+    from cogent3.util.union_dict import UnionDict
+except ImportError:
+    c3 = None
+    c3types = None
+    UnionDict = None
 
 from scinexus import open_data_store
 from scinexus import typing as snx_types
@@ -2045,6 +2051,7 @@ def source_type(DATA_DIR, request):
     return next((m for m in dstore if m.unique_id == fname), None)
 
 
+@pytest.mark.cogent3
 def test_composable_unwraps_source_proxy_as_completed(source_type):
     app = c3.get_app("load_unaligned", format_name="fasta", moltype="dna")
     result = next(iter(app.as_completed([source_type], show_progress=False)))
@@ -2053,6 +2060,7 @@ def test_composable_unwraps_source_proxy_as_completed(source_type):
     assert not isinstance(got, source_proxy)
 
 
+@pytest.mark.cogent3
 def test_composable_unwraps_source_proxy_call(source_type):
     app = c3.get_app("load_unaligned", format_name="fasta", moltype="dna")
     result = app(source_type)
@@ -2061,6 +2069,7 @@ def test_composable_unwraps_source_proxy_call(source_type):
     assert not isinstance(got, source_proxy)
 
 
+@pytest.mark.cogent3
 def test_as_completed(DATA_DIR):
     """correctly applies iteratively"""
     dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
@@ -2085,6 +2094,7 @@ def test_as_completed(DATA_DIR):
     assert got[0].__class__.__name__.endswith("SequenceCollection")
 
 
+@pytest.mark.cogent3
 @pytest.mark.parametrize("data", [(), ("", "")])
 def test_as_completed_empty_data(data):
     """correctly applies iteratively"""
@@ -2097,18 +2107,22 @@ def test_as_completed_empty_data(data):
     assert got == []
 
 
-@pytest.mark.parametrize(
-    "data",
-    [
-        {"a": 2},
-        UnionDict(a=2, source="blah.txt"),
-        c3.make_aligned_seqs(
-            {"a": "ACGT"},
-            info={"source": "blah.txt"},
-            moltype="dna",
-        ),
-    ],
-)
+_as_completed_w_wout_source_params = [{"a": 2}]
+if c3 is not None:
+    _as_completed_w_wout_source_params.extend(
+        [
+            UnionDict(a=2, source="blah.txt"),
+            c3.make_aligned_seqs(
+                {"a": "ACGT"},
+                info={"source": "blah.txt"},
+                moltype="dna",
+            ),
+        ],
+    )
+
+
+@pytest.mark.cogent3
+@pytest.mark.parametrize("data", _as_completed_w_wout_source_params)
 def test_as_completed_w_wout_source(data):
     from cogent3.app.typing import AlignedSeqsType
 
@@ -2121,6 +2135,7 @@ def test_as_completed_w_wout_source(data):
     assert bool(got), got
 
 
+@pytest.mark.cogent3
 @pytest.mark.parametrize("klass", [DataStoreDirectory, DataStoreSqlite])
 @pytest.mark.parametrize("cast", [str, Path])
 def test_apply_to_strings(DATA_DIR, tmp_dir, klass, cast):
@@ -2140,6 +2155,7 @@ def test_apply_to_strings(DATA_DIR, tmp_dir, klass, cast):
     assert len(process.data_store.logs) == 1
 
 
+@pytest.mark.cogent3
 @pytest.mark.parametrize("klass", [DataStoreDirectory, DataStoreSqlite])
 @pytest.mark.parametrize("cast", [str, Path])
 def test_as_completed_strings(DATA_DIR, tmp_dir, klass, cast):
@@ -2162,6 +2178,7 @@ def test_as_completed_strings(DATA_DIR, tmp_dir, klass, cast):
     assert len(got) > orig_length
 
 
+@pytest.mark.cogent3
 def test_apply_to_non_unique_identifiers(tmp_dir):
     """should fail if non-unique names"""
     dstore = [
@@ -2180,6 +2197,7 @@ def test_apply_to_non_unique_identifiers(tmp_dir):
         process.apply_to(dstore)
 
 
+@pytest.mark.cogent3
 def test_apply_to_logging(DATA_DIR, tmp_dir):
     """correctly creates log file"""
     dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
@@ -2193,6 +2211,7 @@ def test_apply_to_logging(DATA_DIR, tmp_dir):
     assert len(process.data_store.logs) == 1
 
 
+@pytest.mark.cogent3
 def test_apply_to_logger(DATA_DIR, tmp_dir):
     """correctly uses user provided logger"""
     dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
@@ -2206,6 +2225,7 @@ def test_apply_to_logger(DATA_DIR, tmp_dir):
     assert len(process.data_store.logs) == 1
 
 
+@pytest.mark.cogent3
 def test_apply_to_no_logger(DATA_DIR, tmp_dir):
     """correctly uses user provided logger"""
     dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
@@ -2219,6 +2239,7 @@ def test_apply_to_no_logger(DATA_DIR, tmp_dir):
     assert process.logger is None
 
 
+@pytest.mark.cogent3
 @pytest.mark.parametrize("logger_val", [True, "somepath.log"])
 def test_apply_to_invalid_logger(DATA_DIR, tmp_dir, logger_val):
     """incorrect logger value raises TypeError"""
@@ -2292,6 +2313,7 @@ def nc_dstore(tmp_dir, nc_objects):
     return dstore
 
 
+@pytest.mark.cogent3
 def test_apply_to_input_only_not_completed(DATA_DIR, nc_dstore, tmp_dir):
     """correctly skips notcompleted"""
     dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
@@ -2308,6 +2330,7 @@ def test_apply_to_input_only_not_completed(DATA_DIR, nc_dstore, tmp_dir):
     assert len(out_dstore.not_completed) == len(nc_dstore)
 
 
+@pytest.mark.cogent3
 def test_apply_to_makes_not_completed(DATA_DIR, tmp_dir):
     """correctly creates notcompleted"""
     dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)
@@ -2321,6 +2344,7 @@ def test_apply_to_makes_not_completed(DATA_DIR, tmp_dir):
     assert len(out_dstore.not_completed) == 3
 
 
+@pytest.mark.cogent3
 def test_apply_to_not_partially_done(DATA_DIR, tmp_dir):
     """correctly applies process when result already partially done"""
     dstore = open_data_store(DATA_DIR, suffix="fasta")
@@ -2354,6 +2378,7 @@ def full_dstore(write_dir1, nc_objects, completed_objects, log_data):
 
 
 # @pytest.mark.xfail(reason="passes except when run in full test suite")
+@pytest.mark.cogent3
 @pytest.mark.parametrize("show", [True, False])
 def test_as_completed_progress(full_dstore, capsys, show):
     loader = c3.get_app("load_unaligned", format_name="fasta", moltype="dna")
@@ -2368,6 +2393,7 @@ def test_as_completed_progress(full_dstore, capsys, show):
         assert len(result) == 0
 
 
+@pytest.mark.cogent3
 def test_composite_pickleable():
     """composable functions should be pickleable"""
 
@@ -2389,13 +2415,13 @@ def test_composite_pickleable():
     dumps(proc)
 
 
-@define_app
-def foo(val: c3types.AlignedSeqsType, *args, **kwargs) -> c3types.AlignedSeqsType:
-    return val[:4]
-
-
+@pytest.mark.cogent3
 def test_user_function():
     """composable functions should be user definable"""
+
+    @define_app
+    def foo(val: c3types.AlignedSeqsType, *args, **kwargs) -> c3types.AlignedSeqsType:
+        return val[:4]
 
     u_function = foo()
 
@@ -2408,15 +2434,15 @@ def test_user_function():
     assert got.to_dict() == {"a": "GCAA", "b": "GCTT"}
 
 
-@define_app
-def foo_without_arg_kwargs(
-    val: c3types.AlignedSeqsType,
-) -> c3types.AlignedSeqsType:
-    return val[:4]
-
-
+@pytest.mark.cogent3
 def test_user_function_without_arg_kwargs():
     """composable functions should be user definable"""
+
+    @define_app
+    def foo_without_arg_kwargs(
+        val: c3types.AlignedSeqsType,
+    ) -> c3types.AlignedSeqsType:
+        return val[:4]
 
     u_function = foo_without_arg_kwargs()
 
@@ -2429,13 +2455,18 @@ def test_user_function_without_arg_kwargs():
     assert got.to_dict() == {"a": "GCAA", "b": "GCTT"}
 
 
-@define_app
-def bar(val: c3types.AlignedSeqsType, num=3) -> c3types.PairwiseDistanceType:
-    return val.distance_matrix(calc="hamming")
-
-
+@pytest.mark.cogent3
 def test_user_function_multiple():
     """user defined composable functions should not interfere with each other"""
+
+    @define_app
+    def foo(val: c3types.AlignedSeqsType, *args, **kwargs) -> c3types.AlignedSeqsType:
+        return val[:4]
+
+    @define_app
+    def bar(val: c3types.AlignedSeqsType, num=3) -> c3types.PairwiseDistanceType:
+        return val.distance_matrix(calc="hamming")
+
     u_function_1 = foo()
     u_function_2 = bar()
 
@@ -2452,11 +2483,13 @@ def test_user_function_multiple():
     assert got_2 == {("s1", "s2"): 2.0, ("s2", "s1"): 2.0}
 
 
+@pytest.mark.cogent3
 def test_concat_not_composable():
     concat = c3.get_app("concat")
     assert not is_app_composable(concat)
 
 
+@pytest.mark.cogent3
 def test_cogent3_serialisable_compatible_with_serialisabletype(tmp_path):
 
     @define_app
@@ -2474,6 +2507,7 @@ def test_cogent3_serialisable_compatible_with_serialisabletype(tmp_path):
     assert not isinstance(got, NotCompleted)
 
 
+@pytest.mark.cogent3
 @pytest.mark.parametrize("klass", [DataStoreDirectory, DataStoreSqlite])
 def test_apply_to_writes_citations(DATA_DIR, tmp_dir, klass):
     """apply_to writes citations to the data store"""
@@ -2536,6 +2570,7 @@ def half_dstore2(write_dir2, nc_objects, completed_objects, log_data):
     return dstore
 
 
+@pytest.mark.cogent3
 def test_apply_to_only_appends(half_dstore1, half_dstore2):
     half_dstore1 = open_data_store(
         half_dstore1.source,
