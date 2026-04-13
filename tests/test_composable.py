@@ -2717,3 +2717,21 @@ def test_apply_to_only_appends(half_dstore1, half_dstore2):
     process2 = reader2 + min_length2 + writer2
     # check not fail on append new records
     _ = process2.apply_to(dstore1)
+
+
+@define_app
+def app_1(a: int) -> list[int]:
+    return [a]
+
+
+@define_app
+def app_2(b: list[int]) -> int:
+    return b[0]
+
+
+def test_composed_app_case():
+    a = app_1()
+    b = app_2()
+
+    composed = a + b
+    assert isinstance(composed, ComposableApp)
