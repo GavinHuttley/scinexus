@@ -53,6 +53,10 @@ from scinexus.deserialise import deserialise_object
 from scinexus.sqlite_data_store import DataStoreSqlite
 
 
+def _typed_main(self, val: int) -> int:
+    return val
+
+
 def test_composable():
     """correctly form string"""
 
@@ -559,10 +563,16 @@ def test_complex_type_allowed_depths(hint):
         "__repr__",
         "__str__",
         "__new__",
+        "__copy__",
+        "__eq__",
         "__add__",
         "input",
         "apply_to",
+        "set_logger",
         "_validate_data_type",
+        "as_completed",
+        "_get_citations",
+        "disconnect",
     ],
 )
 def test_forbidden_methods_composable_app(meth):
@@ -583,7 +593,17 @@ def test_forbidden_methods_composable_app(meth):
 
 @pytest.mark.parametrize(
     "meth",
-    ["__call__", "__repr__", "__str__", "__new__", "_validate_data_type"],
+    [
+        "__call__",
+        "__repr__",
+        "__str__",
+        "__new__",
+        "__copy__",
+        "__eq__",
+        "_validate_data_type",
+        "as_completed",
+        "_get_citations",
+    ],
 )
 def test_forbidden_methods_non_composable_app(meth):
     class app_forbidden_methods2:
@@ -612,6 +632,100 @@ def test_forbidden_input_attribute():
 
     with pytest.raises(TypeError):
         define_app(app_with_input_attr)
+
+
+@pytest.mark.parametrize(
+    "meth",
+    [
+        "__call__",
+        "__repr__",
+        "__str__",
+        "__new__",
+        "__copy__",
+        "__eq__",
+        "__add__",
+        "_validate_data_type",
+        "as_completed",
+        "_get_citations",
+        "disconnect",
+    ],
+)
+def test_forbidden_methods_subclass_composable(meth):
+    def forbidden():
+        pass
+
+    with pytest.raises(TypeError):
+        type("bad_app", (ComposableApp,), {"main": _typed_main, meth: forbidden})
+
+
+@pytest.mark.parametrize(
+    "meth",
+    [
+        "__call__",
+        "__repr__",
+        "__str__",
+        "__new__",
+        "__copy__",
+        "__eq__",
+        "_validate_data_type",
+        "as_completed",
+        "_get_citations",
+    ],
+)
+def test_forbidden_methods_subclass_non_composable(meth):
+    def forbidden():
+        pass
+
+    with pytest.raises(TypeError):
+        type("bad_app", (NonComposableApp,), {"main": _typed_main, meth: forbidden})
+
+
+@pytest.mark.parametrize(
+    "meth",
+    ["apply_to", "set_logger"],
+)
+def test_forbidden_methods_subclass_writer(meth):
+    def forbidden():
+        pass
+
+    with pytest.raises(TypeError):
+        type("bad_app", (WriterApp,), {"main": _typed_main, meth: forbidden})
+
+
+def test_forbidden_input_attribute_subclass():
+    with pytest.raises(TypeError):
+        type(
+            "bad_app",
+            (ComposableApp,),
+            {"main": _typed_main, "input": "some_value"},
+        )
+
+
+@pytest.mark.parametrize(
+    "prop",
+    ["check_data_type", "citations", "bib"],
+)
+def test_forbidden_properties_subclass(prop):
+    with pytest.raises(TypeError):
+        type(
+            "bad_app",
+            (ComposableApp,),
+            {"main": _typed_main, prop: property(lambda self: None)},
+        )
+
+
+@pytest.mark.parametrize(
+    "prop",
+    ["check_data_type", "citations", "bib"],
+)
+def test_forbidden_properties_define_app(prop):
+    class my_app:
+        def main(self, val: int) -> int:
+            return val
+
+    setattr(my_app, prop, property(lambda self: None))
+    with pytest.raises(TypeError):
+        define_app(my_app)
 
 
 def test_skip_not_completed():

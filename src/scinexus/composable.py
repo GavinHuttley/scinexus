@@ -338,11 +338,71 @@ class propagate_source:
         return value
 
 
+# Forbidden methods per app kind
+_FORBIDDEN_BASE = frozenset(
+    {
+        "__call__",
+        "__repr__",
+        "__str__",
+        "__new__",
+        "__copy__",
+        "__eq__",
+        "_validate_data_type",
+        "as_completed",
+        "check_data_type",
+        "_get_citations",
+        "citations",
+        "bib",
+    }
+)
+_FORBIDDEN_COMPOSABLE = _FORBIDDEN_BASE | frozenset(
+    {
+        "__add__",
+        "disconnect",
+        "input",
+    }
+)
+_FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset(
+    {
+        "apply_to",
+        "set_logger",
+    }
+)
+
+
 def _init_subclass_setup(
     cls: Any, app_type: AppType | str, skip_not_completed: bool, cite: Citation | None
 ) -> None:
     """Shared setup logic for __init_subclass__ and define_app."""
     app_type = AppType(app_type)
+
+    if "__slots__" in cls.__dict__:
+        msg = "slots are not currently supported"
+        raise NotImplementedError(msg)
+
+    if app_type is WRITER:
+        forbidden = _FORBIDDEN_WRITER
+    elif app_type is not NON_COMPOSABLE:
+        forbidden = _FORBIDDEN_COMPOSABLE
+    else:
+        forbidden = _FORBIDDEN_BASE
+
+    if (
+        app_type is not NON_COMPOSABLE
+        and "input" in cls.__dict__
+        and cls.__dict__["input"] is not None
+    ):
+        msg = f"remove 'input' attribute in {cls.__name__!r}, reserved by the app framework"
+        raise TypeError(msg)
+
+    for meth in forbidden:
+        if meth in cls.__dict__:
+            val = cls.__dict__[meth]
+            if isinstance(val, staticmethod):
+                val = val.__func__
+            if inspect.isfunction(val) or isinstance(val, property):
+                msg = f"remove {meth!r} in {cls.__name__!r}, reserved by the app framework"
+                raise TypeError(msg)
 
     raw_input, raw_return = _get_main_hints(cls)
     mod = sys.modules.get(cls.__module__) if cls.__module__ else None
@@ -357,10 +417,6 @@ def _init_subclass_setup(
 
     if app_type is not LOADER:
         cls.input = None
-
-    if "__slots__" in cls.__dict__:
-        msg = "slots are not currently supported"
-        raise NotImplementedError(msg)
 
 
 class AppBase(Generic[T, R]):
@@ -904,31 +960,6 @@ def _class_from_func(func: Callable[..., Any]) -> type[Any]:
     return result
 
 
-# Forbidden methods per app kind
-_FORBIDDEN_BASE = frozenset(
-    {
-        "__call__",
-        "__repr__",
-        "__str__",
-        "__new__",
-        "_validate_data_type",
-    }
-)
-_FORBIDDEN_COMPOSABLE = _FORBIDDEN_BASE | frozenset(
-    {
-        "__add__",
-        "disconnect",
-        "input",
-    }
-)
-_FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset(
-    {
-        "apply_to",
-        "set_logger",
-    }
-)
-
-
 @overload
 def define_app(
     klass: type[Any] | Callable[..., Any],
@@ -1079,30 +1110,13 @@ def define_app(
             raise ValueError(msg)
 
         # Select base class based on app_type
-        composable = app_type is not NON_COMPOSABLE
         base: type[AppBase[Any, Any]]
         if app_type is WRITER:
             base = WriterApp
-            forbidden = _FORBIDDEN_WRITER
-        elif composable:
+        elif app_type is not NON_COMPOSABLE:
             base = ComposableApp
-            forbidden = _FORBIDDEN_COMPOSABLE
         else:
             base = AppBase
-            forbidden = _FORBIDDEN_BASE
-
-        # Check forbidden methods on the user's class
-        if (
-            composable
-            and "input" in klass.__dict__
-            and klass.__dict__["input"] is not None
-        ):
-            msg = f"remove 'input' attribute in {klass.__name__!r}, this functionality provided by define_app"
-            raise TypeError(msg)
-        for meth in forbidden:
-            if meth in klass.__dict__ and inspect.isfunction(klass.__dict__[meth]):
-                msg = f"remove {meth!r} in {klass.__name__!r}, this functionality provided by define_app"
-                raise TypeError(msg)
 
         if "__slots__" in klass.__dict__:
             msg = "slots are not currently supported"
