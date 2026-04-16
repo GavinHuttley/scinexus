@@ -20,7 +20,7 @@ As the Unix philosophy articulates, writing algorithms that do one thing well an
 Developers can choose inheriting from a base class or use the `scinexus.define_app` decorator to make composable apps. The following examples show simple composition
 
 <details>
-<summary>Load files, those missing data don't cause a crash</summary>
+<summary>Loading files so missing data does not cause a crash</summary>
 
 ```python
 from scinexus import define_app
