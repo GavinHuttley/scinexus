@@ -1,0 +1,33 @@
+name: Lint code using ruff
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  linters:
+    runs-on: ubuntu-latest
+    if: github.repository == 'cogent3/SciNexus'
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Format code using ruff
+        run: uv run --group test nox -s fmt
+
+        - name: Commit changes
+        uses: EndBug/add-and-commit@v10
+        with:
+          author_name: ${{ github.actor }}
+          author_email: ${{ github.actor }}@users.noreply.github.com
+          message: "STY: pre-commit linting with ruff"
+          add: "."
