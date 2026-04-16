@@ -1177,7 +1177,7 @@ def test_summary_citations_zipped(write_dir, sample_citations):
     dstore.write_citations(data=sample_citations)
     source = pathlib.Path(dstore.source)
     path = shutil.make_archive(
-        base_name=source.name,
+        base_name=str(source),
         format="zip",
         base_dir=source.name,
         root_dir=source.parent,
