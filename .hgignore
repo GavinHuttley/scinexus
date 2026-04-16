@@ -41,3 +41,4 @@ venv*
 .mypy*
 CLAUDE.md
 site/*
+docs/data/*

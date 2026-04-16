@@ -4,6 +4,8 @@ import subprocess
 import sys
 import textwrap
 
+import pytest
+
 from scinexus import ComposableApp, NonComposableApp
 from scinexus.composable import (
     NON_COMPOSABLE,
@@ -145,6 +147,7 @@ def _run_mypy(code: str, tmp_path) -> tuple[int, str]:
     return result.returncode, result.stdout + result.stderr
 
 
+@pytest.mark.slow
 def test_mypy_decorator_reveal_type(tmp_path):
     code = textwrap.dedent("""\
         from scinexus.composable import define_app

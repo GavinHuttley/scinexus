@@ -20,17 +20,22 @@ mpi = ["mpi4py"]
 rich = ["rich"]
 
 [dependency-groups]
-dev = ["zensical>=0.0.32"]
 test = [
+    "pymdown-extensions>=10.21.2",
+    "zensical>=0.0.32",
     "cogent3>=2026.3.23a0",
     "pytest",
     "pytest-cov",
+    "pytest-markdown-docs",
     "pytest-xdist",
     "mypy",
     "nox",
     "numpy",
     "rich",
     "ruff",
+    "cogapp>=3.6.0",
+    "click>=8.3.2",
+    "mkdocstrings-python>=2.0.3",
 ]
 
 [build-system]

@@ -437,6 +437,7 @@ def test_open_url_gzip_mode(gzip_uri, mode):
     assert isinstance(got, expect_type)
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize(
     "mode",
     ["r", "rb", "rt", None],
@@ -461,6 +462,7 @@ def test_open_url(DATA_DIR, mode):
     assert remote_data.splitlines() == local_data.splitlines()
 
 
+@pytest.mark.slow
 @pytest.mark.internet
 def test_open_url_compressed(DATA_DIR):
     """comparing compressed file handling"""
