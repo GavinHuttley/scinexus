@@ -27,7 +27,7 @@ def test_progress_abc_cannot_instantiate():
 
 def test_progress_abc_missing_call():
     class Incomplete(Progress):
-        def child(self):
+        def child(self, *, leave=None):
             return self
 
     with pytest.raises(TypeError):
@@ -128,7 +128,6 @@ def test_tqdm_is_progress_subclass():
 def test_tqdm_total_passed_to_tqdm():
     with patch("tqdm.auto.tqdm") as mock_tqdm:
         mock_bar = MagicMock()
-        mock_bar.__iter__ = MagicMock(return_value=iter([1, 2]))
         mock_tqdm.return_value = mock_bar
 
         tp = TqdmProgress()
@@ -143,7 +142,6 @@ def test_tqdm_total_passed_to_tqdm():
 def test_tqdm_leave_true_at_position_zero():
     with patch("tqdm.auto.tqdm") as mock_tqdm:
         mock_bar = MagicMock()
-        mock_bar.__iter__ = MagicMock(return_value=iter([]))
         mock_tqdm.return_value = mock_bar
 
         tp = TqdmProgress(position=0)
@@ -155,7 +153,6 @@ def test_tqdm_leave_true_at_position_zero():
 def test_tqdm_leave_false_at_position_nonzero():
     with patch("tqdm.auto.tqdm") as mock_tqdm:
         mock_bar = MagicMock()
-        mock_bar.__iter__ = MagicMock(return_value=iter([]))
         mock_tqdm.return_value = mock_bar
 
         tp = TqdmProgress(position=1)
@@ -175,8 +172,8 @@ def test_tqdm_custom_bar_format():
 
 
 def test_tqdm_extra_kwargs_stored():
-    tp = TqdmProgress(ncols=80, colour="green")
-    assert tp._tqdm_kwargs == {"ncols": 80, "colour": "green"}  # noqa: SLF001
+    tp = TqdmProgress(unit="B")
+    assert tp._tqdm_kwargs == {"unit": "B"}  # noqa: SLF001
 
 
 def test_tqdm_child_inherits_options():
@@ -192,22 +189,21 @@ def test_tqdm_child_inherits_options():
 
 
 def test_tqdm_child_inherits_tqdm_kwargs():
-    tp = TqdmProgress(ncols=80)
+    tp = TqdmProgress(unit="B")
     child = tp.child()
-    assert child._tqdm_kwargs == {"ncols": 80}  # noqa: SLF001
+    assert child._tqdm_kwargs == {"unit": "B"}  # noqa: SLF001
 
 
 def test_tqdm_options_passed_to_tqdm():
     with patch("tqdm.auto.tqdm") as mock_tqdm:
         mock_bar = MagicMock()
-        mock_bar.__iter__ = MagicMock(return_value=iter([]))
         mock_tqdm.return_value = mock_bar
 
         tp = TqdmProgress(
             mininterval=2.0,
             bar_format="{l_bar}",
+            bar_width=None,
             dynamic_ncols=False,
-            ncols=80,
         )
         list(tp([], total=0))
 
@@ -215,7 +211,6 @@ def test_tqdm_options_passed_to_tqdm():
         assert kw["mininterval"] == 2.0
         assert kw["bar_format"] == "{l_bar}"
         assert kw["dynamic_ncols"] is False
-        assert kw["ncols"] == 80
 
 
 def test_rich_yields_all_items():
@@ -319,6 +314,21 @@ def test_set_default_string_rich():
 def test_set_default_invalid_string_raises():
     with pytest.raises(ValueError, match="unknown progress type"):
         set_default_progress("invalid")
+
+
+def test_set_default_string_tqdm_with_kwargs():
+    set_default_progress("tqdm", colour="green")
+    result = get_progress(True)
+    assert isinstance(result, TqdmProgress)
+    assert result._colour == "green"  # noqa: SLF001
+
+
+def test_set_default_string_rich_with_kwargs():
+    set_default_progress("rich", colour="blue", leave=True)
+    result = get_progress(True)
+    assert isinstance(result, RichProgress)
+    assert result._colour == "blue"  # noqa: SLF001
+    assert result._leave is True  # noqa: SLF001
 
 
 def test_tqdm_nested_child_yields_all():
@@ -495,3 +505,401 @@ def test_tqdm_context_multiphase():
             ctx.update(progress=0.9 + i / 10 * 0.1, msg="Local")
         ctx.update(progress=1.0, msg="Done")
         assert ctx._bar.n == pytest.approx(1.0)  # noqa: SLF001
+
+
+def test_tqdm_leave_none_uses_position_logic():
+    with patch("tqdm.auto.tqdm") as mock_tqdm:
+        mock_bar = MagicMock()
+        mock_tqdm.return_value = mock_bar
+
+        tp = TqdmProgress(position=0, leave=None)
+        list(tp([], total=0))
+        assert mock_tqdm.call_args.kwargs["leave"] is True
+
+        tp = TqdmProgress(position=1, leave=None)
+        list(tp([], total=0))
+        assert mock_tqdm.call_args.kwargs["leave"] is False
+
+
+def test_tqdm_leave_true_overrides_position():
+    with patch("tqdm.auto.tqdm") as mock_tqdm:
+        mock_bar = MagicMock()
+        mock_tqdm.return_value = mock_bar
+
+        tp = TqdmProgress(position=1, leave=True)
+        list(tp([], total=0))
+        assert mock_tqdm.call_args.kwargs["leave"] is True
+
+
+def test_tqdm_leave_false_overrides_position():
+    with patch("tqdm.auto.tqdm") as mock_tqdm:
+        mock_bar = MagicMock()
+        mock_tqdm.return_value = mock_bar
+
+        tp = TqdmProgress(position=0, leave=False)
+        list(tp([], total=0))
+        assert mock_tqdm.call_args.kwargs["leave"] is False
+
+
+def test_tqdm_leave_propagated_to_child():
+    tp = TqdmProgress(leave=True)
+    child = tp.child()
+    assert child._leave is True  # noqa: SLF001
+
+
+def test_tqdm_child_leave_override():
+    tp = TqdmProgress(leave=True)
+    child = tp.child(leave=False)
+    assert child._leave is False  # noqa: SLF001
+
+
+def test_tqdm_child_leave_none_inherits():
+    tp = TqdmProgress(leave=True)
+    child = tp.child(leave=None)
+    assert child._leave is True  # noqa: SLF001
+
+
+def test_tqdm_context_respects_leave():
+    with patch("tqdm.auto.tqdm") as mock_tqdm:
+        mock_bar = MagicMock()
+        mock_tqdm.return_value = mock_bar
+
+        tp = TqdmProgress(position=1, leave=True)
+        ctx = tp.context()
+        assert mock_tqdm.call_args.kwargs["leave"] is True
+        ctx.close()
+
+
+def test_tqdm_colour_none_by_default():
+    tp = TqdmProgress()
+    assert tp._colour is None  # noqa: SLF001
+
+
+def test_tqdm_colour_passed_to_tqdm():
+    with patch("tqdm.auto.tqdm") as mock_tqdm:
+        mock_bar = MagicMock()
+        mock_tqdm.return_value = mock_bar
+
+        tp = TqdmProgress(colour="green")
+        list(tp([], total=0))
+        assert mock_tqdm.call_args.kwargs["colour"] == "green"
+
+
+def test_tqdm_colour_propagated_to_child():
+    tp = TqdmProgress(colour="green")
+    child = tp.child()
+    assert child._colour == "green"  # noqa: SLF001
+
+
+def test_tqdm_context_colour_passed():
+    with patch("tqdm.auto.tqdm") as mock_tqdm:
+        mock_bar = MagicMock()
+        mock_tqdm.return_value = mock_bar
+
+        tp = TqdmProgress(colour="blue")
+        ctx = tp.context()
+        assert mock_tqdm.call_args.kwargs["colour"] == "blue"
+        ctx.close()
+
+
+def test_rich_leave_false_by_default():
+    rp = RichProgress()
+    assert rp._leave is False  # noqa: SLF001
+
+
+def test_rich_leave_false_removes_task_on_del():
+    rp = RichProgress(disable=True, leave=False)
+    result = list(rp([1, 2], total=2))
+    assert result == [1, 2]
+    assert len(rp._progress.tasks) == 1  # noqa: SLF001
+    progress = rp._progress  # noqa: SLF001
+    del rp
+    assert len(progress.tasks) == 0
+
+
+def test_rich_leave_true_keeps_task():
+    rp = RichProgress(disable=True, leave=True)
+    result = list(rp([1, 2], total=2))
+    assert result == [1, 2]
+    assert len(rp._progress.tasks) == 1  # noqa: SLF001
+    assert rp._progress.tasks[0].completed == 2  # noqa: SLF001
+
+
+def test_rich_leave_propagated_to_child():
+    rp = RichProgress(leave=True)
+    child = rp.child()
+    assert child._leave is True  # noqa: SLF001
+
+
+def test_rich_child_leave_override():
+    rp = RichProgress(leave=True)
+    child = rp.child(leave=False)
+    assert child._leave is False  # noqa: SLF001
+
+
+def test_rich_child_leave_none_inherits():
+    rp = RichProgress(leave=True)
+    child = rp.child(leave=None)
+    assert child._leave is True  # noqa: SLF001
+
+
+def test_rich_context_leave_false_removes_task():
+    rp = RichProgress(disable=True, leave=False)
+    with rp.context(msg="test") as ctx:
+        ctx.update(progress=0.5)
+    assert len(rp._progress.tasks) == 0  # noqa: SLF001
+
+
+def test_rich_context_leave_true_keeps_task():
+    rp = RichProgress(disable=True, leave=True)
+    with rp.context(msg="test") as ctx:
+        ctx.update(progress=0.5)
+    assert len(rp._progress.tasks) == 1  # noqa: SLF001
+    assert rp._progress.tasks[0].completed == 1.0  # noqa: SLF001
+
+
+def test_rich_colour_none_by_default():
+    rp = RichProgress()
+    assert rp._colour is None  # noqa: SLF001
+
+
+def test_rich_colour_creates_styled_bar_column():
+    from rich.progress import BarColumn  # type: ignore[import-not-found]
+
+    rp = RichProgress(disable=True, colour="blue")
+    rp._ensure_progress()  # noqa: SLF001
+    bar_columns = [c for c in rp._progress.columns if isinstance(c, BarColumn)]
+    assert len(bar_columns) == 1
+    assert bar_columns[0].complete_style == "blue"
+    assert bar_columns[0].finished_style == "blue"
+
+
+def test_rich_colour_not_applied_when_progress_provided():
+    from rich.progress import (  # type: ignore[import-not-found]
+        BarColumn,
+    )
+    from rich.progress import (
+        Progress as RProgress,
+    )
+
+    custom = RProgress(disable=True)
+    rp = RichProgress(progress=custom, colour="red")
+    result = rp._ensure_progress()  # noqa: SLF001
+    assert result is custom
+    bar_columns = [c for c in result.columns if isinstance(c, BarColumn)]
+    for col in bar_columns:
+        assert col.complete_style != "red"
+
+
+def test_rich_colour_propagated_to_child():
+    rp = RichProgress(colour="cyan")
+    child = rp.child()
+    assert child._colour == "cyan"  # noqa: SLF001
+
+
+def test_rich_default_columns_include_elapsed_and_remaining():
+    from rich.progress import (  # type: ignore[import-not-found]
+        TimeElapsedColumn,
+        TimeRemainingColumn,
+    )
+
+    rp = RichProgress(disable=True)
+    rp._ensure_progress()  # noqa: SLF001
+    column_types = [type(c) for c in rp._progress.columns]  # noqa: SLF001
+    assert TimeElapsedColumn in column_types
+    assert TimeRemainingColumn in column_types
+
+
+def test_no_progress_child_accepts_leave():
+    np = NoProgress()
+    assert np.child(leave=True) is np
+    assert np.child(leave=False) is np
+    assert np.child(leave=None) is np
+
+
+def test_tqdm_bar_width_default():
+    tp = TqdmProgress()
+    assert tp._bar_width == 60  # noqa: SLF001
+
+
+def test_tqdm_bar_width_passed_as_ncols():
+    with patch("tqdm.auto.tqdm") as mock_tqdm:
+        mock_bar = MagicMock()
+        mock_tqdm.return_value = mock_bar
+
+        tp = TqdmProgress(bar_width=80)
+        list(tp([], total=0))
+        kw = mock_tqdm.call_args.kwargs
+        assert kw["ncols"] == 80
+        assert kw["dynamic_ncols"] is False
+
+
+def test_tqdm_bar_width_none_uses_dynamic_ncols():
+    with patch("tqdm.auto.tqdm") as mock_tqdm:
+        mock_bar = MagicMock()
+        mock_tqdm.return_value = mock_bar
+
+        tp = TqdmProgress(bar_width=None, dynamic_ncols=True)
+        list(tp([], total=0))
+        kw = mock_tqdm.call_args.kwargs
+        assert "ncols" not in kw
+        assert kw["dynamic_ncols"] is True
+
+
+def test_tqdm_bar_width_propagated_to_child():
+    tp = TqdmProgress(bar_width=80)
+    child = tp.child()
+    assert child._bar_width == 80  # noqa: SLF001
+
+
+def test_rich_bar_width_default():
+    rp = RichProgress()
+    assert rp._bar_width == 60  # noqa: SLF001
+
+
+def test_rich_bar_width_applied_to_bar_column():
+    from rich.progress import BarColumn  # type: ignore[import-not-found]
+
+    rp = RichProgress(disable=True, bar_width=80)
+    rp._ensure_progress()  # noqa: SLF001
+    bar_columns = [
+        c
+        for c in rp._progress.columns  # noqa: SLF001
+        if isinstance(c, BarColumn)
+    ]
+    assert len(bar_columns) == 1
+    assert bar_columns[0].bar_width == 80
+
+
+def test_rich_bar_width_propagated_to_child():
+    rp = RichProgress(bar_width=80)
+    child = rp.child()
+    assert child._bar_width == 80  # noqa: SLF001
+
+
+def test_tqdm_reuses_bar_across_calls():
+    tp = TqdmProgress(disable=True)
+    assert list(tp([1, 2], total=2)) == [1, 2]
+    assert list(tp([3, 4, 5], total=3)) == [3, 4, 5]
+
+
+def test_tqdm_reuses_bar_single_creation():
+    with patch("tqdm.auto.tqdm") as mock_tqdm:
+        mock_bar = MagicMock()
+        mock_tqdm.return_value = mock_bar
+
+        tp = TqdmProgress()
+        list(tp([1], total=1))
+        list(tp([2], total=1))
+
+        mock_tqdm.assert_called_once()
+
+
+def test_tqdm_reset_updates_total_and_msg():
+    tp = TqdmProgress(disable=True)
+    list(tp([], total=5, msg="first"))
+    list(tp([], total=10, msg="second"))
+    assert tp._bar.total == 10  # noqa: SLF001
+    assert tp._bar.n == 0  # noqa: SLF001
+
+
+def test_tqdm_del_closes_bar():
+    with patch("tqdm.auto.tqdm") as mock_tqdm:
+        mock_bar = MagicMock()
+        mock_tqdm.return_value = mock_bar
+
+        tp = TqdmProgress()
+        list(tp([], total=0))
+        del tp
+
+        mock_bar.close.assert_called_once()
+
+
+def test_tqdm_del_without_use_is_safe():
+    tp = TqdmProgress()
+    del tp
+
+
+def test_rich_reuses_task_across_calls():
+    rp = RichProgress(disable=True)
+    assert list(rp([1, 2], total=2)) == [1, 2]
+    assert list(rp([3, 4, 5], total=3)) == [3, 4, 5]
+    assert len(rp._progress.tasks) == 1  # noqa: SLF001
+
+
+def test_rich_reset_updates_total():
+    rp = RichProgress(disable=True)
+    list(rp([1], total=1))
+    list(rp([1, 2, 3], total=3))
+    task = rp._progress.tasks[0]  # noqa: SLF001
+    assert task.total == 3
+
+
+def test_rich_del_completes_task_when_leave_true():
+    rp = RichProgress(disable=True, leave=True)
+    list(rp([1, 2], total=2))
+    progress = rp._progress  # noqa: SLF001
+    del rp
+    assert len(progress.tasks) == 1
+    assert progress.tasks[0].completed == 2
+
+
+def test_rich_del_without_use_is_safe():
+    rp = RichProgress()
+    del rp
+
+
+def test_child_reuses_bar_independently():
+    outer = TqdmProgress(disable=True)
+    child = outer.child()
+    for batch in outer([1, 2], total=2):
+        assert list(child([10, 20], total=2)) == [10, 20]
+
+
+def test_no_progress_multiple_calls():
+    np = NoProgress()
+    assert list(np([1, 2])) == [1, 2]
+    assert list(np([3, 4])) == [3, 4]
+
+
+def test_get_progress_kwargs_forwarded():
+    result = get_progress(True, colour="green")
+    assert isinstance(result, TqdmProgress)
+    assert result._colour == "green"  # noqa: SLF001
+
+
+def test_get_progress_kwargs_with_default_creates_new_instance():
+    set_default_progress("tqdm")
+    result = get_progress(True, colour="green")
+    assert isinstance(result, TqdmProgress)
+    assert result._colour == "green"  # noqa: SLF001
+
+
+def test_get_progress_kwargs_with_rich_default():
+    set_default_progress("rich")
+    result = get_progress(True, colour="blue")
+    assert isinstance(result, RichProgress)
+    assert result._colour == "blue"  # noqa: SLF001
+
+
+def test_get_progress_no_kwargs_returns_default():
+    set_default_progress("tqdm")
+    default = get_progress(True)
+    assert default is get_progress(True)
+
+
+def test_get_progress_kwargs_with_instance_ignored():
+    tp = TqdmProgress()
+    assert get_progress(tp, colour="green") is tp
+
+
+def test_get_progress_kwargs_false_ignored():
+    result = get_progress(False, colour="green")
+    assert isinstance(result, NoProgress)
+
+
+def test_get_progress_multiple_kwargs():
+    result = get_progress(True, colour="green", mininterval=0.5)
+    assert isinstance(result, TqdmProgress)
+    assert result._colour == "green"  # noqa: SLF001
+    assert result._mininterval == 0.5  # noqa: SLF001
