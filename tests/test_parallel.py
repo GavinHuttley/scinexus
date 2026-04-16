@@ -30,6 +30,7 @@ def check_is_master_process(n):
     return parallel.is_master_process()
 
 
+@pytest.mark.slow
 def test_create_processes():
     """Procressor pool should create multiple distingue processes"""
     max_worker_count = multiprocessing.cpu_count() - 1

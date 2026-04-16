@@ -24,7 +24,7 @@ class register_deserialiser:
 
     Parameters
     ----------
-    args: str or sequence of str
+    args
         must be unique
     """
 

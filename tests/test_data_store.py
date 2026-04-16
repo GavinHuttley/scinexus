@@ -1,6 +1,7 @@
 import json
 import pathlib
 import shutil
+from itertools import product
 from pathlib import Path
 from pickle import dumps, loads
 
@@ -8,25 +9,37 @@ import pytest
 from citeable import Software
 from scitrack import get_text_hexdigest
 
+try:
+    import cogent3 as c3
+    from cogent3.util.union_dict import UnionDict
+except ImportError:
+    c3 = None
+    UnionDict = None
+
+from scinexus import open_data_store
 from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import (
-    _CITATIONS_FILE,
-    _MD5_TABLE,
-    _NOT_COMPLETED_TABLE,
     APPEND,
+    CITATIONS_FILE,
+    MD5_TABLE,
+    NOT_COMPLETED_TABLE,
     OVERWRITE,
     READONLY,
     DataStoreDirectory,
     ReadOnlyDataStoreZipped,
-    convert_directory_datastore,
     get_data_source,
+    get_id_from_source,
     get_summary_display,
     get_unique_id,
     load_record_from_json,
     make_record_for_json,
+    set_id_from_source,
     set_summary_display,
     summary_not_completeds,
 )
+
+# over-ride cogent3 setting
+set_summary_display(None)
 
 
 @pytest.fixture
@@ -206,12 +219,6 @@ def test_data_member_eq(ro_dstore, fasta_dir):
     assert mem1 != mem2
 
 
-def test_convert_directory_datastore(fasta_dir, tmp_dir):
-    outpath = tmp_dir / "converted"
-    new_dstore = convert_directory_datastore(fasta_dir, outpath, ".fasta")
-    assert len(new_dstore) > 0
-
-
 def test_fail_try_append(full_dstore, completed_objects):
     full_dstore._mode = APPEND  # noqa: SLF001
     id_, data = next(iter(completed_objects.items()))
@@ -295,14 +302,14 @@ def test_not_completed(nc_dstore):
 def test_drop_not_completed(nc_dstore):
     num_completed = len(nc_dstore.completed)
     num_not_completed = len(nc_dstore.not_completed)
-    num_md5 = len(list((nc_dstore.source / _MD5_TABLE).glob("*.txt")))
+    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*.txt")))
     assert num_not_completed == 3
     assert num_completed == 6
     assert len(nc_dstore) == 9
     assert num_md5 == num_completed + num_not_completed
     nc_dstore.drop_not_completed()
     assert len(nc_dstore.not_completed) == 0
-    num_md5 = len(list((nc_dstore.source / _MD5_TABLE).glob("*.txt")))
+    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*.txt")))
     assert num_md5 == num_completed
 
 
@@ -347,13 +354,13 @@ def test_no_not_completed_subdir(nc_dstore):
     expect = f"{len(nc_dstore.completed) + len(nc_dstore.not_completed)}x member"
     assert str(nc_dstore).startswith(expect)
     nc_dstore.drop_not_completed()
-    assert not Path(nc_dstore.source / _NOT_COMPLETED_TABLE).exists()
+    assert not Path(nc_dstore.source / NOT_COMPLETED_TABLE).exists()
     expect = f"{len(nc_dstore.completed)}x member"
     assert str(nc_dstore).startswith(expect)
     expect = f"{len(nc_dstore)}x member"
     assert str(nc_dstore).startswith(expect)
     assert len(nc_dstore) == len(nc_dstore.completed)
-    not_dir = nc_dstore.source / _NOT_COMPLETED_TABLE
+    not_dir = nc_dstore.source / NOT_COMPLETED_TABLE
     not_dir.mkdir(exist_ok=True)
 
 
@@ -445,6 +452,29 @@ def test_get_unique_id_none():
     assert got is None
 
 
+def test_set_id_from_source_returns_default_initially(
+    reset_id_from_source: None,
+) -> None:
+    """Default extractor is `get_unique_id` when nothing is registered."""
+    assert get_id_from_source() is get_unique_id
+
+
+def test_set_id_from_source_registers_and_clears(
+    reset_id_from_source: None,
+) -> None:
+    """A registered function replaces the default; None restores it."""
+
+    def my_extractor(obj: object) -> str | None:
+        return f"custom-{obj}"
+
+    set_id_from_source(my_extractor)
+    assert get_id_from_source() is my_extractor
+    assert get_id_from_source()("foo") == "custom-foo"
+
+    set_id_from_source(None)
+    assert get_id_from_source() is get_unique_id
+
+
 @pytest.mark.parametrize("data", [{}, set(), {"info": {}}])
 def test_get_data_source_none(data):
     assert get_data_source(data) is None
@@ -527,7 +557,7 @@ def test_zipped_md5(zipped_full, full_dstore):
 def test_write_citations_directory(write_dir, sample_citations):
     dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
     dstore.write_citations(data=sample_citations)
-    path = write_dir / _CITATIONS_FILE
+    path = write_dir / CITATIONS_FILE
     assert path.exists()
     loaded = dstore._load_citations()  # noqa: SLF001
     assert len(loaded) == 2
@@ -538,7 +568,7 @@ def test_write_citations_directory(write_dir, sample_citations):
 def test_write_citations_empty_directory(write_dir):
     dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
     dstore.write_citations(data=())
-    path = write_dir / _CITATIONS_FILE
+    path = write_dir / CITATIONS_FILE
     assert not path.exists()
 
 
@@ -587,10 +617,10 @@ def test_citations_file_not_in_completed(write_dir, sample_citations):
     dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
     dstore.write(unique_id="sample.fasta", data=">s1\nACGT\n")
     dstore.write_citations(data=sample_citations)
-    assert (write_dir / _CITATIONS_FILE).exists()
+    assert (write_dir / CITATIONS_FILE).exists()
     dstore._completed = []  # noqa: SLF001
     member_ids = {m.unique_id for m in dstore.completed}
-    assert _CITATIONS_FILE not in member_ids
+    assert CITATIONS_FILE not in member_ids
     assert "sample.fasta" in member_ids
 
 
@@ -698,7 +728,7 @@ def test_validate_incorrect_md5(write_dir):
     dstore = DataStoreDirectory(write_dir, suffix="txt", mode=OVERWRITE)
     dstore.write(unique_id="item.txt", data="original")
     # corrupt the md5
-    md5_path = write_dir / _MD5_TABLE / "item.txt"
+    md5_path = write_dir / MD5_TABLE / "item.txt"
     md5_path.write_text("wrong_md5_value")
     result = dstore._validate()  # noqa: SLF001
     assert result["md5_incorrect"] == 1
@@ -1045,3 +1075,162 @@ def test_source_check_create_not_master(tmp_path):
         dstore = DataStoreDirectory(target, suffix="txt", mode=OVERWRITE)
     assert not target.exists()
     assert dstore.source == target
+
+
+@pytest.mark.cogent3
+def test_write_read_not_completed(nc_dstore):
+    nc_dstore.drop_not_completed()
+    assert len(nc_dstore.not_completed) == 0
+    nc = NotCompleted("ERROR", "test", "for tracing", source="blah")
+    writer = c3.get_app("write_seqs", data_store=nc_dstore)
+    writer.main(nc, identifier="blah")
+    assert len(nc_dstore.not_completed) == 1
+    got = nc_dstore.not_completed[0].read()
+    assert nc.to_json() == got
+
+
+def test_summary_logs_missing_field(nc_dstore):
+    log_path = Path(nc_dstore.source) / nc_dstore.logs[0].unique_id
+    data = [
+        l for l in log_path.read_text().splitlines() if "composable function" not in l
+    ]
+    log_path.write_text("\n".join(data))
+    # doesn't fail because of a missing field in the log data
+    assert isinstance(nc_dstore.summary_logs, list)
+
+
+@pytest.fixture
+def app_dstore_in(tmp_path):
+    pytest.importorskip("cogent3")
+    in_path = tmp_path / "in_data"
+    in_path.mkdir(parents=True)
+    fasta_content = ">seq\nACGT"
+    with open(in_path / "one.fa", "w") as file:
+        file.write(fasta_content)
+
+    dstore_in = open_data_store(in_path, suffix=".fa", mode="r")
+    dstore_out = open_data_store(tmp_path / "data_out", suffix="fa", mode="w")
+    loader = c3.get_app("load_unaligned")
+    writer = c3.get_app("write_seqs", dstore_out)
+
+    pipe = loader + writer
+    return pipe, dstore_in
+
+
+@pytest.mark.cogent3
+def test_write_multiple_times_apply_to(app_dstore_in):
+    app, dstore_in = app_dstore_in
+    app.apply_to(dstore_in)
+    orig_length = len(app.data_store)
+    app.apply_to(dstore_in)
+    assert len(app.data_store) == orig_length
+
+
+@pytest.mark.cogent3
+def test_directory_data_store_write_compressed(tmp_path):
+    out = open_data_store(base_path=tmp_path / "demo", suffix="fa.gz", mode="w")
+    writer = c3.get_app("write_seqs", data_store=out)
+    seqs = c3.make_aligned_seqs(
+        {"s1": "CG--T", "s2": "CGTTT"},
+        moltype="dna",
+        info={"source": "test"},
+    )
+    got = writer(seqs)  # pylint: disable=not-callable
+    assert got, got
+
+
+@pytest.mark.cogent3
+def test_apply_to_not_completed(nc_dstore, tmp_path):
+    loader = c3.get_app("load_unaligned")
+    num_seqs = c3.get_app("take_n_seqs", number=3, fixed_choice=False)
+    out_dstore = open_data_store(tmp_path / "output", suffix="fa", mode="w")
+    writer = c3.get_app("write_seqs", data_store=out_dstore, format_name="fasta")
+    app = loader + num_seqs + writer
+    fini = app.apply_to(nc_dstore)
+    assert 0 < len(fini.completed) <= len(nc_dstore.completed)
+
+
+def test_summary_citations_directory(write_dir, sample_citations):
+    dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
+    dstore.write_citations(data=sample_citations)
+    cited = dstore.summary_citations
+    assert isinstance(cited, list)
+    assert len(cited) == 2
+    assert "app" in cited[0]
+    assert "citation" in cited[0]
+
+
+def test_write_bib_tilde_path(write_dir, sample_citations, HOME_TMP_DIR):
+    dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
+    dstore.write_citations(data=sample_citations)
+    bib_path = f"~/{HOME_TMP_DIR.name}/refs.bib"
+    dstore.write_bib(bib_path)
+    expected = pathlib.Path(bib_path).expanduser()
+    assert expected.exists()
+    content = expected.read_text()
+    assert "Tool One" in content
+    assert "Tool Two" in content
+
+
+def test_summary_citations_zipped(write_dir, sample_citations):
+    dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
+    dstore.write_citations(data=sample_citations)
+    source = pathlib.Path(dstore.source)
+    path = shutil.make_archive(
+        base_name=source.name,
+        format="zip",
+        base_dir=source.name,
+        root_dir=source.parent,
+    )
+    zipped = ReadOnlyDataStoreZipped(pathlib.Path(path), suffix="fasta")
+    cited = zipped.summary_citations
+    assert isinstance(cited, list)
+    assert len(cited) == 2
+
+
+def test_write_citations_zipped_raises(zipped_basic):
+    zipped = ReadOnlyDataStoreZipped(zipped_basic, suffix="fasta")
+    with pytest.raises(TypeError, match="read only"):
+        zipped.write_citations(data=(None,))
+
+
+def test_old_directory_store_without_citations(fasta_dir):
+    """Opening a directory store created before citations were added works."""
+    # fasta_dir has .fasta files but no .citations file
+    dstore = DataStoreDirectory(fasta_dir, suffix="fasta", mode=READONLY)
+    assert dstore._load_citations() == []
+    cited = dstore.summary_citations
+    assert isinstance(cited, list)
+    assert len(cited) == 0
+
+
+_dict_types = [dict]
+if UnionDict is not None:
+    _dict_types.append(UnionDict)
+_types = tuple(product(_dict_types, (str, Path)))
+
+
+@pytest.mark.parametrize(("container_type", "source_stype"), _types)
+def test_get_data_source_dict(container_type, source_stype):
+    """handles case where input is dict (sub)class instance with top level source key"""
+    value = source_stype("some/path.txt")
+    data = container_type(source=value)
+    got = get_data_source(data)
+    assert got == "path.txt"
+
+
+@pytest.mark.cogent3
+@pytest.mark.parametrize("klass", [str, Path])
+def test_get_data_source_seqcoll(klass):
+    """handles case where input is sequence collection object"""
+    from cogent3 import make_unaligned_seqs
+
+    value = klass("some/path.txt")
+    obj = make_unaligned_seqs(
+        {"seq1": "ACGG"},
+        moltype="dna",
+        info={"random_key": 1234},
+        source=value,
+    )
+    got = get_data_source(obj)
+    assert got == "path.txt"

@@ -5,15 +5,13 @@ import functools
 import shutil
 import uuid
 from bz2 import open as bzip_open
-from collections.abc import Callable, Iterable, Iterator
 from gzip import open as gzip_open
 from io import TextIOWrapper
 from lzma import open as lzma_open
-from os import PathLike, remove
+from os import PathLike
 from pathlib import Path, PurePath
 from tempfile import mkdtemp
-from types import TracebackType
-from typing import IO, Any
+from typing import IO, TYPE_CHECKING, Any
 from urllib.parse import ParseResult, urlparse
 from urllib.request import urlopen
 
@@ -21,11 +19,15 @@ from charset_normalizer import detect
 
 from scinexus.misc import _wout_period
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterator
+    from types import TracebackType
+
 PathType = str | PathLike[Any] | PurePath | Path
 
 
 @functools.singledispatch
-def is_url(path: str | bytes | Path | PathLike | ParseResult) -> bool:
+def is_url(path: str | bytes | Path | PathLike | ParseResult) -> bool:  # noqa: ARG001
     """whether a path is a url"""
     return False
 
@@ -157,9 +159,9 @@ def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]
 
     Parameters
     ----------
-    url : urllib.parse.ParseResult or str
+    url
         A url of file in http or https web address
-    mode : str
+    mode
         mode of reading file, 'rb', 'rt', 'r'
 
     Raises
@@ -382,22 +384,6 @@ def get_format_suffixes(filename: PathType) -> tuple[str | None, str | None]:
     else:
         suffix = None
     return suffix, cmp_suffix
-
-
-def remove_files(
-    list_of_filepaths: Iterable[PathType], error_on_missing: bool = True
-) -> None:
-    """Remove list of filepaths, optionally raising an error if any are missing"""
-    missing: list[str] = []
-    for fp in list_of_filepaths:
-        try:
-            remove(fp)
-        except OSError:
-            missing.append(str(fp))
-
-    if error_on_missing and missing:
-        msg = "Some filepaths were not accessible: {}".format("\t".join(missing))
-        raise OSError(msg)
 
 
 def path_exists(path: PathType) -> bool:

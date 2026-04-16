@@ -25,14 +25,14 @@ if TYPE_CHECKING:  # pragma: no cover
 
     from citeable import CitationBase
 
-_NOT_COMPLETED_TABLE = "not_completed"
-_LOG_TABLE = "logs"
-_MD5_TABLE = "md5"
+NOT_COMPLETED_TABLE = "not_completed"
+LOG_TABLE = "logs"
+MD5_TABLE = "md5"
 
 # used for log files, not-completed results
 _special_suffixes = re.compile(r"\.(log|json)$")
 
-_CITATIONS_FILE = "bibliography.citations"
+CITATIONS_FILE = "bibliography.citations"
 
 NoneType = type(None)
 
@@ -49,6 +49,9 @@ READONLY = Mode.r
 
 # Summary display registry
 _summary_display_func: Callable[..., Any] | None = None
+
+# Unique-ID extractor registry
+_id_from_source_func: Callable[..., Any] | None = None
 
 
 def set_summary_display(func: Callable[..., Any] | None) -> None:
@@ -485,7 +488,7 @@ class DataStoreDirectory(DataStoreABC):
         if not is_master_process():
             return
 
-        sub_dirs = [_NOT_COMPLETED_TABLE, _LOG_TABLE, _MD5_TABLE]
+        sub_dirs = [NOT_COMPLETED_TABLE, LOG_TABLE, MD5_TABLE]
         source = self.source
         if mode is READONLY:
             if not source.exists():
@@ -529,8 +532,8 @@ class DataStoreDirectory(DataStoreABC):
         """
         unique_id = (unique_id or "").replace(f".{self.suffix}", "")
         unique_id = f"{unique_id}.json" if unique_id else unique_id
-        nc_dir = self.source / _NOT_COMPLETED_TABLE
-        md5_dir = self.source / _MD5_TABLE
+        nc_dir = self.source / NOT_COMPLETED_TABLE
+        md5_dir = self.source / MD5_TABLE
         for m in list(self.not_completed):
             if unique_id and not m.unique_id.endswith(unique_id):
                 continue
@@ -542,16 +545,16 @@ class DataStoreDirectory(DataStoreABC):
             self.not_completed.remove(m)
 
         if not unique_id:
-            Path(self.source / _NOT_COMPLETED_TABLE).rmdir()
+            Path(self.source / NOT_COMPLETED_TABLE).rmdir()
             # reset _not_completed list to force not_completed function to make it again
             self._not_completed: list[DataMemberABC] = []
 
     @property
     def logs(self) -> list[DataMemberABC]:
-        log_dir = self.source / _LOG_TABLE
+        log_dir = self.source / LOG_TABLE
         return (
             [
-                DataMember(data_store=self, unique_id=str(Path(_LOG_TABLE) / m.name))
+                DataMember(data_store=self, unique_id=str(Path(LOG_TABLE) / m.name))
                 for m in log_dir.glob("*")
             ]
             if log_dir.exists()
@@ -573,13 +576,13 @@ class DataStoreDirectory(DataStoreABC):
     def not_completed(self) -> list[DataMemberABC]:
         if not self._not_completed:
             self._not_completed = []
-            for i, m in enumerate((self.source / _NOT_COMPLETED_TABLE).glob("*.json")):
+            for i, m in enumerate((self.source / NOT_COMPLETED_TABLE).glob("*.json")):
                 if self.limit and i == self.limit:
                     break
                 self._not_completed.append(
                     DataMember(
                         data_store=self,
-                        unique_id=str(Path(_NOT_COMPLETED_TABLE) / m.name),
+                        unique_id=str(Path(NOT_COMPLETED_TABLE) / m.name),
                     ),
                 )
         return self._not_completed
@@ -611,12 +614,12 @@ class DataStoreDirectory(DataStoreABC):
         with open_(self.source / subdir / unique_id, mode=mode, newline=newline) as out:
             out.write(data)
 
-        if subdir == _LOG_TABLE:
+        if subdir == LOG_TABLE:
             return None
-        if subdir == _NOT_COMPLETED_TABLE:
+        if subdir == NOT_COMPLETED_TABLE:
             member = DataMember(
                 data_store=self,
-                unique_id=str(Path(_NOT_COMPLETED_TABLE) / unique_id),
+                unique_id=str(Path(NOT_COMPLETED_TABLE) / unique_id),
             )
         elif not subdir:
             member = DataMember(data_store=self, unique_id=unique_id)
@@ -624,7 +627,7 @@ class DataStoreDirectory(DataStoreABC):
         md5 = get_text_hexdigest(data)
         unique_id = unique_id.replace(suffix, "txt")
         unique_id = unique_id if cmp is None else unique_id.replace(f".{cmp}", "")
-        with open_(self.source / _MD5_TABLE / unique_id, mode="w") as out:
+        with open_(self.source / MD5_TABLE / unique_id, mode="w") as out:
             out.write(md5)
 
         return member
@@ -672,9 +675,9 @@ class DataStoreDirectory(DataStoreABC):
         -------
         a member for this record
         """
-        (self.source / _NOT_COMPLETED_TABLE).mkdir(parents=True, exist_ok=True)
+        (self.source / NOT_COMPLETED_TABLE).mkdir(parents=True, exist_ok=True)
         member = self._write(
-            subdir=_NOT_COMPLETED_TABLE,
+            subdir=NOT_COMPLETED_TABLE,
             unique_id=unique_id,
             suffix="json",
             data=data,
@@ -684,8 +687,8 @@ class DataStoreDirectory(DataStoreABC):
         return member  # type: ignore[return-value]
 
     def write_log(self, *, unique_id: str, data: str) -> None:  # type: ignore[override]
-        (self.source / _LOG_TABLE).mkdir(parents=True, exist_ok=True)
-        _ = self._write(subdir=_LOG_TABLE, unique_id=unique_id, suffix="log", data=data)
+        (self.source / LOG_TABLE).mkdir(parents=True, exist_ok=True)
+        _ = self._write(subdir=LOG_TABLE, unique_id=unique_id, suffix="log", data=data)
 
     def md5(self, unique_id: str) -> str | None:
         """
@@ -700,7 +703,7 @@ class DataStoreDirectory(DataStoreABC):
         """
         uid_name = Path(unique_id).name
         md5_name = re.sub(rf"[.]({self.suffix}|json)$", ".txt", uid_name)
-        path = self.source / _MD5_TABLE / md5_name
+        path = self.source / MD5_TABLE / md5_name
 
         return path.read_text() if path.exists() else None
 
@@ -709,13 +712,13 @@ class DataStoreDirectory(DataStoreABC):
             return
         from citeable import to_jsons
 
-        path = self.source / _CITATIONS_FILE
+        path = self.source / CITATIONS_FILE
         path.write_text(to_jsons(data))
 
     def _load_citations(self) -> list[CitationBase]:
         from citeable import from_jsons
 
-        path = self.source / _CITATIONS_FILE
+        path = self.source / CITATIONS_FILE
         if not path.exists():
             return []
         return from_jsons(path.read_text())
@@ -802,8 +805,8 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         if not self._not_completed:
             self._not_completed = []
             num_matches = 0
-            nc_dir_path = Path(_NOT_COMPLETED_TABLE)
-            for name in self._iter_matches(_NOT_COMPLETED_TABLE, "*.json"):
+            nc_dir_path = Path(NOT_COMPLETED_TABLE)
+            for name in self._iter_matches(NOT_COMPLETED_TABLE, "*.json"):
                 num_matches += 1
                 member = DataMember(
                     data_store=self,
@@ -817,9 +820,9 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
 
     @property
     def logs(self) -> list[DataMemberABC]:
-        log_dir = Path(_LOG_TABLE)
+        log_dir = Path(LOG_TABLE)
         logs: list[DataMemberABC] = []
-        for name in self._iter_matches(_LOG_TABLE, "*"):
+        for name in self._iter_matches(LOG_TABLE, "*"):
             m = DataMember(data_store=self, unique_id=str(log_dir / name.name))
             logs.append(m)
         return logs
@@ -837,8 +840,8 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         """
         uid_name = Path(unique_id).name
         md5_name = re.sub(rf"[.]({self.suffix}|json)$", ".txt", uid_name)
-        md5_dir = Path(_MD5_TABLE)
-        for name in self._iter_matches(_MD5_TABLE, md5_name):
+        md5_dir = Path(MD5_TABLE)
+        for name in self._iter_matches(MD5_TABLE, md5_name):
             m = DataMember(data_store=self, unique_id=str(md5_dir / name.name))
             result = m.read()
             return result if isinstance(result, str) else result.decode()
@@ -870,7 +873,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
 
         from citeable import from_jsons
 
-        target = str(Path(self.source.stem, _CITATIONS_FILE)).replace("\\", "/")
+        target = str(Path(self.source.stem, CITATIONS_FILE)).replace("\\", "/")
         try:
             with zipfile.ZipFile(self.source) as archive:
                 data = archive.read(target).decode("utf-8")
@@ -885,6 +888,43 @@ def get_unique_id(name: object) -> str | None:
         return None
     suffixes = ".".join(sfx for sfx in get_format_suffixes(name) if sfx)
     return re.sub(rf"[.]{suffixes}$", "", name)
+
+
+def set_id_from_source(func: Callable[..., Any] | None) -> None:
+    """Register a custom function for extracting unique IDs from data objects.
+
+    The registered function is consulted as the default by
+    :meth:`AppBase.as_completed` and :meth:`WriterApp.apply_to` to derive a
+    unique identifier for each input, and by :class:`NotCompleted` to
+    normalise the ``source=`` keyword on error records. Pass ``None`` to
+    clear the registration and restore the built-in :func:`get_unique_id`.
+
+    Parameters
+    ----------
+    func
+        A callable taking a single data object and returning a string
+        identifier (or ``None`` if no identifier can be extracted). The
+        callable must be picklable if scinexus apps will be executed in
+        parallel via ``loky`` / MPI.
+
+    Notes
+    -----
+    Per-call overrides via the ``id_from_source`` keyword on
+    :meth:`as_completed` and :meth:`apply_to` still take precedence over
+    the registered function. Register before constructing apps for the
+    cleanest behaviour.
+    """
+    global _id_from_source_func  # noqa: PLW0603
+    _id_from_source_func = func
+
+
+def get_id_from_source() -> Callable[..., Any]:
+    """Return the active unique-ID extractor.
+
+    Returns the function previously passed to :func:`set_id_from_source`,
+    or :func:`get_unique_id` if nothing has been registered.
+    """
+    return _id_from_source_func or get_unique_id
 
 
 @singledispatch
@@ -915,29 +955,6 @@ def _(data: dict) -> str | None:
 @get_data_source.register
 def _(data: DataMemberABC) -> str | None:
     return str(data.unique_id)
-
-
-def convert_directory_datastore(
-    inpath: Path,
-    outpath: Path,
-    suffix: str | None = None,
-) -> DataStoreABC:
-    """copy files matching suffix from one directory data store to another
-
-    Parameters
-    ----------
-    inpath
-        source directory
-    outpath
-        destination directory
-    suffix
-        file suffix to match
-    """
-    out_dstore = DataStoreDirectory(source=outpath, mode=OVERWRITE, suffix=suffix)
-    filenames = inpath.glob(f"*{suffix}")
-    for fn in filenames:
-        out_dstore.write(unique_id=fn.name, data=fn.read_text())
-    return out_dstore
 
 
 def make_record_for_json(

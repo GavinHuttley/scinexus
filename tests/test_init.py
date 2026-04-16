@@ -28,3 +28,16 @@ def test_lazy_import_get_summary_display():
 def test_lazy_import_nonexistent():
     with pytest.raises(AttributeError, match="no attribute"):
         scinexus.no_such_attribute  # noqa: B018
+
+
+@pytest.mark.parametrize(
+    "attr",
+    [
+        "open_",
+        "open_data_store",
+        "set_summary_display",
+        "get_summary_display",
+    ],
+)
+def test_lazy_import(attr):
+    assert callable(getattr(scinexus, attr))

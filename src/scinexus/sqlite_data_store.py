@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any
 from scitrack import get_text_hexdigest  # type: ignore[import-untyped]
 
 from scinexus.data_store import (
-    _LOG_TABLE,
     APPEND,
+    LOG_TABLE,
     OVERWRITE,
     READONLY,
     DataMember,
@@ -27,7 +27,7 @@ from scinexus.misc import extend_docstring_from
 if TYPE_CHECKING:  # pragma: no cover
     from citeable import CitationBase
 
-_RESULT_TABLE = "results"
+RESULT_TABLE = "results"
 _MEMORY = ":memory:"
 _mem_pattern = re.compile(r"^\s*[:]{0,1}memory[:]{0,1}\s*$")
 NoneType = type(None)
@@ -77,8 +77,8 @@ def open_sqlite_db_rw(path: str | Path) -> sqlite3.Connection:
     # note it is essential to use INTEGER for the autoincrement of primary key to work
     creates = [
         "state(state_id INTEGER PRIMARY KEY, record_type TEXT, lock_pid INTEGER)",
-        f"{_LOG_TABLE}(log_id INTEGER PRIMARY KEY, log_name TEXT, date timestamp, data BLOB)",
-        f"{_RESULT_TABLE}(record_id TEXT PRIMARY KEY, log_id INTEGER, md5 BLOB, is_completed INTEGER, data BLOB)",
+        f"{LOG_TABLE}(log_id INTEGER PRIMARY KEY, log_name TEXT, date timestamp, data BLOB)",
+        f"{RESULT_TABLE}(record_id TEXT PRIMARY KEY, log_id INTEGER, md5 BLOB, is_completed INTEGER, data BLOB)",
         "citations(citation_id INTEGER PRIMARY KEY, data TEXT)",
     ]
     for table in creates:
@@ -110,7 +110,7 @@ def has_valid_schema(db: sqlite3.Connection) -> bool:
     query = "SELECT name FROM sqlite_master WHERE type='table'"
     result = db.execute(query).fetchall()
     table_names = {r["name"] for r in result}
-    _required = {_RESULT_TABLE, _LOG_TABLE, "state"}
+    _required = {RESULT_TABLE, LOG_TABLE, "state"}
     _optional = {"citations"}
     return _required <= table_names <= (_required | _optional)
 
@@ -190,9 +190,9 @@ class DataStoreSqlite(DataStoreABC):
 
     def _init_log(self) -> None:
         timestamp = datetime.datetime.now(tz=datetime.UTC)
-        self.db.execute(f"INSERT INTO {_LOG_TABLE}(date) VALUES (?)", (timestamp,))
+        self.db.execute(f"INSERT INTO {LOG_TABLE}(date) VALUES (?)", (timestamp,))
         self._log_id = self.db.execute(
-            f"SELECT log_id FROM {_LOG_TABLE} where date = ?",
+            f"SELECT log_id FROM {LOG_TABLE} where date = ?",
             (timestamp,),
         ).fetchone()["log_id"]
 
@@ -213,17 +213,17 @@ class DataStoreSqlite(DataStoreABC):
         table_name = str(uid_path.parent)
         if table_name not in (
             ".",
-            _LOG_TABLE,
+            LOG_TABLE,
         ):
             msg = f"unknown table for {str(uid_path)!r}"
             raise ValueError(msg)
 
-        if table_name != _LOG_TABLE:
-            cmnd = f"SELECT * FROM {_RESULT_TABLE} WHERE record_id = ?"
+        if table_name != LOG_TABLE:
+            cmnd = f"SELECT * FROM {RESULT_TABLE} WHERE record_id = ?"
             result = self.db.execute(cmnd, (uid_path.name,)).fetchone()
             return result["data"]
 
-        cmnd = f"SELECT * FROM {_LOG_TABLE} WHERE log_name = ?"
+        cmnd = f"SELECT * FROM {LOG_TABLE} WHERE log_name = ?"
         result = self.db.execute(cmnd, (uid_path.name,)).fetchone()
 
         return result["data"]
@@ -232,7 +232,7 @@ class DataStoreSqlite(DataStoreABC):
     def completed(self) -> list[DataMemberABC]:
         if not self._completed:
             self._completed = self._select_members(
-                table_name=_RESULT_TABLE,
+                table_name=RESULT_TABLE,
                 is_completed=True,
             )
         return self._completed
@@ -242,7 +242,7 @@ class DataStoreSqlite(DataStoreABC):
         """returns database records of type NotCompleted"""
         if not self._not_completed:
             self._not_completed = self._select_members(
-                table_name=_RESULT_TABLE,
+                table_name=RESULT_TABLE,
                 is_completed=False,
             )
         return self._not_completed
@@ -266,9 +266,9 @@ class DataStoreSqlite(DataStoreABC):
     @property
     def logs(self) -> list[DataMemberABC]:
         """returns all log records"""
-        cmnd = self.db.execute(f"SELECT log_name FROM {_LOG_TABLE}")
+        cmnd = self.db.execute(f"SELECT log_name FROM {LOG_TABLE}")
         return [
-            DataMember(data_store=self, unique_id=Path(_LOG_TABLE) / r["log_name"])
+            DataMember(data_store=self, unique_id=Path(LOG_TABLE) / r["log_name"])
             for r in cmnd.fetchall()
             if r["log_name"]
         ]
@@ -284,13 +284,13 @@ class DataStoreSqlite(DataStoreABC):
         """
         Parameters
         ----------
-        table_name: str
+        table_name
             name of table to save data. It must be _RESULT_TABLE or _LOG_TABLE.
-        unique_id : str
+        unique_id
             unique identifier that data will be saved under.
-        data: str
+        data
             data to be saved.
-        is_completed: bool
+        is_completed
             flag to identify NotCompleted results
 
         Returns
@@ -300,7 +300,7 @@ class DataStoreSqlite(DataStoreABC):
         if self._log_id is None:
             self._init_log()
 
-        if table_name == _LOG_TABLE:
+        if table_name == LOG_TABLE:
             # TODO how to evaluate whether writing a new log?
             cmnd = f"UPDATE {table_name} SET data =?, log_name =? WHERE log_id=?"
             self.db.execute(cmnd, (data, unique_id, self._log_id))
@@ -328,10 +328,10 @@ class DataStoreSqlite(DataStoreABC):
         """
         vals: tuple[int] | tuple[int, str]
         if not unique_id:
-            cmnd = f"DELETE FROM {_RESULT_TABLE} WHERE is_completed=?"
+            cmnd = f"DELETE FROM {RESULT_TABLE} WHERE is_completed=?"
             vals = (0,)
         else:
-            cmnd = f"DELETE FROM {_RESULT_TABLE} WHERE is_completed=? AND record_id=?"
+            cmnd = f"DELETE FROM {RESULT_TABLE} WHERE is_completed=? AND record_id=?"
             vals = (0, unique_id)
         self.db.execute(cmnd, vals)
         self._not_completed = []
@@ -391,7 +391,7 @@ class DataStoreSqlite(DataStoreABC):
 
     @extend_docstring_from(DataStoreDirectory.write)
     def write(self, *, unique_id: str, data: str | bytes) -> DataMemberABC:  # type: ignore[override]
-        if unique_id.startswith(_RESULT_TABLE):
+        if unique_id.startswith(RESULT_TABLE):
             unique_id = Path(unique_id).name
 
         super().write(unique_id=unique_id, data=data)
@@ -399,7 +399,7 @@ class DataStoreSqlite(DataStoreABC):
         self.drop_not_completed(unique_id=unique_id)
 
         member = self._write(
-            table_name=_RESULT_TABLE,
+            table_name=RESULT_TABLE,
             unique_id=unique_id,
             data=data,
             is_completed=True,
@@ -413,12 +413,12 @@ class DataStoreSqlite(DataStoreABC):
 
     @extend_docstring_from(DataStoreDirectory.write_log)
     def write_log(self, *, unique_id: str, data: str | bytes) -> None:
-        if unique_id.startswith(_LOG_TABLE):
+        if unique_id.startswith(LOG_TABLE):
             unique_id = Path(unique_id).name
 
         super().write_log(unique_id=unique_id, data=data)
         _ = self._write(
-            table_name=_LOG_TABLE,
+            table_name=LOG_TABLE,
             unique_id=unique_id,
             data=data,
             is_completed=False,
@@ -428,12 +428,12 @@ class DataStoreSqlite(DataStoreABC):
     def write_not_completed(  # type: ignore[override]
         self, *, unique_id: str, data: str | bytes
     ) -> DataMemberABC:
-        if unique_id.startswith(_RESULT_TABLE):
+        if unique_id.startswith(RESULT_TABLE):
             unique_id = Path(unique_id).name
 
         super().write_not_completed(unique_id=unique_id, data=data)
         member = self._write(
-            table_name=_RESULT_TABLE,
+            table_name=RESULT_TABLE,
             unique_id=unique_id,
             data=data,
             is_completed=False,
@@ -454,7 +454,7 @@ class DataStoreSqlite(DataStoreABC):
         -------
         md5 checksum for the member, if available, None otherwise
         """
-        cmnd = f"SELECT * FROM {_RESULT_TABLE} WHERE record_id = ?"
+        cmnd = f"SELECT * FROM {RESULT_TABLE} WHERE record_id = ?"
         result = self.db.execute(cmnd, (unique_id,)).fetchone()
 
         return result["md5"] if result else None
@@ -470,8 +470,7 @@ class DataStoreSqlite(DataStoreABC):
         from citeable import to_jsons
 
         json_data = to_jsons(data)
-        existing = self.db.execute("SELECT citation_id FROM citations").fetchone()
-        if existing:
+        if existing := self.db.execute("SELECT citation_id FROM citations").fetchone():
             self.db.execute(
                 "UPDATE citations SET data=? WHERE citation_id=?",
                 (json_data, existing["citation_id"]),
@@ -485,9 +484,7 @@ class DataStoreSqlite(DataStoreABC):
         if not self._has_citations_table():
             return []
         result = self.db.execute("SELECT data FROM citations").fetchone()
-        if not result:
-            return []
-        return from_jsons(result["data"])
+        return from_jsons(result["data"]) if result else []
 
     def _has_citations_table(self) -> bool:
         result = self.db.execute(

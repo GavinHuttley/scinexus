@@ -1,6 +1,7 @@
 import os
 import pathlib
 import shutil
+import subprocess
 import sys
 
 import nox
@@ -18,6 +19,12 @@ nox.options.default_venv_backend = "uv"
 def fmt(session: nox.Session) -> None:
     session.run("ruff", "check", "--fix-only", ".", external=True)
     session.run("ruff", "format", ".", external=True)
+
+
+@nox.session(python=False)
+def cogdocs(session: nox.Session) -> None:
+    cmnd = 'find docs -name "*.md" | xargs uv run cog -r -I docs/scripts'
+    subprocess.run(cmnd, check=True, shell=True)  # noqa: S602
 
 
 @nox.session(python=[f"3.{v}" for v in _py_versions])
@@ -52,7 +59,7 @@ def test(session):
         "-s",
         "-x",
         "-m",
-        "not slow and not mpi",
+        "not slow and not mpi and not cogent3",
         *session.posargs,
     )
 
@@ -111,7 +118,7 @@ def testcov(session):
         "-s",
         "-x",
         "-m",
-        "not mpi",
+        "not mpi and not cogent3",
     )
 
     # MPI tests when mpiexec is available
@@ -150,3 +157,22 @@ def testcov(session):
         o_name = session.posargs[i + 1]
         session.run("coverage", fmt, o_name, external=True)
         i += 2
+
+
+@nox.session(python=[f"3.{v}" for v in _py_versions])
+def test_docs(session):
+    session.install("-e", ".", "--group", "test")
+    session.run("uv", "pip", "list")
+    # doctest modules within scinexus
+    session.chdir("docs")
+    session.run(
+        "pytest",
+        "--markdown-docs",
+        "-m",
+        "markdown-docs",
+        "-x",
+        ".",
+        "--ignore",
+        "scripts",
+        *session.posargs,
+    )

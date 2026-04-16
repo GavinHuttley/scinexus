@@ -5,7 +5,10 @@ import typing as _typing
 from scinexus._version import __version__
 from scinexus.composable import (
     AppBase,
+    AppType,
     ComposableApp,
+    LoaderApp,
+    NonComposableApp,
     NotCompleted,
     NotCompletedType,
     WriterApp,
@@ -25,7 +28,10 @@ if _typing.TYPE_CHECKING:  # pragma: no cover
 
 __all__ = [
     "AppBase",
+    "AppType",
     "ComposableApp",
+    "LoaderApp",
+    "NonComposableApp",
     "NotCompleted",
     "NotCompletedType",
     "Progress",
@@ -33,19 +39,25 @@ __all__ = [
     "WriterApp",
     "__version__",
     "define_app",
+    "get_id_from_source",
     "get_progress",
     "get_summary_display",
     "is_app",
     "is_app_composable",
+    "open_",
     "open_data_store",
     "set_default_progress",
+    "set_id_from_source",
     "set_summary_display",
 ]
 
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "open_": ("scinexus.io_util", "open_"),
     "open_data_store": ("scinexus.io", "open_data_store"),
     "set_summary_display": ("scinexus.data_store", "set_summary_display"),
     "get_summary_display": ("scinexus.data_store", "get_summary_display"),
+    "set_id_from_source": ("scinexus.data_store", "set_id_from_source"),
+    "get_id_from_source": ("scinexus.data_store", "get_id_from_source"),
 }
 
 

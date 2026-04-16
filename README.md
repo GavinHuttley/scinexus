@@ -4,4 +4,34 @@
 [![CI](https://github.com/cogent3/scinexus/actions/workflows/ci.yml/badge.svg)](https://github.com/cogent3/scinexus/actions/workflows/ci.yml)
 
 # scinexus
-composable apps for scientific programming
+
+*A composable app infrastructure for scientific computing. What dataclasses are for structured data, `scinexus` apps are for structured algorithms.*
+
+As the robustness of POSIX based operating systems (think Linux, Mac OS, Unix) can attest, writing algorithms that stitch together multiple single purpose applications is a *Very Good Thing*™.
+
+**`scinexus` encourages this design pattern.** We leverage the Python type annotation system to govern the compatibility (composability) of different applications. This enables in-process composition of your applications with validation of the consistency of the pipeline and the consistency of the data being run through it.
+
+**`scinexus` is designed with scientific reproducibility in mind.** Scientific computations should track all of the critical conditions necessary to reproducibe a computational analysis.`scinexus` helps you by reducing the effort to do this. For example, we intercept all arguments (including default values) passed to the construction of apps and record them so that the app state is logged. If you, the developer, also leverage the capabilities of the [`scitrack`](https://pypi.org/project/scitrack/) logging package (which `scinexus` has as a dependency), you can facilitate extra information such as versions of packages that your application depends on.
+
+## Features
+
+- Type checking at composition time
+- Durable computing -- failures recorded as `NotCompleted` records, not exceptions
+- Data-level parallel execution via `loky` or MPI
+- Progress bars (`tqdm` or `rich`)
+- Automated logging and citation tracking
+- Checkpointing via data stores (directory, zip, SQLite)
+
+## Installation
+
+```bash
+pip install scinexus
+```
+
+## History
+
+The app framework and utility functions in `scinexus` incubated inside [cogent3](https://github.com/cogent3/cogent3) from March 2019, accumulating over five years of development, testing, and real-world use in computational genomics before being extracted into a standalone package. The design is mature and has underpinned analyses in published studies.
+
+The extraction into `scinexus` makes the infrastructure available to any scientific Python project, free of the `cogent3` dependency.
+
+Many members of the `cogent3` community contributed to the code that now lives here, including [@rmcar17](https://github.com/rmcar17), [@Nick-Foto](https://github.com/Nick-Foto), [@KatherineCaley](https://github.com/KatherineCaley), [@fredjaya](https://github.com/fredjaya), and [@khiron](https://github.com/khiron).

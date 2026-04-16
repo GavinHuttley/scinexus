@@ -9,10 +9,10 @@ readme_renderer = "markdown"
 dependencies = [
     "charset_normalizer",
     "citeable",
-    "loky!=3.5.0",
     "scitrack",
     "tqdm",
-    "typeguard>=4.0,<5",
+    "typeguard",
+    "loky",
 ]
 
 [project.optional-dependencies]
@@ -21,14 +21,21 @@ rich = ["rich"]
 
 [dependency-groups]
 test = [
+    "pymdown-extensions>=10.21.2",
+    "zensical>=0.0.32",
+    "cogent3>=2026.3.23a0",
     "pytest",
     "pytest-cov",
+    "pytest-markdown-docs",
     "pytest-xdist",
     "mypy",
     "nox",
     "numpy",
     "rich",
     "ruff",
+    "cogapp>=3.6.0",
+    "click>=8.3.2",
+    "mkdocstrings-python>=2.0.3",
 ]
 
 [build-system]
@@ -42,6 +49,8 @@ name = "scinexus"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "mpi: marks tests requiring MPI (run with nox -s testmpi)",
+    "internet: marks tests requiring internet access",
+    "cogent3: marks tests requiring the cogent3 package",
 ]
 testpaths = ["tests"]
 

@@ -7,11 +7,27 @@ from scinexus.data_store import DataMemberABC
 from scinexus.typing import (
     IdentifierType,
     SerialisableType,
+    _clear_type_namespace_providers,
     _resolve_name,
+    _type_namespace_providers,
     check_type_compatibility,
     get_type_display_names,
+    register_type_namespace,
     resolve_type_hint,
 )
+
+
+@pytest.fixture
+def clean_namespace_providers():
+    """isolate tests that register namespace providers"""
+    saved = list(_type_namespace_providers)
+    _clear_type_namespace_providers()
+    try:
+        yield
+    finally:
+        _clear_type_namespace_providers()
+        for provider in saved:
+            register_type_namespace(provider)
 
 
 def test_resolve_type_hint_concrete_class():
@@ -56,6 +72,78 @@ def test_resolve_type_hint_user_module_globals():
 
     resolved = resolve_type_hint("MyCustomType", {"MyCustomType": MyCustomType})
     assert resolved is MyCustomType
+
+
+def test_register_type_namespace_resolves_forward_ref(clean_namespace_providers):
+    """a registered namespace provider supplies fallback types"""
+
+    class MyCustomType:
+        pass
+
+    register_type_namespace(lambda: {"MyCustomType": MyCustomType})
+    assert resolve_type_hint("MyCustomType") is MyCustomType
+
+
+def test_register_type_namespace_is_lazy(clean_namespace_providers):
+    """providers are invoked on resolution, not at registration time"""
+    calls = {"count": 0}
+
+    class MyCustomType:
+        pass
+
+    def provider():
+        calls["count"] += 1
+        return {"MyCustomType": MyCustomType}
+
+    register_type_namespace(provider)
+    assert calls["count"] == 0
+    resolve_type_hint("MyCustomType")
+    assert calls["count"] == 1
+    resolve_type_hint("MyCustomType")
+    assert calls["count"] == 2
+
+
+def test_register_type_namespace_dedupes(clean_namespace_providers):
+    """re-registering the same provider is a no-op"""
+
+    def provider():
+        return {}
+
+    register_type_namespace(provider)
+    register_type_namespace(provider)
+    assert _type_namespace_providers.count(provider) == 1
+
+
+def test_module_globals_take_precedence_over_namespace_provider(
+    clean_namespace_providers,
+):
+    """module_globals win over registered providers when both supply a name"""
+
+    class FromGlobals:
+        pass
+
+    class FromProvider:
+        pass
+
+    register_type_namespace(lambda: {"Foo": FromProvider})
+    assert resolve_type_hint("Foo", {"Foo": FromGlobals}) is FromGlobals
+
+
+def test_typevar_bound_forwardref_resolved_via_provider(clean_namespace_providers):
+    """a TypeVar with a ForwardRef bound resolves via a registered provider"""
+
+    class MyCustomType:
+        pass
+
+    register_type_namespace(lambda: {"MyCustomType": MyCustomType})
+    T = TypeVar("T", bound=ForwardRef("MyCustomType"))
+    assert resolve_type_hint(T) is MyCustomType
+
+
+def test_unresolved_name_with_empty_providers_raises(clean_namespace_providers):
+    """with no providers, an unknown name still raises TypeError"""
+    with pytest.raises(TypeError, match="cannot resolve"):
+        resolve_type_hint("NoSuchType")
 
 
 def test_serialisable_type_not_isinstance():

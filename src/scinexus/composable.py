@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterable, Iterator
 from copy import copy, deepcopy
 from enum import Enum
 from pathlib import Path
-from typing import Any, Generic, Literal, Self, TypeVar, overload
+from typing import Any, ClassVar, Generic, Literal, Self, TypeVar, overload
 from uuid import uuid4
 
 from citeable import Citation
@@ -33,8 +33,7 @@ from scinexus.warning import deprecated_callable
 from .data_store import (
     DataMember,
     DataStoreABC,
-    get_data_source,
-    get_unique_id,
+    get_id_from_source,
 )
 
 _builtin_seqs = list, set, tuple
@@ -85,19 +84,20 @@ class NotCompleted(int):
         """
         Parameters
         ----------
-        type : NotCompletedType or str
+        type_
             the category of failure, e.g. NotCompletedType.ERROR
         origin
             where the instance was created, can be an instance
-        message : str
+        message
             descriptive message, succinct traceback
-        source : str or instance with .source or .info.source attributes
-            the data operated on that led to this result.
+        source
+            the data operated on that led to this result. May be a string
+            or an instance with ``.source`` or ``.info.source`` attributes.
         """
         type_ = NotCompletedType(type_)
         origin = _get_origin(origin)
         try:
-            source = get_data_source(source)
+            source = get_id_from_source()(source)
         except Exception:
             source = None
         result = int.__new__(cls, False)  # noqa: FBT003
@@ -315,7 +315,7 @@ class propagate_source:
 
     Notes
     -----
-    Returns the unwrapped result if it has a .source instance,
+    Returns the unwrapped result if it has a .source attribute,
     otherwise returns the original source_proxy with the .obj
     updated with result.
     """
@@ -338,11 +338,71 @@ class propagate_source:
         return value
 
 
+# Forbidden methods per app kind
+_FORBIDDEN_BASE = frozenset(
+    {
+        "__call__",
+        "__repr__",
+        "__str__",
+        "__new__",
+        "__copy__",
+        "__eq__",
+        "_validate_data_type",
+        "as_completed",
+        "check_data_type",
+        "_get_citations",
+        "citations",
+        "bib",
+    }
+)
+_FORBIDDEN_COMPOSABLE = _FORBIDDEN_BASE | frozenset(
+    {
+        "__add__",
+        "disconnect",
+        "input",
+    }
+)
+_FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset(
+    {
+        "apply_to",
+        "set_logger",
+    }
+)
+
+
 def _init_subclass_setup(
     cls: Any, app_type: AppType | str, skip_not_completed: bool, cite: Citation | None
 ) -> None:
     """Shared setup logic for __init_subclass__ and define_app."""
     app_type = AppType(app_type)
+
+    if "__slots__" in cls.__dict__:
+        msg = "slots are not currently supported"
+        raise NotImplementedError(msg)
+
+    if app_type is WRITER:
+        forbidden = _FORBIDDEN_WRITER
+    elif app_type is not NON_COMPOSABLE:
+        forbidden = _FORBIDDEN_COMPOSABLE
+    else:
+        forbidden = _FORBIDDEN_BASE
+
+    if (
+        app_type is not NON_COMPOSABLE
+        and "input" in cls.__dict__
+        and cls.__dict__["input"] is not None
+    ):
+        msg = f"remove 'input' attribute in {cls.__name__!r}, reserved by the app framework"
+        raise TypeError(msg)
+
+    for meth in forbidden:
+        if meth in cls.__dict__:
+            val = cls.__dict__[meth]
+            if isinstance(val, staticmethod):
+                val = val.__func__
+            if inspect.isfunction(val) or isinstance(val, property):
+                msg = f"remove {meth!r} in {cls.__name__!r}, reserved by the app framework"
+                raise TypeError(msg)
 
     raw_input, raw_return = _get_main_hints(cls)
     mod = sys.modules.get(cls.__module__) if cls.__module__ else None
@@ -357,10 +417,6 @@ def _init_subclass_setup(
 
     if app_type is not LOADER:
         cls.input = None
-
-    if "__slots__" in cls.__dict__:
-        msg = "slots are not currently supported"
-        raise NotImplementedError(msg)
 
 
 class AppBase(Generic[T, R]):
@@ -380,7 +436,6 @@ class AppBase(Generic[T, R]):
 
     def __init_subclass__(
         cls,
-        app_type: AppType | str = GENERIC,
         skip_not_completed: bool = True,
         cite: Citation | None = None,
         **kwargs: Any,
@@ -391,6 +446,7 @@ class AppBase(Generic[T, R]):
             cls, "_define_app_pending", False
         ):
             return
+        app_type = getattr(cls, "_default_app_type", GENERIC)
         _init_subclass_setup(cls, app_type, skip_not_completed, cite)
 
     def __new__(cls, *args: Any, **kwargs: Any) -> Self:
@@ -527,7 +583,7 @@ class AppBase(Generic[T, R]):
         dstore: DataStoreABC | Iterable[Any] | str,
         parallel: bool = False,
         par_kw: dict[str, Any] | None = None,
-        id_from_source: GetIdFuncType = get_unique_id,
+        id_from_source: GetIdFuncType | None = None,
         show_progress: bool | Progress = False,
     ) -> Iterator[Any]:
         """invokes self composable function on the provided data store
@@ -537,14 +593,19 @@ class AppBase(Generic[T, R]):
         dstore
             a path, list of paths, or DataStore to which the process will be
             applied.
-        parallel : bool
+        parallel
             run in parallel, according to arguments in par_kwargs. If True,
             the last step of the composable function serves as the master
             process, with earlier steps being executed in parallel for each
             member of dstore.
         par_kw
             dict of values for configuring parallel execution.
-        show_progress : bool or Progress
+        id_from_source
+            extracts a unique identifier from each input. If not provided,
+            defaults to the function registered via
+            ``scinexus.data_store.set_id_from_source``, falling back to
+            ``scinexus.data_store.get_unique_id``.
+        show_progress
             controls progress bar display. Pass ``True`` for the default
             progress bar, ``False`` to disable, or a ``Progress`` instance
             for a custom backend.
@@ -555,6 +616,8 @@ class AppBase(Generic[T, R]):
         aggregates results. If run in serial, results are returned in the
         same order as provided.
         """
+        if id_from_source is None:
+            id_from_source = get_id_from_source()
         if self._source_wrapped is None:
             app = propagate_source(
                 self.input if self.app_type is WRITER else self, id_from_source
@@ -664,13 +727,14 @@ class WriterApp(ComposableApp[T, R]):
     """Adds apply_to and set_logger for WRITER."""
 
     _is_intermediate_base: bool = True
+    _default_app_type: ClassVar[AppType] = WRITER
     data_store: DataStoreABC
     logger: CachingLogger | None
 
     def apply_to(
         self,
         dstore: DataStoreABC | Iterable[Any] | str | Path,
-        id_from_source: GetIdFuncType = get_unique_id,
+        id_from_source: GetIdFuncType | None = None,
         parallel: bool = False,
         par_kw: dict[str, Any] | None = None,
         logger: CachingLogger | None = None,
@@ -684,10 +748,13 @@ class WriterApp(ComposableApp[T, R]):
         dstore
             a path, list of paths, or DataStore to which the process will be
             applied.
-        id_from_source : callable
+        id_from_source
             makes the unique identifier from elements of dstore that will be
-            used for writing results
-        parallel : bool
+            used for writing results. If not provided, defaults to the
+            function registered via
+            ``scinexus.data_store.set_id_from_source``, falling back to
+            ``scinexus.data_store.get_unique_id``.
+        parallel
             run in parallel, according to arguments in par_kwargs. If True,
             the last step of the composable function serves as the master
             process, with earlier steps being executed in parallel for each
@@ -698,10 +765,10 @@ class WriterApp(ComposableApp[T, R]):
             Argument ignored if not an io.writer. If a scitrack logger not provided,
             one is created with a name that defaults to the composable function names
             and the process ID.
-        cleanup : bool
+        cleanup
             after copying of log files into the data store, it is deleted
             from the original location
-        show_progress : bool
+        show_progress
             controls progress bar display
 
         Returns
@@ -715,6 +782,8 @@ class WriterApp(ComposableApp[T, R]):
 
         If run in parallel, this instance spawns workers and aggregates results.
         """
+        if id_from_source is None:
+            id_from_source = get_id_from_source()
         if self.app_type is WRITER:
             if self.input is None:
                 msg = "writer app has no composed input"
@@ -805,6 +874,46 @@ class WriterApp(ComposableApp[T, R]):
         self.logger = logger
 
 
+class LoaderApp(ComposableApp[T, R]):
+    """Intermediate base class for LOADER apps.
+
+    Subclasses of ``LoaderApp`` are automatically assigned
+    ``app_type=LOADER``. Loaders sit at the start of a composed pipeline
+    and have no ``input`` attribute.
+
+    Examples
+    --------
+    Define a loader by inheritance::
+
+        class my_loader(LoaderApp):
+            def main(self, path):
+                return path
+    """
+
+    _is_intermediate_base: bool = True
+    _default_app_type: ClassVar[AppType] = LOADER
+
+
+class NonComposableApp(AppBase[T, R]):
+    """Intermediate base class for NON_COMPOSABLE apps.
+
+    Subclasses of ``NonComposableApp`` are automatically assigned
+    ``app_type=NON_COMPOSABLE``. Non-composable apps cannot participate
+    in pipeline composition via ``+``.
+
+    Examples
+    --------
+    Define a non-composable app by inheritance::
+
+        class my_app(NonComposableApp):
+            def main(self, val):
+                return val
+    """
+
+    _is_intermediate_base: bool = True
+    _default_app_type: ClassVar[AppType] = NON_COMPOSABLE
+
+
 def _class_from_func(func: Callable[..., Any]) -> type[Any]:
     """make a class based on func
 
@@ -849,31 +958,6 @@ def _class_from_func(func: Callable[..., Any]) -> type[Any]:
     result.__doc__ = summary
     result.__init__.__doc__ = body  # type: ignore[misc]
     return result
-
-
-# Forbidden methods per app kind
-_FORBIDDEN_BASE = frozenset(
-    {
-        "__call__",
-        "__repr__",
-        "__str__",
-        "__new__",
-        "_validate_data_type",
-    }
-)
-_FORBIDDEN_COMPOSABLE = _FORBIDDEN_BASE | frozenset(
-    {
-        "__add__",
-        "disconnect",
-        "input",
-    }
-)
-_FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset(
-    {
-        "apply_to",
-        "set_logger",
-    }
-)
 
 
 @overload
@@ -1026,30 +1110,13 @@ def define_app(
             raise ValueError(msg)
 
         # Select base class based on app_type
-        composable = app_type is not NON_COMPOSABLE
         base: type[AppBase[Any, Any]]
         if app_type is WRITER:
             base = WriterApp
-            forbidden = _FORBIDDEN_WRITER
-        elif composable:
+        elif app_type is not NON_COMPOSABLE:
             base = ComposableApp
-            forbidden = _FORBIDDEN_COMPOSABLE
         else:
             base = AppBase
-            forbidden = _FORBIDDEN_BASE
-
-        # Check forbidden methods on the user's class
-        if (
-            composable
-            and "input" in klass.__dict__
-            and klass.__dict__["input"] is not None
-        ):
-            msg = f"remove 'input' attribute in {klass.__name__!r}, this functionality provided by define_app"
-            raise TypeError(msg)
-        for meth in forbidden:
-            if meth in klass.__dict__ and inspect.isfunction(klass.__dict__[meth]):
-                msg = f"remove {meth!r} in {klass.__name__!r}, this functionality provided by define_app"
-                raise TypeError(msg)
 
         if "__slots__" in klass.__dict__:
             msg = "slots are not currently supported"

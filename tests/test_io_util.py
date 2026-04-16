@@ -1,8 +1,8 @@
 import bz2
 import gzip
 import pathlib
-import tempfile
 import zipfile
+from urllib.parse import urlparse
 
 import pytest
 
@@ -17,7 +17,6 @@ from scinexus.io_util import (
     open_,
     open_url,
     path_exists,
-    remove_files,
 )
 
 
@@ -164,26 +163,6 @@ def test_path_relative_to_zip_parent():
         assert got.parts[0] == "data"
 
 
-def test_remove_files():
-    """Remove files functions as expected"""
-    import os
-
-    test_filepaths = [
-        tempfile.NamedTemporaryFile(prefix="remove_files_test").name for _ in range(5)
-    ]
-
-    pytest.raises(OSError, remove_files, test_filepaths)
-    remove_files(test_filepaths, error_on_missing=False)
-
-    open(test_filepaths[2], "w").close()
-    pytest.raises(OSError, remove_files, test_filepaths)
-    assert not os.path.exists(test_filepaths[2])
-
-    open(test_filepaths[2], "w").close()
-    remove_files(test_filepaths, error_on_missing=False)
-    assert not os.path.exists(test_filepaths[2])
-
-
 @pytest.mark.parametrize(
     ("name", "expect"),
     [
@@ -235,6 +214,7 @@ def test_get_format_suffixes_pathlib(name, expect):
         ({}, False),
         ("not an existing path", False),
         ("(a,b,(c,d))", False),
+        ("(a:0.1,b:0.1,(c:0.1,d:0.1):0.1)", False),
         (__file__, True),
         (pathlib.Path(__file__), True),
         (NotCompleted("FAIL", "test", message="none", source="unknown"), False),
@@ -455,6 +435,47 @@ def test_open_url_gzip_mode(gzip_uri, mode):
         got = infile.read()
     expect_type = bytes if "b" in mode else str
     assert isinstance(got, expect_type)
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "mode",
+    ["r", "rb", "rt", None],
+)
+@pytest.mark.internet
+def test_open_url(DATA_DIR, mode):
+    """different open mode's all work"""
+    file_name = "formattest.fasta"
+    remote_root = "https://github.com/user-attachments/files/20321056/{}.gz"
+
+    with open_(DATA_DIR / file_name, mode=mode) as infile:
+        local_data = infile.read()
+
+    with open_url(remote_root.format(file_name), mode=mode) as infile:
+        remote_data = infile.read()
+
+    assert remote_data.splitlines() == local_data.splitlines()
+
+    # Test using a ParseResult for url
+    with open_url(urlparse(remote_root.format(file_name)), mode=mode) as infile:
+        remote_data = infile.read()
+    assert remote_data.splitlines() == local_data.splitlines()
+
+
+@pytest.mark.slow
+@pytest.mark.internet
+def test_open_url_compressed(DATA_DIR):
+    """comparing compressed file handling"""
+    file_name = "formattest.fasta.gz"
+    remote_root = "https://github.com/user-attachments/files/20321056/{}"
+
+    with open_(DATA_DIR / file_name) as infile:
+        local_data = infile.read()
+
+    with open_url(remote_root.format(file_name), mode="rt") as infile:
+        remote_data = infile.read()
+
+    assert remote_data.splitlines() == local_data.splitlines()
 
 
 def test_get_compression_open_no_args():

@@ -17,7 +17,7 @@ def deprecated(
     new: str,
     version: str,
     reason: str | None = None,
-    stack_level: int = 3,
+    stack_level: int = 4,
 ) -> None:
     """a convenience function for deprecating classes, functions, arguments.
 
@@ -50,7 +50,7 @@ def discontinued(
     old: str,
     version: str,
     reason: str | None = None,
-    stack_level: int = 3,
+    stack_level: int = 4,
 ) -> None:
     """convenience func to warn about discontinued attributes
 
@@ -89,7 +89,7 @@ def deprecated_args(
     reason: str,
     old_new: Sequence[tuple[str, str]] | None = None,
     discontinued: Sequence[str] | None = None,
-    stack_level: int = 2,
+    stack_level: int = 4,
 ) -> Callable[..., Any]:
     """
     A decorator that marks specific arguments of a function as deprecated.
@@ -101,21 +101,20 @@ def deprecated_args(
 
     Parameters
     ----------
-    version : str
+    version
         The version when the old arguments will be removed in calver
         format, e.g. 'YYYY.MM'
-    reason : str
+    reason
         Reason for deprecation or guidance on what to do
-    old-new : list[tuple[str, str]]
+    old-new
         A list of deprecated old and replacement new argument names.
-    discontinued : list[str]
+    discontinued
         Names of single or multiple arguments to be discontinued. This should
         only be applied to arguments that have no effect.
 
     Returns
     -------
-    Callable[..., Any]
-        The decorated function.
+    The decorated function.
 
     Warnings
     --------
@@ -186,27 +185,26 @@ def deprecated_callable(
     reason: str,
     new: str | None = None,
     is_discontinued: bool = False,
-    stack_level: int = 2,
+    stack_level: int = 4,
 ) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """
     A decorator that marks callables (function or method) as deprecated or discontinued..
     Parameters
     ----------
-    version : str
+    version
         The version when it will be removed in calver format, e.g. 'YYYY.MM'
-    reason : str
+    reason
         Reason for deprecation or guidance on what to do
-    new : str
+    new
         If the callable is being replaced, this is the replacement, e.g. 'ClassName.new_method()'
-    is_discontinued : bool
+    is_discontinued
         If True the callable is being discontinued.
     stack_level
         as per warnings.warn
 
     Returns
     -------
-    Callable
-        The decorated callable.
+    The decorated callable.
 
     Warnings
     --------
