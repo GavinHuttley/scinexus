@@ -307,3 +307,6 @@ paths = ["src"]
 docstring_style = "numpy"
 inherited_members = true
 show_source = false
+
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true

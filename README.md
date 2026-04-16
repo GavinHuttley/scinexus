@@ -7,11 +7,13 @@
 
 *A composable app infrastructure for scientific computing. What dataclasses are for structured data, `scinexus` apps are for structured algorithms.*
 
-As the robustness of POSIX based operating systems (think Linux, Mac OS, Unix) can attest, writing algorithms that stitch together multiple single purpose applications is a *Very Good Thing*™.
+Many scientific problems require repeating calculations across many files or database records. Such tasks suit data-level parallelism on multi-core CPUs, but writing robust, maintainable code for them is often tedious and quickly becomes complex.
+
+As the robustness of POSIX based operating systems (think Linux, Mac OS, Unix) can attest, writing algorithms that can stitched together through piping data of known type is a *Very Good Thing*™.
 
 **`scinexus` encourages this design pattern.** We leverage the Python type annotation system to govern the compatibility (composability) of different applications. This enables in-process composition of your applications with validation of the consistency of the pipeline and the consistency of the data being run through it.
 
-**`scinexus` is designed with scientific reproducibility in mind.** Scientific computations should track all of the critical conditions necessary to reproducibe a computational analysis.`scinexus` helps you by reducing the effort to do this. For example, we intercept all arguments (including default values) passed to the construction of apps and record them so that the app state is logged. If you, the developer, also leverage the capabilities of the [`scitrack`](https://pypi.org/project/scitrack/) logging package (which `scinexus` has as a dependency), you can facilitate extra information such as versions of packages that your application depends on.
+**`scinexus` is designed for scientific reproducibility.** Scientific computations should record all conditions needed to reproduce an analysis. `scinexus` reduces the effort by intercepting all arguments (including defaults) used in app construction and logging the resulting app state.
 
 ## Features
 
@@ -34,4 +36,4 @@ The app framework and utility functions in `scinexus` incubated inside [cogent3]
 
 The extraction into `scinexus` makes the infrastructure available to any scientific Python project, free of the `cogent3` dependency.
 
-Many members of the `cogent3` community contributed to the code that now lives here, including [@rmcar17](https://github.com/rmcar17), [@Nick-Foto](https://github.com/Nick-Foto), [@KatherineCaley](https://github.com/KatherineCaley), [@fredjaya](https://github.com/fredjaya), and [@khiron](https://github.com/khiron).
+We acknowledge here that many members of the `cogent3` community contributed to the code that now lives here, including [@rmcar17](https://github.com/rmcar17), [@Nick-Foto](https://github.com/Nick-Foto), [@KatherineCaley](https://github.com/KatherineCaley), [@fredjaya](https://github.com/fredjaya), and [@khiron](https://github.com/khiron).

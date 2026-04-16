@@ -48,14 +48,12 @@ my_cite = Software(
     version="0.1.0",
 )
 
-
 @define_app(
     app_type=AppType.GENERIC,  # (1)!
     cite=my_cite,  # (2)!
 )
 def my_app(val: str, convert: Callable[[str], str]) -> str:  # (4)!
     return convert(val)
-
 
 app = my_app(str.upper)
 print(app("hello world"))
