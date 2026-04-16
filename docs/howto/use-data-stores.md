@@ -2,11 +2,11 @@
 
 *How to use `open_data_store` in read, write, and append modes with directory, zip, and SQLite backends, iterate over members, and inspect `.completed`, `.not_completed`, and `.summary_<methods>`.*
 
-### How do I use a data store?
+## How do I use a data store?
 
 A data store is just a "container". To open a data store you use the `open_data_store()` function. To load the data for a member of a data store you need an appropriately selected loader type of app.
 
-### Supported operations on a data store
+## Supported operations on a data store
 
 All data store classes can be iterated over, indexed, checked for membership. These operations return a `DataMember` object. In addition to providing access to members, the data store classes have convenience methods for describing their contents and providing summaries of log files that are included and of the `NotCompleted` members (see not completed).
 
@@ -84,7 +84,7 @@ m.read()[:20]  # (5)!
 
 The creation of a writeable data store is specified with `mode="w"`, or (to append) `mode="a"`. In the former case, any existing records are overwritten. In the latter case, existing records are ignored.
 
-### `DataStoreSqlite` stores serialised data
+## `DataStoreSqlite` stores serialised data
 
 When you specify a Sqlitedb data store as your output (by using `open_data_store()`) you write multiple records into a single file making distribution easier.
 
@@ -106,8 +106,7 @@ print(dstore.describe)
 exec_codeblock(src=src, use_wrap=False, display_src=False)
   ]]] -->
 ```python { linenums="1" notest }
-
-{'completed': 175, 'not_completed': 0, 'logs': 1, 'title': 'Unlocked db store.'}
+{"completed": 175, "not_completed": 0, "logs": 1, "title": "Unlocked db store."}
 ```
 <!-- [[[end]]] -->
 
@@ -118,7 +117,7 @@ To unlock, you execute the following:
 dstore.unlock(force=True)
 ```
 
-### Interrogating run logs
+## Interrogating run logs
 
 If you use the `apply_to()` method, a `scitrack` logfile will be stored in the data store. This includes useful information regarding the run conditions that produced the contents of the data store.
 
@@ -136,7 +135,6 @@ print(dstore.summary_logs)
 exec_codeblock(src=src, display_src=False, max_lines=4)
   ]]] -->
 ```python { linenums="1" notest }
-
 # [{'time': '2019-07-24 14:42:56', 'name': 'logs/load_unaligned-progressive_align-
 # write_db-pid8650.log', 'python_version': '3.7.3', 'who': 'gavin', 'command':
 # '/Users/gavin/miniconda3/envs/c3dev/lib/python3.7/site-
@@ -145,7 +143,7 @@ exec_codeblock(src=src, display_src=False, max_lines=4)
 <!-- [[[end]]] -->
 
 
-Log files can be accessed vial a special attribute.
+Log files can be accessed via a special attribute.
 
 <!-- [[[cog
 from cog_utils import exec_codeblock
@@ -161,7 +159,6 @@ print(dstore.logs)
 exec_codeblock(src=src, display_src=False, max_lines=4)
   ]]] -->
 ```python { linenums="1" notest }
-
 # [DataMember(data_store=/Users/gavin/repos/SciNexus/docs/data/demo-
 # locked.sqlitedb, unique_id=logs/load_unaligned-progressive_align-write_db-
 # pid8650.log)]
@@ -191,7 +188,6 @@ print(dstore.logs[0].read()[:225])
 exec_codeblock(src=src, display_src=False, max_lines=4)
   ]]] -->
 ```python { linenums="1" notest }
-
 # 2019-07-24 14:42:56     Eratosthenes.local:8650 INFO    system_details :
 # system=Darwin Kernel Version 18.6.0: Thu Apr 25 23:16:27 PDT 2019;
 # root:xnu-4903.261.4~2/RELEASE_X86_64 2019-07-24 14:42:56
@@ -200,7 +196,7 @@ exec_codeblock(src=src, display_src=False, max_lines=4)
 <!-- [[[end]]] -->
 
 
-### Citations – giving credit to package developers
+## Citations – giving credit to package developers
 
 When apps declare citations, those citations are automatically saved alongside your results when you use `apply_to()`.
 
@@ -256,9 +252,11 @@ my_cite = Software(
     year=2025,
 )
 
+
 @define_app(cite=my_cite)
 def strict_filter(val: AlignedSeqsType) -> AlignedSeqsType:
     return val.omit_bad_seqs()
+
 
 in_dstore = open_data_store("data/raw.zip", suffix="fa", limit=5)
 out_dstore = open_data_store("cited_results", suffix="fa", mode="w")

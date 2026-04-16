@@ -45,7 +45,7 @@ pbar = scinexus.get_progress(show_progress=RichProgress())
 
 !!! note
 
-    If you call `get_progress(show_progress=False)`, it return `NoProgress`, which silently passes through the iterable.
+    If you call `get_progress(show_progress=False)`, it returns `NoProgress`, which silently passes through the iterable.
 
 ## Nesting progress bars
 

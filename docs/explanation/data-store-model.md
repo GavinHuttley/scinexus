@@ -35,5 +35,4 @@ demo_dstore
 
 The `DataStoreSqlite` stores the same information, just in SQL tables.
 
-[scitrack]: https://github.com/HuttleyLab/scitrack
 

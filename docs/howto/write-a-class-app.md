@@ -2,7 +2,7 @@
 
 *How to inherit from `scinexus` app base classes, or using the `define_app` decorator, specifying input/output type hints.*
 
-## Using inheritahnce from a base class
+## Using inheritance from a base class
 
 ```python linenums="1"
 from collections.abc import Callable
@@ -32,7 +32,7 @@ class my_app(  # (1)!
 1. We suggest naming your apps using the PEP8 naming style for functions (lowercase separated by underscores) because the instances will be used like functions.
 2. We type hint the input / output types with the base class.
 3. We assign the citation in the class definition.
-4. The class has a `main()` method with type hints specified for it's first argument and its return type.
+4. The class has a `main()` method with type hints specified for its first argument and its return type.
 
 ## Using the `define_app` decorator
 

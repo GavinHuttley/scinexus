@@ -32,7 +32,7 @@ print(app("hello world"))
 exec_codeblock(src=src, annotations=[
 "We specify the `app_type` explicitly here.",
 "We assign the citation in the class definition.",
-"The function definition has type hints for it's first argument and its return type."
+"The function definition has type hints for its first argument and its return type."
 ])
   ]]] -->
 ```python { linenums="1" notest }
@@ -48,12 +48,14 @@ my_cite = Software(
     version="0.1.0",
 )
 
+
 @define_app(
     app_type=AppType.GENERIC,  # (1)!
     cite=my_cite,  # (2)!
 )
 def my_app(val: str, convert: Callable[[str], str]) -> str:  # (4)!
     return convert(val)
+
 
 app = my_app(str.upper)
 print(app("hello world"))
@@ -63,7 +65,7 @@ print(app("hello world"))
 
 1. We specify the `app_type` explicitly here.
 2. We assign the citation in the class definition.
-3. The function definition has type hints for it's first argument and its return type.
+3. The function definition has type hints for its first argument and its return type.
 <!-- [[[end]]] -->
 
 !!! note

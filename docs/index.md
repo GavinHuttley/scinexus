@@ -11,7 +11,7 @@ With `scinexus` apps, you can adopt a functional programming style within the de
 
 - Type checking at composition time
 - Durable computing, with failures automatically recorded as `NotCompleted` records
-- Greatly simplifed data level parallel execution
+- Greatly simplified data level parallel execution
 - Builtin progress bars (`tqdm` or `rich`)
 - Automated logging
 - Automated citation tracking
