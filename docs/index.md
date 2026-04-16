@@ -1,11 +1,15 @@
 # `scinexus`: composable apps for scientific computing
 
-The main goal of `scinexus` is to make it easier to write rigorous scientific algorithms. What dataclasses and attrs are for structured data, `scinexus` apps are for structured algorithms.
+The main goal of `scinexus` is to make it easier to write rigorous scientific algorithms. What `dataclasses` and `attrs` are for structured data, `scinexus` apps are for structured algorithms.
 
-With `scinexus` apps, you can adopt a functional programming style within the development of your application. With app composition, you can greatly simplify your programming logic by producing "mini pipelines". 
+Many scientific problems require repeating calculations across many files or database records. Such tasks suit data-level parallelism on multi-core CPUs, but writing robust, maintainable code for them is often tedious and quickly becomes complex.
 
-!!! info
-    `scinexus` is not intended to replace tools like [Snakemake](https://snakemake.readthedocs.io/en/stable/).
+With `scinexus` apps, you can use a functional programming style when developing your application. Combined with `scinexus` app composition, this greatly simplifies your programming logic making it easier to understand and thus easier to explain. And as we know
+
+!!! quote
+	If the implementation is easy to explain, it may be a good idea.
+	
+	-- Tim Peters
 
 ## What you get
 

@@ -1,6 +1,6 @@
 # Track progress
 
-*`scinexus` defaults to using the [tqdm](https://pypi.org/project/tqdm/) for progress bars. These behave well across terminal and notebook environments. We also support using [rich](https://pypi.org/project/rich/) for its progress bars.*
+*`scinexus` defaults to using the [tqdm](https://pypi.org/project/tqdm/) for progress bars. These behave well across terminal and notebook environments. We also support using [rich](https://pypi.org/project/rich/) for its progress bars. A single API for different progress backends.*
 
 ## Choosing the progress bar backend
 
@@ -32,7 +32,7 @@ You can pass keyword arguments to configure the default backend:
 ```python { notest }
 import scinexus
 
-pbar = scinexus.get_progress(show_progress=True, colour="green", leave=True)
+pbar = scinexus.get_progress(show_progress=True, colour="blue", leave=True)
 ```
 
 You can also pass a `Progress` instance directly:
@@ -49,20 +49,38 @@ pbar = scinexus.get_progress(show_progress=RichProgress())
 
 ## Nesting progress bars
 
-### Using `tqdm` (default)
+=== "Using `tqdm` (default)"
 
-Create nested progress bars using `child()`. Each bar can have its own description via the `msg` keyword. Create the child once before the loop — it automatically resets to zero on each subsequent call.
+    Create nested progress bars using `child()`. Each bar can have its own description via the `msg` keyword. Create the child once before the loop — it automatically resets to zero on each subsequent call.
 
-```python { notest }
-import scinexus
+    ```python { notest }
+    import scinexus
 
-pbar = scinexus.get_progress(show_progress=True)
-child = pbar.child()
+    pbar = scinexus.get_progress(show_progress=True)
+    child = pbar.child()
 
-for batch in pbar(range(3), msg="Outer loop"):
-    for item in child(range(10), msg=f"Inner batch {batch}"):
-        pass  # your work here
-```
+    for batch in pbar(range(3), msg="Outer loop"):
+        for item in child(range(10), msg=f"Inner batch {batch}"):
+            pass  # your work here
+    ```
+
+=== "Using `rich`"
+
+    The same nesting pattern works with the `rich` backend:
+
+    ```python { notest }
+    import scinexus
+
+    scinexus.set_default_progress("rich")
+    pbar = scinexus.get_progress(show_progress=True)
+    child = pbar.child()
+
+    for batch in pbar(range(3), msg="Outer loop"):
+        for item in child(range(10), msg=f"Inner batch {batch}"):
+            pass  # your work here
+    ```
+
+    `rich` children share the same `rich.progress.Progress` display instance, so all bars render together in a single live display.
 
 The outer bar tracks the top-level iteration. Each call to `child()` creates a new `Progress` at the next cursor position, so inner bars appear below the outer one. The child bar is reused across iterations — on the second and subsequent calls, the bar resets to zero instead of creating a new one.
 
@@ -83,24 +101,6 @@ for batch in pbar(range(3), msg="Processing"):
 ```
 
 The context maps progress values from `[0.0, 1.0]` to the configured `[start, end]` range and is cleaned up automatically when the `with` block exits.
-
-### Using `rich`
-
-The same nesting pattern works with the `rich` backend:
-
-```python { notest }
-import scinexus
-
-scinexus.set_default_progress("rich")
-pbar = scinexus.get_progress(show_progress=True)
-child = pbar.child()
-
-for batch in pbar(range(3), msg="Outer loop"):
-    for item in child(range(10), msg=f"Inner batch {batch}"):
-        pass  # your work here
-```
-
-`rich` children share the same `rich.progress.Progress` display instance, so all bars render together in a single live display.
 
 ## Customising appearance
 
