@@ -5,6 +5,7 @@ import typing as _typing
 from scinexus._version import __version__
 from scinexus.composable import (
     AppBase,
+    AppType,
     ComposableApp,
     LoaderApp,
     NonComposableApp,
@@ -27,6 +28,7 @@ if _typing.TYPE_CHECKING:  # pragma: no cover
 
 __all__ = [
     "AppBase",
+    "AppType",
     "ComposableApp",
     "LoaderApp",
     "NonComposableApp",

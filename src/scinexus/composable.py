@@ -84,7 +84,7 @@ class NotCompleted(int):
         """
         Parameters
         ----------
-        type
+        type_
             the category of failure, e.g. NotCompletedType.ERROR
         origin
             where the instance was created, can be an instance
@@ -315,7 +315,7 @@ class propagate_source:
 
     Notes
     -----
-    Returns the unwrapped result if it has a .source instance,
+    Returns the unwrapped result if it has a .source attribute,
     otherwise returns the original source_proxy with the .obj
     updated with result.
     """
