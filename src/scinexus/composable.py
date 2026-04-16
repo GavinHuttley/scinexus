@@ -371,7 +371,10 @@ _FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset(
 
 
 def _init_subclass_setup(
-    cls: Any, app_type: AppType | str, skip_not_completed: bool, cite: Citation | None
+    cls: Any,
+    app_type: AppType | Literal["loader", "writer", "generic", "non_composable"],
+    skip_not_completed: bool,
+    cite: Citation | None,
 ) -> None:
     """Shared setup logic for __init_subclass__ and define_app."""
     app_type = AppType(app_type)
@@ -970,7 +973,7 @@ def define_app(
 def define_app(  # type: ignore[overload-overlap]
     klass: None = None,
     *,
-    app_type: Literal[AppType.NON_COMPOSABLE],
+    app_type: Literal[AppType.NON_COMPOSABLE, "non_composable"],
     skip_not_completed: bool = ...,
     cite: Citation | None = ...,
 ) -> Callable[[type[Any] | Callable[..., Any]], type[AppBase[Any, Any]]]: ...
@@ -980,7 +983,7 @@ def define_app(  # type: ignore[overload-overlap]
 def define_app(  # type: ignore[overload-overlap]
     klass: None = None,
     *,
-    app_type: Literal[AppType.WRITER],
+    app_type: Literal[AppType.WRITER, "writer"],
     skip_not_completed: bool = ...,
     cite: Citation | None = ...,
 ) -> Callable[[type[Any] | Callable[..., Any]], type[WriterApp[Any, Any]]]: ...
@@ -990,7 +993,7 @@ def define_app(  # type: ignore[overload-overlap]
 def define_app(
     klass: None = None,
     *,
-    app_type: AppType = ...,
+    app_type: AppType | Literal["loader", "writer", "generic", "non_composable"] = ...,
     skip_not_completed: bool = ...,
     cite: Citation | None = ...,
 ) -> Callable[[type[Any] | Callable[..., Any]], type[ComposableApp[Any, Any]]]: ...
@@ -999,7 +1002,8 @@ def define_app(
 def define_app(
     klass: type[Any] | Callable[..., Any] | None = None,
     *,
-    app_type: AppType = GENERIC,
+    app_type: AppType
+    | Literal["loader", "writer", "generic", "non_composable"] = GENERIC,
     skip_not_completed: bool = True,
     cite: Citation | None = None,
 ) -> type[Any]:
