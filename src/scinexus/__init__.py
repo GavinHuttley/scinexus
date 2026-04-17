@@ -20,7 +20,7 @@ from scinexus.progress import (
     Progress,
     ProgressContext,
     get_progress,
-    set_default_progress,
+    set_progress_backend,
 )
 
 if _typing.TYPE_CHECKING:  # pragma: no cover
@@ -46,7 +46,7 @@ __all__ = [
     "is_app_composable",
     "open_",
     "open_data_store",
-    "set_default_progress",
+    "set_progress_backend",
     "set_id_from_source",
     "set_summary_display",
 ]

@@ -464,7 +464,7 @@ class RichProgress(Progress):
 _default_progress: Progress | None = None
 
 
-def set_default_progress(
+def set_progress_backend(
     progress: ProgressType | Progress | None = None, **kwargs: Any
 ) -> None:
     """Set the default Progress used when ``show_progress=True``.
@@ -498,11 +498,11 @@ def get_progress(show_progress: bool | Progress = False, **kwargs: Any) -> Progr
     ----------
     show_progress
         If a ``Progress`` instance, returned as-is. If ``True``, returns the
-        module default (set via ``set_default_progress``, or ``TqdmProgress``).
+        module default (set via ``set_progress_backend``, or ``TqdmProgress``).
         If falsy, returns ``NoProgress``.
     **kwargs
         additional keyword arguments forwarded to the backend constructor.
-        When a default has been set via ``set_default_progress``, a new
+        When a default has been set via ``set_progress_backend``, a new
         instance of the same type is created with these kwargs. Ignored
         when ``show_progress`` is a ``Progress`` instance.
     """
