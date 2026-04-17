@@ -267,7 +267,7 @@ def _as_completed_mpi(
             yield result.result()
 
 
-def _as_completed_mproc(
+def _as_completed_loky(
     f: Callable[[T], R], s: Iterable[T], max_workers: int | None
 ) -> Generator[R]:
     """multiprocess version of as_completed"""
@@ -296,4 +296,4 @@ def as_completed(
     if use_mpi:
         yield from _as_completed_mpi(f, s, max_workers, if_serial, chunksize)
     else:
-        yield from _as_completed_mproc(f, s, max_workers)
+        yield from _as_completed_loky(f, s, max_workers)
