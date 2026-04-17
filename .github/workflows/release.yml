@@ -37,8 +37,13 @@ jobs:
         run: |
           uv run --group test nox -db uv --force-python python -s test
           uv run --group test nox -db uv --force-python python -s test_types
-          uv run --group test nox -db uv --force-python python -s testmpi
           uv run --group test nox -db uv --force-python python -s test_docs
+
+      - name: "Run MPI tests"
+        if: startsWith(matrix.os, 'ubuntu')
+        shell: bash
+        run: |
+          uv run --group test nox -db uv --force-python python -s testmpi
 
   # docbuild:
   #   name: "Test the docs"
