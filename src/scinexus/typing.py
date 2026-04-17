@@ -1,6 +1,5 @@
 """defined type hints for app composability"""
 
-# TODO write more extensive docstring explaining limited use of these types
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -66,10 +65,23 @@ class HasInfo(Protocol):
 
 @runtime_checkable
 class SerialisableType(Protocol):
+    """a runtime-checkable protocol for objects that serialise to a dict
+
+    Any object that implements a ``to_rich_dict`` method returning
+    ``dict[str, object]`` satisfies this protocol. Writer apps rely on
+    this to convert results before storing them in a data store -- both
+    ``DataStoreDirectory`` and ``DataStoreSqlite`` call ``to_rich_dict()``
+    during the write path.
+    """
+
     def to_rich_dict(self) -> dict[str, object]: ...
 
 
 IdentifierType = Union[str, Path, DataMemberABC]
+"""accepted types for identifying members of a data store
+
+A loader app can receive a file path as a string, a ``pathlib.Path``,
+or a ``DataMemberABC`` handle returned by iterating over a data store."""
 
 
 def _resolve_name(
