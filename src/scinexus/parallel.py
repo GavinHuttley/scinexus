@@ -118,6 +118,7 @@ def imap(
     use_mpi: bool = False,
     if_serial: Literal["raise", "ignore", "warn"] = "raise",
     chunksize: int | None = None,
+    use_loky: bool = True,
 ) -> Generator[R]:
     """
     Parameters
@@ -136,6 +137,10 @@ def imap(
     chunksize
         Size of data chunks executed by worker processes. Defaults to None
         where stable chunksize is determined by get_default_chunksize()
+    use_loky
+        use loky for parallel execution. If False, uses the stdlib
+        ``concurrent.futures.ProcessPoolExecutor``. loky is required
+        for parallel execution in Jupyter notebooks. Defaults to True.
 
     Returns
     -------
@@ -204,8 +209,15 @@ def imap(
                 get_default_chunksize(s, max_workers) if isinstance(s, Sized) else 1
             )
 
-        with loky.get_reusable_executor(max_workers=max_workers) as executor:
-            yield from executor.map(f, s, chunksize=chunksize)
+        if use_loky:
+            with loky.get_reusable_executor(max_workers=max_workers) as executor:
+                yield from executor.map(f, s, chunksize=chunksize)
+        else:
+            ctx = multiprocessing.get_context("spawn")
+            with concurrentfutures.ProcessPoolExecutor(
+                max_workers=max_workers, mp_context=ctx
+            ) as executor:
+                yield from executor.map(f, s, chunksize=chunksize)
 
 
 @extend_docstring_from(imap)
@@ -216,8 +228,9 @@ def map(
     use_mpi: bool = False,
     if_serial: Literal["raise", "ignore", "warn"] = "raise",
     chunksize: int | None = None,
+    use_loky: bool = True,
 ) -> list[R]:
-    return list(imap(f, s, max_workers, use_mpi, if_serial, chunksize))
+    return list(imap(f, s, max_workers, use_mpi, if_serial, chunksize, use_loky))
 
 
 def _as_completed_mpi(
@@ -280,6 +293,26 @@ def _as_completed_loky(
             yield result.result()
 
 
+def _as_completed_mproc(
+    f: Callable[[T], R], s: Iterable[T], max_workers: int | None
+) -> Generator[R]:
+    """multiprocess version of as_completed using the stdlib
+
+    Uses ``concurrent.futures.ProcessPoolExecutor`` with a ``spawn``
+    context instead of loky.
+    """
+    if not max_workers or max_workers > multiprocessing.cpu_count():
+        max_workers = multiprocessing.cpu_count() - 1
+
+    ctx = multiprocessing.get_context("spawn")
+    with concurrentfutures.ProcessPoolExecutor(
+        max_workers=max_workers, mp_context=ctx
+    ) as executor:
+        to_do = [executor.submit(f, e) for e in s]
+        for result in concurrentfutures.as_completed(to_do):
+            yield result.result()
+
+
 @extend_docstring_from(imap, pre=True)
 def as_completed(
     f: Callable[[T], R],
@@ -288,6 +321,7 @@ def as_completed(
     use_mpi: bool = False,
     if_serial: Literal["raise", "ignore", "warn"] = "raise",
     chunksize: int | None = None,
+    use_loky: bool = True,
 ) -> Generator[R]:
     if_serial = cast("Literal['raise', 'ignore', 'warn']", if_serial.lower())
     if if_serial not in ("ignore", "raise", "warn"):
@@ -295,5 +329,7 @@ def as_completed(
         raise ValueError(msg)
     if use_mpi:
         yield from _as_completed_mpi(f, s, max_workers, if_serial, chunksize)
-    else:
+    elif use_loky:
         yield from _as_completed_loky(f, s, max_workers)
+    else:
+        yield from _as_completed_mproc(f, s, max_workers)

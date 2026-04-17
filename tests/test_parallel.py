@@ -172,6 +172,48 @@ def test_dont_use_mpi_env_var():
     importlib.reload(parallel)
 
 
+def test_as_completed_use_loky_false():
+    """as_completed with use_loky=False returns all results"""
+    data = list(range(10))
+    result = sorted(as_completed(_double, data, use_mpi=False, use_loky=False))
+    assert result == sorted(x * 2 for x in data)
+
+
+def test_imap_use_loky_false():
+    """imap with use_loky=False returns results in order"""
+    data = list(range(10))
+    result = list(parallel.imap(_double, data, max_workers=1, use_loky=False))
+    assert result == [x * 2 for x in data]
+
+
+def test_map_use_loky_false():
+    """map with use_loky=False returns results in order"""
+    data = list(range(10))
+    result = parallel.map(_double, data, max_workers=1, use_loky=False)
+    assert result == [x * 2 for x in data]
+
+
+def test_as_completed_mproc_max_workers_clamped():
+    """large max_workers in _as_completed_mproc gets clamped"""
+    data = list(range(4))
+    result = sorted(
+        as_completed(_double, data, max_workers=9999, use_mpi=False, use_loky=False)
+    )
+    assert result == sorted(x * 2 for x in data)
+
+
+def test_imap_use_loky_false_non_sized():
+    """imap with use_loky=False and a generator defaults chunksize to 1"""
+
+    def gen():
+        yield from range(4)
+
+    result = list(
+        parallel.imap(_double, gen(), max_workers=1, use_mpi=False, use_loky=False)
+    )
+    assert sorted(result) == [0, 2, 4, 6]
+
+
 def test_mpi_import_error_fallback():
     """MPI is None when mpi4py cannot be imported"""
     import importlib
