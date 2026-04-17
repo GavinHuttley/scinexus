@@ -1,3 +1,4 @@
+import contextlib
 import inspect
 import json
 import re
@@ -55,7 +56,7 @@ def _make_logfile_name(process: object) -> str:
     return f"{result}-{uid[:8]}.log"
 
 
-def _get_origin(origin: typing.Any) -> str:  # noqa: ANN401
+def _get_origin(origin: typing.Any) -> str:
     return origin if isinstance(origin, str) else origin.__class__.__name__
 
 
@@ -77,10 +78,10 @@ class NotCompleted(int):
     def __new__(
         cls,
         type_: NotCompletedType | str,
-        origin: typing.Any,  # noqa: ANN401
+        origin: typing.Any,
         message: str,
-        source: typing.Any = None,  # noqa: ANN401
-    ):
+        source: typing.Any = None,
+    ) -> Self:
         """
         Parameters
         ----------
@@ -963,6 +964,35 @@ def _class_from_func(func: Callable[..., Any]) -> type[Any]:
     return result
 
 
+def _fix_super_class_cells(
+    old_klass: type[Any],
+    new_klass: type[Any],
+) -> None:
+    """Update __class__ closure cells so zero-arg super() works in the new class.
+
+    When define_app rebuilds a class via types.new_class, methods copied from
+    the original class retain closure cells pointing to the old class. Python's
+    zero-arg super() uses the __class__ cell, so it fails when the instance is
+    of the new class. This function patches those cells to point to new_klass.
+    """
+    for attr in new_klass.__dict__.values():
+        fn = attr if isinstance(attr, types.FunctionType) else None
+        if fn is None:
+            # unwrap classmethod / staticmethod
+            fn = getattr(attr, "__func__", None)
+        if not isinstance(fn, types.FunctionType):
+            continue
+        closure = fn.__closure__
+        if closure is None:
+            continue
+        freevars = fn.__code__.co_freevars
+        for i, name in enumerate(freevars):
+            if name == "__class__":
+                with contextlib.suppress(ValueError):
+                    if closure[i].cell_contents is old_klass:
+                        closure[i].cell_contents = new_klass
+
+
 @overload
 def define_app(
     klass: type[Any] | Callable[..., Any],
@@ -1138,15 +1168,20 @@ def define_app(
         # Prevent __init_subclass__ from running setup (we do it below)
         original_dict["_define_app_pending"] = True
 
+        # Preserve user-specified bases (excluding object) so super()
+        # resolves through the original MRO
+        extra_bases = tuple(b for b in klass.__bases__ if b is not object)
+
         # Recreate class with the base (types.new_class stores
         # parameterised form in __orig_bases__ for type checkers)
         new_klass = types.new_class(
             klass.__name__,
-            (base[raw_input, raw_return],),  # type: ignore[index]
+            (base[raw_input, raw_return], *extra_bases),  # type: ignore[index]
             exec_body=lambda ns: ns.update(original_dict),
         )
         new_klass.__module__ = klass.__module__
         new_klass.__qualname__ = klass.__qualname__
+        _fix_super_class_cells(klass, new_klass)
         del new_klass._define_app_pending  # type: ignore[attr-defined]
 
         # Run setup once with the decorator's arguments
