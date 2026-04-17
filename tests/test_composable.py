@@ -326,6 +326,45 @@ def test_inheritance_from_decorated_class():
                 return val
 
 
+def test_super_in_decorated_class_with_base():
+    """super() works when decorated class inherits from an undecorated base."""
+
+    class MyBase:
+        def __init__(self, x: int) -> None:
+            self.x = x
+
+    @define_app
+    class my_app(MyBase):
+        def __init__(self, x: int = 1) -> None:
+            super().__init__(x)
+
+        def main(self, data: int) -> int:
+            return data + self.x
+
+    app = my_app(x=5)
+    assert app.x == 5
+    assert app(3) == 8
+
+
+def test_super_in_composableapp_subclass_with_base():
+    """super() works when ComposableApp subclass also inherits from another base."""
+
+    class MyBase:
+        def __init__(self, x: int) -> None:
+            self.x = x
+
+    class my_app(ComposableApp[int, int], MyBase):
+        def __init__(self, x: int = 1) -> None:
+            super().__init__(x)
+
+        def main(self, data: int) -> int:
+            return data + self.x
+
+    app = my_app(x=5)
+    assert app.x == 5
+    assert app(3) == 8
+
+
 # have to define this at module level for pickling to work
 @define_app
 def func2app(arg1: int, exponent: int) -> float:

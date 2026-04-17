@@ -87,6 +87,9 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
     "N802",
     "N803",
 ]
+"src/scinexus/composable.py" = [
+    "ANN401", # Allow use of Any
+]
 "src/scinexus/io_util.py" = [
     "ANN401", # Allow use of Any
 ]

@@ -25,17 +25,23 @@ Developers can choose inheriting from a base class or use the `scinexus.define_a
 ```python
 from scinexus import define_app
 
+
 @define_app(app_type="loader")
 def read_json(path: str) -> dict:
     import json
+
     with open(path) as f:
         return json.load(f)
+
 
 @define_app
 def validate(data: dict, required_field: str) -> dict:
     if required_field not in data:
-        raise ValueError(f"missing {required_field!r} field")  # becomes NotCompleted, doesn't crash
+        # this becomes a NotCompleted sentinel object
+        # your run doesn't crash!
+        raise ValueError(f"missing {required_field!r} field")
     return data
+
 
 app = read_json() + validate(required_field="name")
 ```
@@ -60,9 +66,11 @@ def normalise(values: list[float]) -> list[float]:
     lo, hi = min(values), max(values)
     return [(v - lo) / (hi - lo) for v in values]
 
+
 @define_app
 def threshold(values: list[float]) -> list[bool]:
     return [v > 0.5 for v in values]
+
 
 app = normalise() + threshold()
 app([1.0, 5.0, 3.0, 9.0])
@@ -84,6 +92,7 @@ def load_csv(path: str) -> list[dict]:
     with open(path) as f:
         return list(csv.DictReader(f))
 
+
 @define_app
 class summarise:
     def __init__(self, column: str) -> None:
@@ -93,6 +102,7 @@ class summarise:
     def main(self, rows: list[dict]) -> dict[str, float]:
         vals = [float(r[self.column]) for r in rows]
         return {"mean": sum(vals) / len(vals), "min": min(vals), "max": max(vals)}
+
 
 app = load_csv() + summarise(column="price")
 ```
