@@ -66,6 +66,8 @@ extra_css = ["stylesheets/extra.css"]
 # Read more: https://zensical.org/docs/customization/#additional-javascript
 #extra_javascript = ["javascripts/extra.js"]
 
+use_directory_urls = false
+
 # ----------------------------------------------------------------------------
 # Section for configuring theme options
 # ----------------------------------------------------------------------------
@@ -313,3 +315,5 @@ show_source = false
 
 [project.markdown_extensions.pymdownx.tabbed]
 alternate_style = true
+
+[project.markdown_extensions.footnotes]

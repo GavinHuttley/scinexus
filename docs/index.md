@@ -23,13 +23,14 @@ With `scinexus` apps, you can use a functional programming style when developing
 - Type checking at composition time
 - Durable computing[^1]
 - Greatly simplified data level parallel execution
-- Builtin progress bars (`tqdm` or `rich`)
 - Automated logging
 - Automated citation tracking
 - Checkpointing via data stores
-- Customisable experience (progress bars, parallelisation, data store representations etc..)
+- Customisable experience (progress bars[^2], parallelisation[^3], data store representations etc..)
 
-[^1]: Fith failures are automatically recorded as `NotCompleted` records which get propagated and stored in data stores.
+[^1]: Failures are automatically recorded as `NotCompleted` records which get propagated and stored in [data stores](explanation/not-completed-design.md).
+[^2]: `tqdm` is the default because of its robustness in notebooks, but you can choose `rich`
+[^3]: The default is just to use the standard library multi-processing module. If you're using Jupyter Notebooks, however, it's recommended that you use `loky`. This is an [installation option](install.md#optional-extras) and [configuration is easy](howto/run-in-parallel.md#choosing-a-parallel-backend).
 
 ## Standalone utilities
 

@@ -1,6 +1,6 @@
 # Migrate from cogent3
 
-A guide for users moving from `cogent3.app` to `scinexus`.
+*A guide for users moving from `cogent3.app` to `scinexus`.*
 
 ## Update imports
 

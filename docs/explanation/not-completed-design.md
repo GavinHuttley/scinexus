@@ -1,6 +1,6 @@
 # `NotCompleted` design
 
-Why `scinexus` uses a sentinel object instead of exceptions for handling failures in batch processing.
+*Why `scinexus` uses a sentinel object instead of exceptions for handling failures in batch processing.*
 
 ## The problem with exceptions in pipelines
 
