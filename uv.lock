@@ -1185,13 +1185,15 @@ source = { editable = "." }
 dependencies = [
     { name = "charset-normalizer" },
     { name = "citeable" },
-    { name = "loky" },
     { name = "scitrack" },
     { name = "tqdm" },
     { name = "typeguard" },
 ]
 
 [package.optional-dependencies]
+loky = [
+    { name = "loky" },
+]
 mpi = [
     { name = "mpi4py" },
 ]
@@ -1222,14 +1224,14 @@ test = [
 requires-dist = [
     { name = "charset-normalizer" },
     { name = "citeable" },
-    { name = "loky" },
+    { name = "loky", marker = "extra == 'loky'" },
     { name = "mpi4py", marker = "extra == 'mpi'" },
     { name = "rich", marker = "extra == 'rich'" },
     { name = "scitrack" },
     { name = "tqdm" },
     { name = "typeguard" },
 ]
-provides-extras = ["mpi", "rich"]
+provides-extras = ["loky", "mpi", "rich"]
 
 [package.metadata.requires-dev]
 test = [

@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from scinexus.data_store import set_id_from_source
+from scinexus.parallel import set_parallel_backend
 from scinexus.typing import register_type_namespace
 
 try:
@@ -39,3 +40,10 @@ def reset_id_from_source() -> Iterator[None]:
     """Restore the default ID extractor after the test."""
     yield
     set_id_from_source(None)
+
+
+@pytest.fixture
+def reset_parallel_backend() -> Iterator[None]:
+    """Restore the default parallel backend after the test."""
+    yield
+    set_parallel_backend(None)

@@ -40,6 +40,7 @@ __all__ = [
     "__version__",
     "define_app",
     "get_id_from_source",
+    "get_parallel_backend",
     "get_progress",
     "get_summary_display",
     "is_app",
@@ -47,6 +48,7 @@ __all__ = [
     "open_",
     "open_data_store",
     "set_id_from_source",
+    "set_parallel_backend",
     "set_progress_backend",
     "set_summary_display",
 ]
@@ -54,6 +56,8 @@ __all__ = [
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "open_": ("scinexus.io_util", "open_"),
     "open_data_store": ("scinexus.io", "open_data_store"),
+    "set_parallel_backend": ("scinexus.parallel", "set_parallel_backend"),
+    "get_parallel_backend": ("scinexus.parallel", "get_parallel_backend"),
     "set_summary_display": ("scinexus.data_store", "set_summary_display"),
     "get_summary_display": ("scinexus.data_store", "get_summary_display"),
     "set_id_from_source": ("scinexus.data_store", "set_id_from_source"),

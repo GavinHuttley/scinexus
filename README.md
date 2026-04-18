@@ -5,7 +5,7 @@
 
 # scinexus
 
-*A composable app infrastructure for scientific computing. What dataclasses are for structured data, `scinexus` apps are for structured algorithms.*
+*`scinexus` is a framework for rapid development of data processing applications. It enables interoperability between objects through defined data types, allowing development of scientific domain app ecosystems. What dataclasses are for structured data, `scinexus` apps are for structured algorithms.*
 
 Many scientific problems require repeating calculations across many files or database records. Such tasks suit data-level parallelism, but writing robust, maintainable code for them is often tedious and quickly becomes complex.
 
@@ -113,7 +113,7 @@ app = load_csv() + summarise(column="price")
 
 - Type checking at composition time
 - Durable computing -- failures recorded as `NotCompleted` records, not exceptions
-- Data-level parallel execution via `loky` or MPI
+- Data-level parallel execution with pluggable backends (stdlib, loky, MPI, or custom)
 - Progress bars (`tqdm` or `rich`)
 - Automated logging and citation tracking
 - Checkpointing via data stores (directory, SQLite)
