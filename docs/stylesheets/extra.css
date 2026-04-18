@@ -1,0 +1,27 @@
+@import url('https://fonts.bunny.net/css?family=orbitron:400,500,700&display=swap');
+
+.md-header__topic:first-child .md-ellipsis {
+    font-family: 'Orbitron', sans-serif;
+}
+
+[data-md-color-scheme="slate"] .md-logo img,
+[data-md-color-scheme="slate"] .md-nav__button.md-logo img {
+    content: url('../images/scinexus-bw-icon.png');
+}
+
+[data-md-color-scheme="default"] .only-dark {
+    display: none;
+}
+
+[data-md-color-scheme="slate"] .only-light {
+    display: none;
+}
+
+[data-md-color-scheme="slate"] .only-dark {
+    display: inline;
+}
+
+[data-md-color-scheme="slate"] {
+    --md-mermaid-label-fg-color: #000;
+    --md-mermaid-node-bg-color: #fff;
+}
