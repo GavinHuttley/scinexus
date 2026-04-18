@@ -719,7 +719,7 @@ def test_no_progress_child_accepts_leave():
 
 def test_tqdm_bar_width_default():
     tp = TqdmProgress()
-    assert tp._bar_width == 60  # noqa: SLF001
+    assert tp._bar_width is None  # noqa: SLF001
 
 
 def test_tqdm_bar_width_passed_as_ncols():
@@ -754,7 +754,7 @@ def test_tqdm_bar_width_propagated_to_child():
 
 def test_rich_bar_width_default():
     rp = RichProgress()
-    assert rp._bar_width == 60  # noqa: SLF001
+    assert rp._bar_width is None  # noqa: SLF001
 
 
 def test_rich_bar_width_applied_to_bar_column():

@@ -162,7 +162,7 @@ class TqdmProgress(Progress):
         dynamic_ncols: bool = True,
         leave: bool | None = None,
         colour: str | None = None,
-        bar_width: int | None = 60,
+        bar_width: int | None = None,
         **tqdm_kwargs: Any,
     ) -> None:
         """
@@ -324,7 +324,7 @@ class RichProgress(Progress):
         disable: bool = False,
         leave: bool = False,
         colour: str | None = None,
-        bar_width: int | None = 60,
+        bar_width: int | None = None,
         **rich_kwargs: Any,
     ) -> None:
         """
