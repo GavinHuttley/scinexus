@@ -9,7 +9,7 @@ from scinexus.progress import (
     RichProgress,
     TqdmProgress,
     get_progress,
-    set_default_progress,
+    set_progress_backend,
 )
 
 
@@ -17,7 +17,7 @@ from scinexus.progress import (
 def _reset_default():
     """Reset the module-level default after each test."""
     yield
-    set_default_progress(None)
+    set_progress_backend(None)
 
 
 def test_progress_abc_cannot_instantiate():
@@ -273,58 +273,58 @@ def test_get_progress_default_arg_returns_no_progress():
 
 def test_set_default_no_progress_instance():
     np = NoProgress()
-    set_default_progress(np)
+    set_progress_backend(np)
     assert isinstance(get_progress(True), NoProgress)
 
 
 def test_set_default_reset_with_none():
-    set_default_progress(NoProgress())
-    set_default_progress(None)
+    set_progress_backend(NoProgress())
+    set_progress_backend(None)
     assert isinstance(get_progress(True), TqdmProgress)
 
 
 def test_set_default_preserves_specific_instance():
     tp = TqdmProgress(position=5)
-    set_default_progress(tp)
+    set_progress_backend(tp)
     result = get_progress(True)
     assert result is tp
 
 
 def test_set_default_false_unaffected():
-    set_default_progress(TqdmProgress())
+    set_progress_backend(TqdmProgress())
     assert isinstance(get_progress(False), NoProgress)
 
 
 def test_set_default_passthrough_unaffected():
     np = NoProgress()
-    set_default_progress(TqdmProgress())
+    set_progress_backend(TqdmProgress())
     assert get_progress(np) is np
 
 
 def test_set_default_string_tqdm():
-    set_default_progress("tqdm")
+    set_progress_backend("tqdm")
     assert isinstance(get_progress(True), TqdmProgress)
 
 
 def test_set_default_string_rich():
-    set_default_progress("rich")
+    set_progress_backend("rich")
     assert isinstance(get_progress(True), RichProgress)
 
 
 def test_set_default_invalid_string_raises():
     with pytest.raises(ValueError, match="unknown progress type"):
-        set_default_progress("invalid")
+        set_progress_backend("invalid")
 
 
 def test_set_default_string_tqdm_with_kwargs():
-    set_default_progress("tqdm", colour="green")
+    set_progress_backend("tqdm", colour="green")
     result = get_progress(True)
     assert isinstance(result, TqdmProgress)
     assert result._colour == "green"  # noqa: SLF001
 
 
 def test_set_default_string_rich_with_kwargs():
-    set_default_progress("rich", colour="blue", leave=True)
+    set_progress_backend("rich", colour="blue", leave=True)
     result = get_progress(True)
     assert isinstance(result, RichProgress)
     assert result._colour == "blue"  # noqa: SLF001
@@ -719,7 +719,7 @@ def test_no_progress_child_accepts_leave():
 
 def test_tqdm_bar_width_default():
     tp = TqdmProgress()
-    assert tp._bar_width == 60  # noqa: SLF001
+    assert tp._bar_width is None  # noqa: SLF001
 
 
 def test_tqdm_bar_width_passed_as_ncols():
@@ -754,7 +754,7 @@ def test_tqdm_bar_width_propagated_to_child():
 
 def test_rich_bar_width_default():
     rp = RichProgress()
-    assert rp._bar_width == 60  # noqa: SLF001
+    assert rp._bar_width is None  # noqa: SLF001
 
 
 def test_rich_bar_width_applied_to_bar_column():
@@ -869,21 +869,21 @@ def test_get_progress_kwargs_forwarded():
 
 
 def test_get_progress_kwargs_with_default_creates_new_instance():
-    set_default_progress("tqdm")
+    set_progress_backend("tqdm")
     result = get_progress(True, colour="green")
     assert isinstance(result, TqdmProgress)
     assert result._colour == "green"  # noqa: SLF001
 
 
 def test_get_progress_kwargs_with_rich_default():
-    set_default_progress("rich")
+    set_progress_backend("rich")
     result = get_progress(True, colour="blue")
     assert isinstance(result, RichProgress)
     assert result._colour == "blue"  # noqa: SLF001
 
 
 def test_get_progress_no_kwargs_returns_default():
-    set_default_progress("tqdm")
+    set_progress_backend("tqdm")
     default = get_progress(True)
     assert default is get_progress(True)
 
@@ -891,6 +891,13 @@ def test_get_progress_no_kwargs_returns_default():
 def test_get_progress_kwargs_with_instance_ignored():
     tp = TqdmProgress()
     assert get_progress(tp, colour="green") is tp
+
+
+def test_set_progress_backend_rich_not_installed():
+    """set_progress_backend("rich") raises ImportError when rich is missing"""
+    with patch.dict("sys.modules", {"rich": None}):
+        with pytest.raises(ImportError, match="pip install scinexus"):
+            set_progress_backend("rich")
 
 
 def test_get_progress_kwargs_false_ignored():

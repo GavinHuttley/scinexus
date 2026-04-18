@@ -162,7 +162,7 @@ class TqdmProgress(Progress):
         dynamic_ncols: bool = True,
         leave: bool | None = None,
         colour: str | None = None,
-        bar_width: int | None = 60,
+        bar_width: int | None = None,
         **tqdm_kwargs: Any,
     ) -> None:
         """
@@ -324,7 +324,7 @@ class RichProgress(Progress):
         disable: bool = False,
         leave: bool = False,
         colour: str | None = None,
-        bar_width: int | None = 60,
+        bar_width: int | None = None,
         **rich_kwargs: Any,
     ) -> None:
         """
@@ -464,7 +464,7 @@ class RichProgress(Progress):
 _default_progress: Progress | None = None
 
 
-def set_default_progress(
+def set_progress_backend(
     progress: ProgressType | Progress | None = None, **kwargs: Any
 ) -> None:
     """Set the default Progress used when ``show_progress=True``.
@@ -485,6 +485,11 @@ def set_default_progress(
     elif progress == "tqdm":
         _default_progress = TqdmProgress(**kwargs)
     elif progress == "rich":
+        try:
+            import rich  # noqa: F401
+        except ImportError:
+            msg = "rich is not installed, use pip install scinexus[rich]"
+            raise ImportError(msg) from None
         _default_progress = RichProgress(**kwargs)
     else:
         msg = f"unknown progress type {progress!r}, expected 'tqdm', 'rich', or a Progress instance"
@@ -498,11 +503,11 @@ def get_progress(show_progress: bool | Progress = False, **kwargs: Any) -> Progr
     ----------
     show_progress
         If a ``Progress`` instance, returned as-is. If ``True``, returns the
-        module default (set via ``set_default_progress``, or ``TqdmProgress``).
+        module default (set via ``set_progress_backend``, or ``TqdmProgress``).
         If falsy, returns ``NoProgress``.
     **kwargs
         additional keyword arguments forwarded to the backend constructor.
-        When a default has been set via ``set_default_progress``, a new
+        When a default has been set via ``set_progress_backend``, a new
         instance of the same type is created with these kwargs. Ignored
         when ``show_progress`` is a ``Progress`` instance.
     """

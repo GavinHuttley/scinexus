@@ -4,14 +4,14 @@
 
 ## Choosing the progress bar backend
 
-Use `set_default_progress` to switch between backends. The default is `tqdm`.
+Use `set_progress_backend` to switch between backends. The default is `tqdm`.
 
 ```python { notest }
 import scinexus
 
-scinexus.set_default_progress("rich")  # switch to rich
-scinexus.set_default_progress("tqdm")  # switch back to tqdm
-scinexus.set_default_progress(None)  # reset to default (tqdm)
+scinexus.set_progress_backend("rich")  # switch to rich
+scinexus.set_progress_backend("tqdm")  # switch back to tqdm
+scinexus.set_progress_backend(None)  # reset to default (tqdm)
 ```
 
 ## Getting a progress bar
@@ -71,7 +71,7 @@ pbar = scinexus.get_progress(show_progress=RichProgress())
     ```python { notest }
     import scinexus
 
-    scinexus.set_default_progress("rich")
+    scinexus.set_progress_backend("rich")
     pbar = scinexus.get_progress(show_progress=True)
     child = pbar.child()
 

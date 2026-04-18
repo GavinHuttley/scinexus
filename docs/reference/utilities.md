@@ -18,6 +18,14 @@ API for introspection helpers and type namespace registration.
     options:
       show_root_heading: true
 
+::: scinexus.typing.SerialisableType
+    options:
+      show_root_heading: true
+
+::: scinexus.typing.IdentifierType
+    options:
+      show_root_heading: true
+
 ## Introspection helpers
 
 ::: scinexus.misc.get_object_provenance

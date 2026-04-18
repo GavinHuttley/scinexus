@@ -12,7 +12,6 @@ dependencies = [
     "scitrack",
     "tqdm",
     "typeguard",
-    "loky",
 ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
@@ -29,6 +28,7 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+loky = ["loky"]
 mpi = ["mpi4py"]
 rich = ["rich"]
 

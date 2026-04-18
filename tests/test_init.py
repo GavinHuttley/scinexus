@@ -10,7 +10,7 @@ def test_get_progress():
 
 
 def test_set_default_progress():
-    scinexus.set_default_progress(None)
+    scinexus.set_progress_backend(None)
 
 
 def test_lazy_import_open_data_store():
