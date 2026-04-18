@@ -12,12 +12,12 @@
 #
 # Read more: https://zensical.org/docs/setup/basics/#site_name
 site_name = "scinexus"
-
+repo_url = "https://github.com/cogent3/scinexus"
 # The site_description is included in the HTML head and should contain a
 # meaningful description of the site content for use by search engines.
 #
 # Read more: https://zensical.org/docs/setup/basics/#site_description
-site_description = "A new project generated from the default template project."
+site_description = "A framework for rapid development of data processing applications."
 
 # The site_author attribute. This is used in the HTML head element.
 #
@@ -287,8 +287,8 @@ toggle.name = "Switch to light mode"
 # The "extra" section contains miscellaneous settings.
 # ----------------------------------------------------------------------------
 #[[project.extra.social]]
-#icon = "fontawesome/brands/github"
-#link = "https://github.com/user/repo"
+icon = "fontawesome/brands/github"
+link = "https://github.com/cogent3/scinexus"
 
 [project.markdown_extensions.pymdownx.superfences]
 custom_fences = [
