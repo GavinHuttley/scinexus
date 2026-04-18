@@ -121,9 +121,9 @@ def test_set_parallel_backend_loky_not_installed():
 
 
 def test_set_parallel_backend_mpi_not_available():
-    """set_parallel_backend('mpi') raises RuntimeError when MPI unavailable"""
+    """set_parallel_backend('mpi') raises ImportError when mpi4py is missing"""
     with patch.object(parallel, "MPI", None):
-        with pytest.raises(RuntimeError, match="Cannot use MPI"):
+        with pytest.raises(ImportError, match="pip install scinexus"):
             set_parallel_backend("mpi")
 
 

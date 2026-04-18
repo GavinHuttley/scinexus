@@ -367,6 +367,9 @@ def set_parallel_backend(
             raise ImportError(msg) from None
         _default_backend = LokyBackend()
     elif backend == "mpi":
+        if MPI is None:
+            msg = "mpi4py is not installed, use pip install scinexus[mpi]"
+            raise ImportError(msg)
         _default_backend = MPIBackend()
     else:
         msg = (
