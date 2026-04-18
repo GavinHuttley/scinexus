@@ -893,6 +893,13 @@ def test_get_progress_kwargs_with_instance_ignored():
     assert get_progress(tp, colour="green") is tp
 
 
+def test_set_progress_backend_rich_not_installed():
+    """set_progress_backend("rich") raises ImportError when rich is missing"""
+    with patch.dict("sys.modules", {"rich": None}):
+        with pytest.raises(ImportError, match="pip install scinexus"):
+            set_progress_backend("rich")
+
+
 def test_get_progress_kwargs_false_ignored():
     result = get_progress(False, colour="green")
     assert isinstance(result, NoProgress)

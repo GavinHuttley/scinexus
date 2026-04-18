@@ -485,6 +485,11 @@ def set_progress_backend(
     elif progress == "tqdm":
         _default_progress = TqdmProgress(**kwargs)
     elif progress == "rich":
+        try:
+            import rich  # noqa: F401
+        except ImportError:
+            msg = "rich is not installed, use pip install scinexus[rich]"
+            raise ImportError(msg) from None
         _default_progress = RichProgress(**kwargs)
     else:
         msg = f"unknown progress type {progress!r}, expected 'tqdm', 'rich', or a Progress instance"

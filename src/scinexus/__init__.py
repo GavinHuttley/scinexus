@@ -46,8 +46,8 @@ __all__ = [
     "is_app_composable",
     "open_",
     "open_data_store",
-    "set_progress_backend",
     "set_id_from_source",
+    "set_progress_backend",
     "set_summary_display",
 ]
 
