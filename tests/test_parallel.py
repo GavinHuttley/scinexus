@@ -10,9 +10,11 @@ import pytest
 from scinexus import parallel
 from scinexus.parallel import (
     LokyBackend,
+    MPIBackend,
     MultiprocessBackend,
     Parallel,
     PicklableAndCallable,
+    _effective_backend,
     as_completed,
     get_default_chunksize,
     get_parallel_backend,
@@ -141,6 +143,21 @@ def test_get_parallel_backend_caches():
     assert b1 is b2
 
 
+def test_effective_backend_caches_mpi():
+    """_effective_backend caches the MPIBackend instance"""
+    mock_mpi = type("FakeMPI", (), {"COMM_WORLD": None})
+    with (
+        patch.object(parallel, "USING_MPI", True),
+        patch.object(parallel, "MPI", mock_mpi),
+        patch.object(parallel, "_mpi_backend", None),
+        patch.object(MPIBackend, "__init__", lambda self: None),
+    ):
+        b1 = _effective_backend()
+        b2 = _effective_backend()
+        assert b1 is b2
+        assert isinstance(b1, MPIBackend)
+
+
 def test_multiprocess_imap():
     """MultiprocessBackend.imap returns ordered results"""
     backend = MultiprocessBackend()
@@ -176,9 +193,9 @@ def test_multiprocess_get_size():
 
 
 def test_multiprocess_max_workers_too_large():
-    """max_workers >= cpu_count raises ValueError"""
+    """max_workers > cpu_count raises ValueError"""
     backend = MultiprocessBackend()
-    n = multiprocessing.cpu_count()
+    n = multiprocessing.cpu_count() + 1
     with pytest.raises(ValueError, match="max_workers"):
         list(backend.imap(_double, [1], max_workers=n))
 
@@ -303,8 +320,8 @@ def test_imap_invalid_if_serial():
 
 
 def test_imap_max_workers_too_large():
-    """max_workers >= cpu_count raises ValueError"""
-    n = multiprocessing.cpu_count()
+    """max_workers > cpu_count raises ValueError"""
+    n = multiprocessing.cpu_count() + 1
     with pytest.raises(ValueError, match="max_workers"):
         list(parallel.imap(_double, [1], max_workers=n))
 

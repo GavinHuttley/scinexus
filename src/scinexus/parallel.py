@@ -280,9 +280,9 @@ def _resolve_max_workers_local(max_workers: int | None) -> int:
     """resolve max_workers for local (non-MPI) backends"""
     cpu = multiprocessing.cpu_count()
     if not max_workers:
-        return cpu - 1
-    if max_workers >= cpu:
-        msg = f"max_workers ({max_workers}) must be less than CPU count ({cpu})"
+        return cpu
+    if max_workers > cpu:
+        msg = f"max_workers ({max_workers}) must be less than or equal to CPU count ({cpu})"
         raise ValueError(msg)
     return max_workers
 
@@ -290,7 +290,7 @@ def _resolve_max_workers_local(max_workers: int | None) -> int:
 def _clamp_max_workers_local(max_workers: int | None) -> int:
     """clamp max_workers for local as_completed (silent, no raise)"""
     if not max_workers or max_workers > multiprocessing.cpu_count():
-        return multiprocessing.cpu_count() - 1
+        return multiprocessing.cpu_count()
     return max_workers
 
 
@@ -339,6 +339,7 @@ def get_default_chunksize(s: Sized, max_workers: int) -> int:
 
 
 _default_backend: Parallel | None = None
+_mpi_backend: MPIBackend | None = None
 
 
 def set_parallel_backend(
@@ -398,8 +399,11 @@ def _effective_backend() -> Parallel:
     setting, and introspection functions like ``get_rank()`` must use the
     MPI communicator to report correctly.
     """
+    global _mpi_backend  # noqa: PLW0603
     if USING_MPI:
-        return MPIBackend()
+        if _mpi_backend is None:
+            _mpi_backend = MPIBackend()
+        return _mpi_backend
     return get_parallel_backend()
 
 
