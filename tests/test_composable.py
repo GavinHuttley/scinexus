@@ -2012,6 +2012,67 @@ def test_apply_to_with_logging(tmp_path):
     assert any("log" in str(m) for m in out_dstore.logs)
 
 
+def test_apply_to_logger_true(tmp_path):
+    from scinexus.data_store import DataMember
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item.txt").write_text("data")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    out = tmp_path / "out"
+    out_dstore = DataStoreDirectory(out, mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    result = process.apply_to(dstore, logger=True, show_progress=False)
+    assert len(result) == 1
+    assert any("log" in str(m) for m in out_dstore.logs)
+
+
+def test_apply_to_logger_false(tmp_path):
+    from scinexus.data_store import DataMember
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item.txt").write_text("data")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    out = tmp_path / "out"
+    out_dstore = DataStoreDirectory(out, mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    result = process.apply_to(dstore, logger=False, show_progress=False)
+    assert len(result) == 1
+    assert len(list(out_dstore.logs)) == 0
+    assert process.logger is None
+
+
 def test_not_completed_to_json():
     """NotCompleted.to_json returns valid JSON"""
     import json
@@ -2393,7 +2454,7 @@ def test_apply_to_no_logger(DATA_DIR, tmp_dir):
 
 
 @pytest.mark.cogent3
-@pytest.mark.parametrize("logger_val", [True, "somepath.log"])
+@pytest.mark.parametrize("logger_val", ["somepath.log"])
 def test_apply_to_invalid_logger(DATA_DIR, tmp_dir, logger_val):
     """incorrect logger value raises TypeError"""
     dstore = open_data_store(DATA_DIR, suffix="fasta", limit=3)

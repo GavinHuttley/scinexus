@@ -741,7 +741,7 @@ class WriterApp(ComposableApp[T, R]):
         id_from_source: GetIdFuncType | None = None,
         parallel: bool = False,
         par_kw: dict[str, Any] | None = None,
-        logger: CachingLogger | None = None,
+        logger: bool | CachingLogger = True,
         cleanup: bool = True,
         show_progress: bool | Progress = False,
     ) -> DataStoreABC:
@@ -766,9 +766,9 @@ class WriterApp(ComposableApp[T, R]):
         par_kw
             dict of values for configuring parallel execution.
         logger
-            Argument ignored if not an io.writer. If a scitrack logger not provided,
-            one is created with a name that defaults to the composable function names
-            and the process ID.
+            Controls logging. If True (default), a CachingLogger is created
+            automatically. If False, logging is disabled. A CachingLogger
+            instance can be passed directly.
         cleanup
             after copying of log files into the data store, it is deleted
             from the original location
@@ -821,11 +821,11 @@ class WriterApp(ComposableApp[T, R]):
             raise ValueError(msg)
 
         self.set_logger(logger)
-        if self.logger:
+        active_logger: CachingLogger | None = self.logger
+        if active_logger:
             start = time.time()
-            logger = self.logger
-            logger.log_message(str(self), label="composable function")
-            logger.log_versions(["scinexus"])
+            active_logger.log_message(str(self), label="composable function")
+            active_logger.log_versions(["scinexus"])
 
         proxied = _proxy_input(inputs.values())
         for result in self.as_completed(
@@ -838,19 +838,17 @@ class WriterApp(ComposableApp[T, R]):
                 data=getattr(result, "obj", result),
                 identifier=id_from_source(result),  # type: ignore[arg-type]
             )
-            if self.logger:
-                assert logger is not None
+            if active_logger:
                 md5 = getattr(member, "md5", None)
-                logger.log_message(str(member), label="output")
+                active_logger.log_message(str(member), label="output")
                 if md5:
-                    logger.log_message(md5, label="output md5sum")
+                    active_logger.log_message(md5, label="output md5sum")
 
-        if self.logger:
-            assert logger is not None
+        if active_logger:
             taken = time.time() - start
-            logger.log_message(f"{taken}", label="TIME TAKEN")
-            log_file_path = Path(logger.log_file_path)
-            logger.shutdown()
+            active_logger.log_message(f"{taken}", label="TIME TAKEN")
+            log_file_path = Path(active_logger.log_file_path)
+            active_logger.shutdown()
             self.data_store.write_log(
                 unique_id=log_file_path.name,
                 data=log_file_path.read_text(),
@@ -863,11 +861,11 @@ class WriterApp(ComposableApp[T, R]):
 
         return self.data_store
 
-    def set_logger(self, logger: CachingLogger | bool | None = None) -> None:
+    def set_logger(self, logger: bool | CachingLogger = True) -> None:
         if logger is False:
             self.logger = None
             return
-        if logger is None:
+        if logger is True:
             logger = CachingLogger(create_dir=True)
         if not isinstance(logger, CachingLogger):
             msg = f"logger must be of type CachingLogger not {type(logger)}"
