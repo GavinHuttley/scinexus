@@ -7,7 +7,7 @@
 
 *What `dataclasses` and `attrs` are for structured data, `scinexus` apps are for structured algorithms.*
 
-`scinexus` (pronounced 'sigh-nexus') is a framework for rapid development of data processing applications. It enables interoperability between apps through defined data types, allowing development of scientific domain app ecosystems (for examples see [cogent3](https://cogent3.org/doc/app/index-app.html) and [piqtree](https://piqtree.readthedocs.io/en/stable/)).
+`scinexus` (pronounced 'sigh-nexus') is a Python framework for rapid development of data processing applications. It enables interoperability between apps through defined data types, allowing development of scientific domain app ecosystems (for examples see [cogent3](https://cogent3.org/doc/app/index-app.html) and [piqtree](https://piqtree.readthedocs.io/en/stable/)).
 
 Many scientific problems require repeating calculations across many files or database records. Such tasks suit data-level parallelism on multi-core CPUs, but writing robust, maintainable code for them is often tedious and quickly becomes complex.
 
@@ -28,9 +28,9 @@ With `scinexus` apps, you can use a functional programming style when developing
 - Checkpointing via data stores
 - Customisable experience (progress bars[^2], parallelisation[^3], data store representations etc..)
 
-[^1]: Failures are automatically recorded as `NotCompleted` records which get propagated and stored in [data stores](explanation/not-completed-design.md).
+[^1]: Failures are automatically recorded as `NotCompleted` records which get propagated and stored in [data stores](explanation/not-completed-design.md). These records record salient details that help you identify the cause of the failure.
 [^2]: `tqdm` is the default because of its robustness in notebooks, but you can choose `rich`
-[^3]: The default is just to use the standard library multi-processing module. If you're using Jupyter Notebooks, however, it's recommended that you use `loky`. This is an [installation option](install.md#optional-extras) and [configuration is easy](howto/run-in-parallel.md#choosing-a-parallel-backend).
+[^3]: The default is Python’s standard library `multiprocessing` module. If you're using Jupyter Notebooks, however, it's recommended that you use `loky`. This is an [installation option](install.md#optional-extras) and [configuration is easy](howto/run-in-parallel.md#choosing-a-parallel-backend).
 
 ## Standalone utilities
 
@@ -38,8 +38,8 @@ With `scinexus` apps, you can use a functional programming style when developing
 
 ## Get started
 
-- **Install `scinexus`** -- [installing from pypi](install.md)
-- **Build algorithms** -- start with [how to write apps](howto/write-a-function-app.md)
-- **Build applications for others** -- read [Why composable apps?](explanation/why-composable-apps.md)
+- **Install `scinexus`** -- see [Installing from pypi](install.md)
+- **Build algorithms** -- see [How to write apps](howto/write-a-function-app.md)
+- **Build applications for others** -- see [Why composable apps?](explanation/why-composable-apps.md)
 - **Use existing apps** -- see [Composing apps](tutorials/composing-apps.md)
 

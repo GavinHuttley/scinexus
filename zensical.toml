@@ -44,9 +44,53 @@ Copyright &copy; 2026 The authors
 # can be defined using TOML syntax.
 #
 # Read more: https://zensical.org/docs/setup/navigation/
-# nav = [
-#   { "Get started" = "index.md" },
-# ]
+nav = [
+    { "Home" = "index.md" },
+    { "Install" = "install.md" },
+    { "Tutorials" = [
+        "tutorials/index.md",
+        "tutorials/composing-apps.md",
+        "tutorials/processing-a-dataset.md",
+    ] },
+    { "How-to guides" = [
+        "howto/index.md",
+        "howto/write-a-function-app.md",
+        "howto/write-a-class-app.md",
+        "howto/handle-failures.md",
+        "howto/use-data-stores.md",
+        "howto/read-and-write-files.md",
+        "howto/run-in-parallel.md",
+        "howto/track-progress.md",
+        "howto/log-and-cite.md",
+        "howto/customise-display-and-ids.md",
+        "howto/extend-type-checking.md",
+        "howto/migrate-from-cogent3.md",
+    ] },
+    { "Explanation" = [
+        "explanation/index.md",
+        "explanation/why-composable-apps.md",
+        "explanation/app-lifecycle.md",
+        "explanation/flow.md",
+        "explanation/type-system.md",
+        "explanation/not-completed-design.md",
+        "explanation/source-tracking.md",
+        "explanation/customisation-hooks.md",
+        "explanation/data-store-model.md",
+    ] },
+    { "API reference" = [
+        "reference/index.md",
+        "reference/define-app.md",
+        "reference/app-classes.md",
+        "reference/not-completed.md",
+        "reference/source-proxy.md",
+        "reference/data-stores.md",
+        "reference/io-util.md",
+        "reference/parallel.md",
+        "reference/progress.md",
+        "reference/deserialise.md",
+        "reference/utilities.md",
+    ] },
+]
 
 # With the "extra_css" option you can add your own CSS styling to customize
 # your Zensical project according to your needs. You can add any number of
@@ -85,16 +129,6 @@ use_directory_urls = false
 # - https://zensical.org/docs/customization/#extending-the-theme
 #
 #custom_dir = "overrides"
-
-# With the "favicon" option you can set your own image to use as the icon
-# browsers will use in the browser title bar or tab bar. The path provided
-# must be relative to the "docs_dir".
-#
-# Read more:
-# - https://zensical.org/docs/setup/logo-and-icons/#favicon
-# - https://developer.mozilla.org/en-US/docs/Glossary/Favicon
-#
-# favicon = "images/scinexus-wb-icon.svg"
 
 language = "en"
 
@@ -208,7 +242,7 @@ features = [
     # When sticky tabs are enabled, navigation tabs will lock below the header
     # and always remain visible when scrolling down.
     # https://zensical.org/docs/setup/navigation/#sticky-navigation-tabs
-    #"navigation.tabs.sticky",
+    "navigation.tabs.sticky",
 
     # A back-to-top button can be shown when the user, after scrolling down,
     # starts to scroll up again.
@@ -243,18 +277,6 @@ features = [
 # in your "docs_dir", e.g., to use `docs/assets/logo.png` you would set:
 # ----------------------------------------------------------------------------
 logo = "images/logo-bw.png"
-
-# ----------------------------------------------------------------------------
-# If you don't have a dedicated project logo, you can use a built-in icon from
-# the icon sets shipped in Zensical. Please note that the setting lives in a
-# different subsection, and that the above take precedence over the icon.
-#
-# Read more:
-# - https://zensical.org/docs/setup/logo-and-icons
-# - https://github.com/zensical/ui/tree/master/dist/.icons
-# ----------------------------------------------------------------------------
-#[project.theme.icon]
-#logo = "lucide/smile"
 
 # ----------------------------------------------------------------------------
 # In the "font" subsection you can configure the fonts used. By default, fonts

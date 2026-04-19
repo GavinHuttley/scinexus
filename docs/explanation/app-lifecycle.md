@@ -41,4 +41,3 @@ from scinexus import NonComposableApp
 !!! info
 
     You can create your app by inheriting from one of the above base classes. Or you can use the `define_app` decorator. Using the decorator is the fastest way to turn something you already have into a composable app. Under the hood, the decorator is basically injecting the base classes described above into the inheritance of your own classes.
-
