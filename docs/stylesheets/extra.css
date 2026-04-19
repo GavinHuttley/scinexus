@@ -6,7 +6,7 @@
 
 [data-md-color-scheme="slate"] .md-logo img,
 [data-md-color-scheme="slate"] .md-nav__button.md-logo img {
-    content: url('../images/scinexus-bw-icon.png');
+    content: url('../images/logo-wb.png');
 }
 
 [data-md-color-scheme="default"] .only-dark {

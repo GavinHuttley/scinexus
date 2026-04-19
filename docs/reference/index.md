@@ -4,8 +4,8 @@ Complete API documentation for all public `scinexus` modules.
 
 ## App framework
 
-- [define_app](define-app.md) -- the `define_app` decorator and `AppType` enum
 - [App classes](app-classes.md) -- `AppBase`, `ComposableApp`, `WriterApp`, `LoaderApp`, `NonComposableApp`
+- [define_app](define-app.md) -- the `define_app` decorator and `AppType` enum
 - [NotCompleted](not-completed.md) -- the `NotCompleted` sentinel and `NotCompletedType` enum
 - [Source tracking](source-proxy.md) -- `source_proxy` and `propagate_source` for data provenance
 - [Data stores](data-stores.md) -- `open_data_store` and data store backends
