@@ -56,10 +56,10 @@ class register_datastore_reader:
             if suffix := sfx.strip():
                 suffix = suffix if suffix[0] == "." else f".{suffix}"
 
-            if sfx in _datastore_reader_map:
-                msg = f"{sfx!r} already in {list(_datastore_reader_map)}"
+            if suffix in _datastore_reader_map:
+                msg = f"{suffix!r} already in {list(_datastore_reader_map)}"
                 raise ValueError(msg)  # noqua: TRY004
-            suffixes[i] = sfx
+            suffixes[i] = suffix
 
         self._type_str = tuple(suffixes)
 
