@@ -38,29 +38,28 @@ class register_datastore_reader:
 
     def __init__(self, *args: str | None) -> None:
         suffixes: list[str | None] = list(args)
-        for i, suffix in enumerate(suffixes):
-            if suffix is None:
-                if suffix in _datastore_reader_map:
-                    msg = f"{suffix!r} already in {list(_datastore_reader_map)}"
-                    raise ValueError(msg)
+        for i, sfx in enumerate(suffixes):
+            if sfx is None:
+                if sfx in _datastore_reader_map:
+                    msg = f"{sfx!r} already in {list(_datastore_reader_map)}"
+                    raise ValueError(msg)  # noqua: TRY004
                 continue
 
-            if not isinstance(suffix, str):
-                msg = f"{suffix!r} is not a string"
+            if not isinstance(sfx, str):
+                msg = f"{sfx!r} is not a string"
                 raise TypeError(msg)
 
-            if suffix.strip() == suffix and not suffix:
+            if sfx.strip() == sfx and not sfx:
                 msg = "cannot have white-space suffix"
-                raise ValueError(msg)
+                raise ValueError(msg)  # noqua: TRY004
 
-            suffix = suffix.strip()
-            if suffix:
+            if suffix := sfx.strip():
                 suffix = suffix if suffix[0] == "." else f".{suffix}"
 
-            if suffix in _datastore_reader_map:
-                msg = f"{suffix!r} already in {list(_datastore_reader_map)}"
-                raise ValueError(msg)
-            suffixes[i] = suffix
+            if sfx in _datastore_reader_map:
+                msg = f"{sfx!r} already in {list(_datastore_reader_map)}"
+                raise ValueError(msg)  # noqua: TRY004
+            suffixes[i] = sfx
 
         self._type_str = tuple(suffixes)
 
@@ -101,7 +100,7 @@ def open_data_store(
     mode = Mode(mode)
     if not isinstance(suffix, str | type(None)):
         msg = f"suffix {type(suffix)} not one of string or None"
-        raise ValueError(msg)
+        raise TypeError(msg)
 
     kwargs = {"limit": limit, "mode": mode, "suffix": suffix, **kwargs}
     base_path = Path(base_path)
@@ -143,7 +142,7 @@ def pickle_it(data: typing.Any) -> bytes:
 @define_app(skip_not_completed=False)
 def unpickle_it(data: bytes) -> typing.Any:
     "Deserialises pickle data."
-    return pickle.loads(data)
+    return pickle.loads(data)  # noqa: S301
 
 
 @define_app(skip_not_completed=False)

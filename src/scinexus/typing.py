@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from types import UnionType
 from typing import (
+    TYPE_CHECKING,
     Any,
     ForwardRef,
     Protocol,
@@ -17,6 +17,9 @@ from typing import (
 )
 
 from scinexus.data_store import DataMemberABC
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 NESTED_HINTS = (Union, UnionType, list, tuple, set)
 
@@ -77,7 +80,7 @@ class SerialisableType(Protocol):
     def to_rich_dict(self) -> dict[str, object]: ...
 
 
-IdentifierType = Union[str, Path, DataMemberABC]
+IdentifierType = str | Path | DataMemberABC
 """accepted types for identifying members of a data store
 
 A loader app can receive a file path as a string, a ``pathlib.Path``,
@@ -136,7 +139,7 @@ def resolve_type_hint(
             resolved = tuple(
                 resolve_type_hint(c, module_globals) for c in hint.__constraints__
             )
-            return Union[resolved]  # type: ignore
+            return Union[resolved]  # type: ignore  # noqa: UP007
         msg = f"unconstrained TypeVar {hint!r} cannot be resolved"
         raise TypeError(msg)
 
@@ -144,7 +147,7 @@ def resolve_type_hint(
     origin = get_origin(hint)
     if origin is Union or isinstance(hint, UnionType):
         args = tuple(resolve_type_hint(a, module_globals) for a in get_args(hint))
-        return Union[args]  # type: ignore
+        return Union[args]  # type: ignore  # noqa: UP007
 
     # Container types (list[X], tuple[X,Y], set[X])
     if origin in (list, tuple, set):
