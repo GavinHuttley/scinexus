@@ -1,6 +1,13 @@
-# `scinexus`: composable apps for scientific computing
+<div style="text-align: center;">
+  <img src="images/logo-text-bw.svg" alt="scinexus logo" style="width: 50%; max-width: 700px;" class="only-light">
+  <img src="images/logo-text-wb.svg" alt="scinexus logo" style="width: 50%; max-width: 800px;" class="only-dark">
+</div>
 
-The main goal of `scinexus` is to make it easier to write rigorous scientific algorithms. What `dataclasses` and `attrs` are for structured data, `scinexus` apps are for structured algorithms.
+# About
+
+*What `dataclasses` and `attrs` are for structured data, `scinexus` apps are for structured algorithms.*
+
+`scinexus` is a framework for rapid development of data processing applications. It enables interoperability between apps through defined data types, allowing development of scientific domain app ecosystems (for examples see [cogent3](https://cogent3.org/doc/app/index-app.html) and [piqtree](https://piqtree.readthedocs.io/en/stable/)).
 
 Many scientific problems require repeating calculations across many files or database records. Such tasks suit data-level parallelism on multi-core CPUs, but writing robust, maintainable code for them is often tedious and quickly becomes complex.
 
@@ -9,21 +16,25 @@ With `scinexus` apps, you can use a functional programming style when developing
 !!! quote
 	If the implementation is easy to explain, it may be a good idea.
 	
-	-- Tim Peters
+	-- Tim Peters, "Zen of Python"
 
 ## What you get
 
 - Type checking at composition time
-- Durable computing, with failures automatically recorded as `NotCompleted` records
+- Durable computing[^1]
 - Greatly simplified data level parallel execution
-- Builtin progress bars (`tqdm` or `rich`)
 - Automated logging
 - Automated citation tracking
 - Checkpointing via data stores
+- Customisable experience (progress bars[^2], parallelisation[^3], data store representations etc..)
+
+[^1]: Failures are automatically recorded as `NotCompleted` records which get propagated and stored in [data stores](explanation/not-completed-design.md).
+[^2]: `tqdm` is the default because of its robustness in notebooks, but you can choose `rich`
+[^3]: The default is just to use the standard library multi-processing module. If you're using Jupyter Notebooks, however, it's recommended that you use `loky`. This is an [installation option](install.md#optional-extras) and [configuration is easy](howto/run-in-parallel.md#choosing-a-parallel-backend).
 
 ## Standalone utilities
 
-`scinexus` also provides generally useful utilities for developers of data analysis applications.  utilities for file IO, parallel execution, and progress tracking are usable independently of the app framework.
+`scinexus` also provides generally useful utilities for developers of data analysis applications. Utilities for file IO, parallel execution, and progress tracking are usable independently of the app framework.
 
 ## Get started
 
@@ -31,3 +42,4 @@ With `scinexus` apps, you can use a functional programming style when developing
 - **Build algorithms** -- start with [how to write apps](howto/write-a-function-app.md)
 - **Build applications for others** -- read [Why composable apps?](explanation/why-composable-apps.md)
 - **Use existing apps** -- see [Composing apps](tutorials/composing-apps.md)
+

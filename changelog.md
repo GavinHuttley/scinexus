@@ -11,6 +11,10 @@ Changes from the original cogent3 app infrastructure.
 - `NotCompletedType` enum (`ERROR`, `FAIL`, `BUG`) for categorising failure types, replacing bare strings.
 - `set_summary_display()` / `get_summary_display()` — a module-level registry allowing downstream packages (e.g. cogent3) to register custom display functions for data store summary methods (`describe`, `summary_logs`, `summary_not_completed`, `summary_citations`, `validate`).
 - `citations` and `bib` properties on apps for tracking software citations via the `citeable` library. Citations propagate through composed pipelines.
+- Pluggable parallel backends -- choose between stdlib multiprocessing, loky, or MPI via `set_parallel_backend()`.
+- Pluggable progress bars -- use `tqdm` or `rich` via the `Progress` protocol and `set_default_progress()`.
+- `set_id_from_source()` / `get_id_from_source()` -- register a custom function for extracting storage identifiers from data.
+- `apply_to()` accepts `logger=False` to disable log file creation.
 
 ## Enhancements
 

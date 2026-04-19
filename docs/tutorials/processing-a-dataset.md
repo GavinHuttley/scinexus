@@ -1,6 +1,8 @@
 # Processing a dataset
 
-*Use `open_data_store` with a loader, processor, and writer app to batch-process a directory of files `apply_to`, and enable progress bars and parallel execution. Then inspect results.*
+!!! abstract ""
+
+    Use `open_data_store` with a loader, processor, and writer app to batch-process a directory of files `apply_to`, and enable progress bars and parallel execution. Then inspect results.
 
 We will translate the DNA sequences in `raw.zip` into amino acid and store them as a sqlite database. We will interrogate the generated data store to get a synopsis of the results.
 

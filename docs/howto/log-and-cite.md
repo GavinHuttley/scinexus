@@ -1,5 +1,9 @@
 # Log and cite
 
+!!! abstract ""
+
+    How to use `scitrack` logging in apps, control logging in `apply_to`, and access citation records from composed pipelines.
+
 ## Leveraging `scitrack` for reproducibility
 
 We reproduce here one of the examples from [scitrack](https://github.com/HuttleyLab/scitrack).
@@ -33,6 +37,38 @@ We reproduce here one of the examples from [scitrack](https://github.com/Huttley
     2. This captures the version numbers of the packages our application depends on.
     3. This logs the path to `infile` and its md5sum.
     4. Until you assign the path where you want the file written, this content has been cached.
+
+## Controlling logging in `apply_to`
+
+By default, `apply_to` creates a `CachingLogger` that records the composable function, package versions, output paths, MD5 checksums of every result, and total elapsed time. The log is then written into the output data store. This is the recommended setting for production analyses because it gives you a complete, self-contained record of what ran and what it produced.
+
+```python
+result = process.apply_to(dstore)  # logger=True by default
+```
+
+You can also pass your own `CachingLogger` instance if you want to configure it beforehand or reuse one across multiple calls.
+
+```python
+from scitrack import CachingLogger
+
+LOGGER = CachingLogger()
+LOGGER.log_args()
+result = process.apply_to(dstore, logger=LOGGER)
+```
+
+### Disabling logging
+
+Set `logger=False` to skip logging entirely.
+
+```python
+result = process.apply_to(dstore, logger=False)
+```
+
+This is useful when:
+
+- **Your project is small** and a full provenance log is unnecessary.
+- **Logging is handled externally**, for example by a workflow manager or your own `CachingLogger` that wraps several `apply_to` calls.
+- **You want to avoid the overhead** of computing an MD5 checksum for every result object, which can be noticeable for large or numerous outputs.
 
 ## Make it easy for your work to be cited
 
@@ -94,10 +130,12 @@ exec_codeblock(src=src,
         version="0.1.0",
     )
 
+
     @define_app(cite=my_cite)  # (1)!
     def strict_filter(val: AlignedSeqsType) -> AlignedSeqsType:
         """Remove sequences shorter than the alignment."""
         return val.omit_bad_seqs()
+
 
     app = strict_filter()
 
@@ -168,9 +206,11 @@ exec_codeblock(src=src, annotations=["Because we are using `cogent3`, the proper
         year=2025,
     )
 
+
     @define_app(cite=my_cite)
     def strict_filter(val: AlignedSeqsType) -> AlignedSeqsType:
         return val.omit_bad_seqs()
+
 
     in_dstore = open_data_store("data/raw.zip", suffix="fa", limit=5)
     out_dstore = open_data_store("cited_results", suffix="fa", mode="w")

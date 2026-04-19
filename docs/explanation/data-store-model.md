@@ -1,6 +1,8 @@
 # Data store model
 
-How data stores map inputs to outputs via unique IDs, how checkpointing works to skip already-processed items, the three backends (directory, zip, SQLite) and when to use each, and how citations and logs are stored alongside results.
+!!! abstract ""
+
+    How data stores map inputs to outputs via unique IDs, how checkpointing works to skip already-processed items, the three backends (directory, zip, SQLite) and when to use each, and how citations and logs are stored alongside results.
 
 ## Data stores -- collections of data records
 

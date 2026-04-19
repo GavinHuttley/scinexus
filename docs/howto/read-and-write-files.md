@@ -1,6 +1,8 @@
 # Read and write files
 
-*How to use `open_()` for reading and writing files with automatic compression detection (gzip, bzip2, lzma, zip), `atomic_write` for safe file writes that clean up on failure, `iter_splitlines` and `iter_line_blocks` for streaming large files, and `is_url`/`open_url` for working with URLs.*
+!!! abstract ""
+
+    How to use `open_()` for reading and writing files with automatic compression detection (gzip, bzip2, lzma, zip), `atomic_write` for safe file writes that clean up on failure, `iter_splitlines` and `iter_line_blocks` for streaming large files, and `is_url`/`open_url` for working with URLs.
 
 ## Writing a compressed file
 

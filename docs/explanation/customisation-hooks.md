@@ -1,5 +1,9 @@
 # Customisation hooks
 
+!!! abstract ""
+
+    How `scinexus` uses module-level registry functions to let downstream packages customise summary display and identifier extraction without subclassing.
+
 ## The pattern
 
 `scinexus` uses module-level registry functions to let downstream packages customise behaviour without subclassing or monkey-patching. Each hook follows the same shape:

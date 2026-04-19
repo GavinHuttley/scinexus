@@ -1,6 +1,8 @@
 # Composing apps
 
-*In this tutorial you will compose multiple apps into a single pipeline using the `+` operator, see what happens when types don't match, and observe how `NotCompleted` propagates through a pipeline without raising exceptions.*
+!!! abstract ""
+
+    Compose multiple apps into a single pipeline using the `+` operator, see what happens when types don't match, and observe how `NotCompleted` propagates through a pipeline without raising exceptions.
 
 ## Why compose?
 

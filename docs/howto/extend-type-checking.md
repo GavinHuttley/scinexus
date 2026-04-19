@@ -1,6 +1,8 @@
 # Extend type checking
 
-*How to use `register_type_namespace` to make forward references from downstream packages resolvable at composition time, enabling third-party types in app pipelines.*
+!!! abstract ""
+
+    How to use `register_type_namespace` to make forward references from downstream packages resolvable at composition time, enabling third-party types in app pipelines.
 
 ## The problem
 

@@ -1,14 +1,18 @@
 # Why composable apps?
 
+!!! abstract ""
+
+    The design philosophy behind `scinexus` and why composing single-purpose apps leads to more robust, reproducible scientific computation.
+
+## Make your algorithms more robust
+
+As the robustness of POSIX based operating systems (think Linux, Mac OS, Unix) can attest, writing algorithms that stitch together multiple single purpose applications is a *Very Good Thing*™. This is most elegantly expressed as a part of the Unix design philosophy.
+
 ???+ quote
 
     Write programs that do one thing and do it well. Write programs to work together.
 
     — Doug McIlroy
-
-## Make your algorithms more robust
-
-As the robustness of POSIX based operating systems (think Linux, Mac OS, Unix) can attest, writing algorithms that stitch together multiple single purpose applications is a *Very Good Thing*™. This is most elegantly expressed as a part of the Unix design philosophy.
 
 **`scinexus` encourages this design pattern.** We leverage the Python type annotation system to govern the compatibility (composability) of different applications. This enables in-process composition of your applications with validation of the consistency of the pipeline and the consistency of the data being run through it.
 

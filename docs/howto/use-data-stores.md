@@ -1,6 +1,8 @@
 # Use data stores
 
-*How to use `open_data_store` in read, write, and append modes with directory, zip, and SQLite backends, iterate over members, and inspect `.completed`, `.not_completed`, and `.summary_<methods>`.*
+!!! abstract ""
+
+    How to use `open_data_store` in read, write, and append modes with directory, zip, and SQLite backends, iterate over members, and inspect `.completed`, `.not_completed`, and `.summary_<methods>`.
 
 ## How do I use a data store?
 

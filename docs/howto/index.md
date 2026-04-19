@@ -12,3 +12,4 @@ Task-oriented recipes for common `scinexus` operations, each self-contained.
 - [Log and cite](log-and-cite.md) -- `scitrack` logging and citation tracking
 - [Customise display and IDs](customise-display-and-ids.md) -- `set_summary_display` and `set_id_from_source`
 - [Extend type checking](extend-type-checking.md) -- register type namespaces for downstream packages
+- [Migrate from cogent3](migrate-from-cogent3.md) -- update code from `cogent3.app` to `scinexus`

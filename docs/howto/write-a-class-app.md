@@ -1,6 +1,8 @@
 # Write a class app
 
-*How to inherit from `scinexus` app base classes, or using the `define_app` decorator, specifying input/output type hints.*
+!!! abstract ""
+
+    How to inherit from `scinexus` app base classes, or using the `define_app` decorator, specifying input/output type hints.
 
 ## Using inheritance from a base class
 
