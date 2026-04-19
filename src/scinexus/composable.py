@@ -1061,30 +1061,30 @@ def define_app(
     sequentially invokes the composed apps. For example, the independent
     usage of app instances ``app1`` and ``app2`` as
 
-    .. code-block:: python
-
-        app2(app1(data))
+    ```python { notest }
+    app2(app1(data))
+    ```
 
     is equivalent to
 
-    .. code-block:: python
-
-        combined = app1 + app2
-        combined(data)
+    ```python { notest }
+    combined = app1 + app2
+    combined(data)
+    ```
 
     The ``app_type`` attribute is used to constrain how apps can be composed.
     ``LOADER`` and ``WRITER`` are special cases. If included, a ``LOADER``
     must always be first, e.g.
 
-    .. code-block:: python
-
-        app = a_loader + a_generic
+    ```python { notest }
+    app = a_loader + a_generic
+    ```
 
     If included, a ``WRITER`` must always be last, e.g.
 
-    .. code-block:: python
-
-        app = a_generic + a_writer
+    ```python { notest }
+    app = a_generic + a_writer
+    ```
 
     Changing the order for either of the above will result in a ``TypeError``.
 

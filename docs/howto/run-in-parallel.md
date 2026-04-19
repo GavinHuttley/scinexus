@@ -21,8 +21,8 @@
 | Backend | Install | Best for |
 |---|---|---|
 | `"multiprocess"` | included | scripts, CI, environments where you control dependencies |
-| `"loky"` | `pip install scinexus[loky]` | Jupyter notebooks, interactive sessions, long-running pools |
-| `"mpi"` | `pip install scinexus[mpi]` | HPC clusters with multiple nodes |
+| `"loky"` | `pip install "scinexus[loky]"` | Jupyter notebooks, interactive sessions, long-running pools |
+| `"mpi"` | `pip install "scinexus[mpi]"` | HPC clusters with multiple nodes |
 
 Set the backend once, typically at the top of your script or notebook:
 

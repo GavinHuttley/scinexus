@@ -128,7 +128,7 @@ class LokyBackend(Parallel):
 
     loky provides reusable process pools that are more robust than the
     stdlib ``ProcessPoolExecutor``, particularly in Jupyter notebooks.
-    Requires ``pip install scinexus[loky]``.
+    Requires ``pip install "scinexus[loky]"``.
     """
 
     def imap(
@@ -176,7 +176,7 @@ class LokyBackend(Parallel):
 class MPIBackend(Parallel):
     """parallel backend using MPI via mpi4py
 
-    Requires ``pip install scinexus[mpi]`` and an MPI implementation
+    Requires ``pip install "scinexus[mpi]"`` and an MPI implementation
     (e.g. OpenMPI).
     """
 
@@ -364,12 +364,12 @@ def set_parallel_backend(
         try:
             import loky  # noqa: F401
         except ImportError:
-            msg = "loky is not installed, use pip install scinexus[loky]"
+            msg = 'loky is not installed, use pip install "scinexus[loky]"'
             raise ImportError(msg) from None
         _default_backend = LokyBackend()
     elif backend == "mpi":
         if MPI is None:
-            msg = "mpi4py is not installed, use pip install scinexus[mpi]"
+            msg = 'mpi4py is not installed, use pip install "scinexus[mpi]"'
             raise ImportError(msg)
         _default_backend = MPIBackend()
     else:

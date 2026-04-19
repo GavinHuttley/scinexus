@@ -32,21 +32,13 @@ from scinexus import ComposableApp
 
 ### Non-composable
 
-- writers
-- generic
-- non-composable
+Non-composable apps cannot be combined with other apps into pipelines.
 
-As their names imply, loaders load, writers write and generic apps do other operations on data. Non-composable apps cannot be combined with other apps into pipelines.
+```python
+from scinexus import NonComposableApp
+```
 
-The apps differ in their properties. 
+!!! info
 
-## From base classes
-
-
-
-## From the `define_app` decorator
-
-Using the decorator is the fastest way to turn something you already have into a composable app. Under the hood, the decorator is basically injecting the base classes described above into the inheritance of your own classes.
-
-What `define_app` does step by step (inspect type hints, choose base class, wrap `main`), the `__call__` flow (None check, NotCompleted check, type check, call main, catch exceptions), and how composition chains apps via the `.input` attribute.
+    You can create your app by inheriting from one of the above base classes. Or you can use the `define_app` decorator. Using the decorator is the fastest way to turn something you already have into a composable app. Under the hood, the decorator is basically injecting the base classes described above into the inheritance of your own classes.
 

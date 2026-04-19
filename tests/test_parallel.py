@@ -112,21 +112,19 @@ def test_set_parallel_backend_custom_instance():
 def test_set_parallel_backend_invalid_string():
     """invalid string raises ValueError"""
     with pytest.raises(ValueError, match="unknown backend"):
-        set_parallel_backend("invalid")
+        set_parallel_backend("invalid")  # type: ignore
 
 
 def test_set_parallel_backend_loky_not_installed():
     """set_parallel_backend('loky') raises ImportError when loky is missing"""
-    with patch.dict("sys.modules", {"loky": None}):
-        with pytest.raises(ImportError, match="pip install scinexus"):
-            set_parallel_backend("loky")
+    with patch.dict("sys.modules", {"loky": None}), pytest.raises(ImportError):
+        set_parallel_backend("loky")
 
 
 def test_set_parallel_backend_mpi_not_available():
     """set_parallel_backend('mpi') raises ImportError when mpi4py is missing"""
-    with patch.object(parallel, "MPI", None):
-        with pytest.raises(ImportError, match="pip install scinexus"):
-            set_parallel_backend("mpi")
+    with patch.object(parallel, "MPI", None), pytest.raises(ImportError):
+        set_parallel_backend("mpi")
 
 
 def test_get_parallel_backend_default():

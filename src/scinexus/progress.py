@@ -315,7 +315,7 @@ class _RichContext(ProgressContext):
 
 
 class RichProgress(Progress):
-    """Progress wrapper using the rich library (requires ``pip install scinexus[rich]``)."""
+    """Progress wrapper using the rich library (requires ``pip install "scinexus[rich]"``)."""
 
     def __init__(
         self,
@@ -488,7 +488,7 @@ def set_progress_backend(
         try:
             import rich  # noqa: F401
         except ImportError:
-            msg = "rich is not installed, use pip install scinexus[rich]"
+            msg = 'rich is not installed, use pip install "scinexus[rich]"'
             raise ImportError(msg) from None
         _default_progress = RichProgress(**kwargs)
     else:
