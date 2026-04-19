@@ -340,29 +340,35 @@ class propagate_source:
 
 
 # Forbidden methods per app kind
-_FORBIDDEN_BASE = frozenset({
-    "__call__",
-    "__repr__",
-    "__str__",
-    "__new__",
-    "__copy__",
-    "__eq__",
-    "_validate_data_type",
-    "as_completed",
-    "check_data_type",
-    "_get_citations",
-    "citations",
-    "bib",
-})
-_FORBIDDEN_COMPOSABLE = _FORBIDDEN_BASE | frozenset({
-    "__add__",
-    "disconnect",
-    "input",
-})
-_FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset({
-    "apply_to",
-    "set_logger",
-})
+_FORBIDDEN_BASE = frozenset(
+    {
+        "__call__",
+        "__repr__",
+        "__str__",
+        "__new__",
+        "__copy__",
+        "__eq__",
+        "_validate_data_type",
+        "as_completed",
+        "check_data_type",
+        "_get_citations",
+        "citations",
+        "bib",
+    }
+)
+_FORBIDDEN_COMPOSABLE = _FORBIDDEN_BASE | frozenset(
+    {
+        "__add__",
+        "disconnect",
+        "input",
+    }
+)
+_FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset(
+    {
+        "apply_to",
+        "set_logger",
+    }
+)
 
 
 def _init_subclass_setup(

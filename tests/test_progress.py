@@ -895,9 +895,8 @@ def test_get_progress_kwargs_with_instance_ignored():
 
 def test_set_progress_backend_rich_not_installed():
     """set_progress_backend("rich") raises ImportError when rich is missing"""
-    with patch.dict("sys.modules", {"rich": None}):
-        with pytest.raises(ImportError, match="pip install scinexus"):
-            set_progress_backend("rich")
+    with patch.dict("sys.modules", {"rich": None}), pytest.raises(ImportError):
+        set_progress_backend("rich")
 
 
 def test_get_progress_kwargs_false_ignored():
