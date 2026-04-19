@@ -99,6 +99,9 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 "src/scinexus/io.py" = [
     "ANN401", # Allow use of Any for generic serialisation apps
 ]
+"src/scinexus/typing.py" = [
+    "ANN401", # Allow use of Any
+]
 
 [format]
 # Like Black, use double quotes for strings.

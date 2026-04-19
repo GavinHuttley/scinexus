@@ -76,7 +76,7 @@ def test_define_data_store(fasta_dir):
     with pytest.raises(ValueError):
         open_data_store(fasta_dir)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         open_data_store(fasta_dir, 1)
 
 
