@@ -1,6 +1,10 @@
 # Track progress
 
-*`scinexus` defaults to using the [tqdm](https://pypi.org/project/tqdm/) for progress bars. These behave well across terminal and notebook environments. We also support using [rich](https://pypi.org/project/rich/) for its progress bars. A single API for different progress backends.*
+!!! abstract ""
+
+    How to choose your preferred progress bar backend and customise progress bars.
+
+`scinexus` defaults to using the [tqdm](https://pypi.org/project/tqdm/) for progress bars. These behave well across terminal and notebook environments. We also support using [rich](https://pypi.org/project/rich/) for its progress bars. A single API for different progress backends.
 
 ## Choosing the progress bar backend
 

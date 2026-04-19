@@ -1,6 +1,8 @@
 # Execution flow of a composed app
 
-*How data flows through a composed pipeline, step by step.*
+!!! abstract ""
+
+    How data flows through a composed pipeline, step by step.
 
 Consider two apps composed into a pipeline:
 

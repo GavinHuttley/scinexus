@@ -1,6 +1,8 @@
 # Write a function app
 
-*How to use `@define_app` on a plain function, specifying input/output type hints and turning function parameters into constructor arguments.*
+!!! abstract ""
+
+    How to use `@define_app` on a plain function, specifying input/output type hints and turning function parameters into constructor arguments.
 
 <!-- [[[cog
 from cog_utils import exec_codeblock

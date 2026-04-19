@@ -1,6 +1,8 @@
 # Type system
 
-*Why types are checked at composition time rather than call time, how `check_type_compatibility` works, handling of Union types and forward references, the role of `register_type_namespace`, and the relationship to `typeguard` for runtime checking.*
+!!! abstract ""
+
+    Why types are checked at composition time rather than call time, how `check_type_compatibility` works, handling of Union types and forward references, the role of `register_type_namespace`, and the relationship to `typeguard` for runtime checking.
 
 ## Composability rules
 

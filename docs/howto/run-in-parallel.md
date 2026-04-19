@@ -1,6 +1,8 @@
 # Run in parallel
 
-*How to parallelise any function using `parallel.map`, `parallel.imap`, and `parallel.as_completed` as standalone utilities, and how to enable parallel execution in app pipelines with `parallel=True` and `par_kw`.*
+!!! abstract ""
+
+    How to choose your preferred parallelisation backend, how to parallelise any function using `parallel.map`, `parallel.imap`, and `parallel.as_completed` as standalone utilities, and how to enable parallel execution in app pipelines with `parallel=True` and `par_kw`.
 
 ## Data level parallelism
 

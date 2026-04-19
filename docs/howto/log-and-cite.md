@@ -1,5 +1,9 @@
 # Log and cite
 
+!!! abstract ""
+
+    How to use `scitrack` logging in apps, control logging in `apply_to`, and access citation records from composed pipelines.
+
 ## Leveraging `scitrack` for reproducibility
 
 We reproduce here one of the examples from [scitrack](https://github.com/HuttleyLab/scitrack).

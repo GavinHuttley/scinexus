@@ -1,6 +1,8 @@
 # Customise display and IDs
 
-*How to use `set_summary_display` to transform data store summary output into richer objects, and `set_id_from_source` to control how unique identifiers are extracted from data.*
+!!! abstract ""
+
+    How to use `set_summary_display` to transform data store summary output into richer objects, and `set_id_from_source` to control how unique identifiers are extracted from data.
 
 ## Summary display default
 

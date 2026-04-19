@@ -1,5 +1,9 @@
 # Source tracking
 
+!!! abstract ""
+
+    How `source_proxy` preserves the link between input identity and output when data is transformed through a pipeline.
+
 ## The problem
 
 When you call `apply_to()` or `as_completed()` on a data store, each member is fed through the pipeline independently. The pipeline may transform the data into something completely different — a new object with no reference back to the input that produced it. But the writer at the end of the pipeline needs to know *which input* produced *which output* so it can assign the correct unique ID in the output data store.

@@ -1,5 +1,9 @@
 # Installation
 
+!!! abstract ""
+
+    How to install `scinexus` and its optional extras for parallel execution, progress bars, and MPI support.
+
 ## Basic install
 
 ```bash

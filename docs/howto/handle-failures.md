@@ -1,6 +1,8 @@
 # Handle failures
 
-*How to create `NotCompleted` values, check their truthiness, inspect their attributes, and control propagation with `skip_not_completed=False`.*
+!!! abstract ""
+
+    How to create `NotCompleted` values, check their truthiness, inspect their attributes, and control propagation with `skip_not_completed=False`.
 
 ## `NotCompleted` FALSE type
 
