@@ -424,7 +424,23 @@ def _init_subclass_setup(
 
 
 class AppBase(Generic[T, R]):
-    """Base for all app types. Provides __call__, __repr__, etc."""
+    """Base for all app types. Provides __call__, __repr__, etc.
+
+    Raises
+    ------
+    TypeError
+        If a subclass defines any method name reserved by the app framework.
+        The reserved names depend on the app type.
+
+        All app types: ``__call__``, ``__repr__``, ``__str__``, ``__new__``,
+        ``__copy__``, ``__eq__``, ``_validate_data_type``, ``as_completed``,
+        ``check_data_type``, ``_get_citations``, ``citations``, ``bib``.
+
+        Composable apps (GENERIC, LOADER, WRITER) additionally:
+        ``__add__``, ``disconnect``, ``input``.
+
+        Writer apps additionally: ``apply_to``, ``set_logger``.
+    """
 
     _is_intermediate_base: bool = False
     _skip_not_completed: bool
@@ -684,7 +700,17 @@ class AppBase(Generic[T, R]):
 
 
 class ComposableApp(AppBase[T, R]):
-    """Adds __add__ for LOADER/GENERIC."""
+    """Adds __add__ for LOADER/GENERIC.
+
+    Raises
+    ------
+    TypeError
+        If a subclass defines any method name reserved by the app framework:
+        ``__call__``, ``__repr__``, ``__str__``, ``__new__``, ``__copy__``,
+        ``__eq__``, ``_validate_data_type``, ``as_completed``,
+        ``check_data_type``, ``_get_citations``, ``citations``, ``bib``,
+        ``__add__``, ``disconnect``, ``input``.
+    """
 
     _is_intermediate_base: bool = True
 
@@ -728,7 +754,17 @@ class ComposableApp(AppBase[T, R]):
 
 
 class WriterApp(ComposableApp[T, R]):
-    """Adds apply_to and set_logger for WRITER."""
+    """Adds apply_to and set_logger for WRITER.
+
+    Raises
+    ------
+    TypeError
+        If a subclass defines any method name reserved by the app framework:
+        ``__call__``, ``__repr__``, ``__str__``, ``__new__``, ``__copy__``,
+        ``__eq__``, ``_validate_data_type``, ``as_completed``,
+        ``check_data_type``, ``_get_citations``, ``citations``, ``bib``,
+        ``__add__``, ``disconnect``, ``input``, ``apply_to``, ``set_logger``.
+    """
 
     _is_intermediate_base: bool = True
     _default_app_type: ClassVar[AppType] = WRITER
@@ -883,6 +919,15 @@ class LoaderApp(ComposableApp[T, R]):
     ``app_type=LOADER``. Loaders sit at the start of a composed pipeline
     and have no ``input`` attribute.
 
+    Raises
+    ------
+    TypeError
+        If a subclass defines any method name reserved by the app framework:
+        ``__call__``, ``__repr__``, ``__str__``, ``__new__``, ``__copy__``,
+        ``__eq__``, ``_validate_data_type``, ``as_completed``,
+        ``check_data_type``, ``_get_citations``, ``citations``, ``bib``,
+        ``__add__``, ``disconnect``, ``input``.
+
     Examples
     --------
     Define a loader by inheritance::
@@ -902,6 +947,14 @@ class NonComposableApp(AppBase[T, R]):
     Subclasses of ``NonComposableApp`` are automatically assigned
     ``app_type=NON_COMPOSABLE``. Non-composable apps cannot participate
     in pipeline composition via ``+``.
+
+    Raises
+    ------
+    TypeError
+        If a subclass defines any method name reserved by the app framework:
+        ``__call__``, ``__repr__``, ``__str__``, ``__new__``, ``__copy__``,
+        ``__eq__``, ``_validate_data_type``, ``as_completed``,
+        ``check_data_type``, ``_get_citations``, ``citations``, ``bib``.
 
     Examples
     --------
@@ -1051,6 +1104,33 @@ def define_app(
         a Citation instance describing the software or algorithm. If provided,
         its ``.app`` attribute is set to the class name.
 
+    Raises
+    ------
+    TypeError
+        If the decorated class defines any method name reserved by the app
+        framework. The reserved names depend on the app type.
+
+        All app types: ``__call__``, ``__repr__``, ``__str__``, ``__new__``,
+        ``__copy__``, ``__eq__``, ``_validate_data_type``, ``as_completed``,
+        ``check_data_type``, ``_get_citations``, ``citations``, ``bib``.
+
+        Composable apps (GENERIC, LOADER, WRITER) additionally:
+        ``__add__``, ``disconnect``, ``input``.
+
+        Writer apps additionally: ``apply_to``, ``set_logger``.
+
+    Examples
+    --------
+
+    An example app definition.
+
+    >>> from scinexus.composable import define_app
+
+    >>> @define_app
+    ... class noop:
+    ...     def main(self, data: int) -> int:
+    ...         return data
+
     Notes
     -----
 
@@ -1109,18 +1189,6 @@ def define_app(
     ``skip_not_completed==False``. If the input value type is consistent with
     the type hint on the first argument of main it is passed to ``app.main()``.
     If it does not match, a new ``NotCompleted`` instance is returned.
-
-    Examples
-    --------
-
-    An example app definition.
-
-    >>> from scinexus.composable import define_app
-
-    >>> @define_app
-    ... class noop:
-    ...     def main(self, data: int) -> int:
-    ...         return data
     """
 
     if hasattr(klass, "app_type"):
