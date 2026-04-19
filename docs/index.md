@@ -7,7 +7,7 @@
 
 *What `dataclasses` and `attrs` are for structured data, `scinexus` apps are for structured algorithms.*
 
-`scinexus` is a framework for rapid development of data processing applications. It enables interoperability between apps through defined data types, allowing development of scientific domain app ecosystems (for examples see [cogent3](https://cogent3.org/doc/app/index-app.html) and [piqtree](https://piqtree.readthedocs.io/en/stable/)).
+`scinexus` (pronounced 'sigh-nexus') is a framework for rapid development of data processing applications. It enables interoperability between apps through defined data types, allowing development of scientific domain app ecosystems (for examples see [cogent3](https://cogent3.org/doc/app/index-app.html) and [piqtree](https://piqtree.readthedocs.io/en/stable/)).
 
 Many scientific problems require repeating calculations across many files or database records. Such tasks suit data-level parallelism on multi-core CPUs, but writing robust, maintainable code for them is often tedious and quickly becomes complex.
 

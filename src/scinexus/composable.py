@@ -340,35 +340,29 @@ class propagate_source:
 
 
 # Forbidden methods per app kind
-_FORBIDDEN_BASE = frozenset(
-    {
-        "__call__",
-        "__repr__",
-        "__str__",
-        "__new__",
-        "__copy__",
-        "__eq__",
-        "_validate_data_type",
-        "as_completed",
-        "check_data_type",
-        "_get_citations",
-        "citations",
-        "bib",
-    }
-)
-_FORBIDDEN_COMPOSABLE = _FORBIDDEN_BASE | frozenset(
-    {
-        "__add__",
-        "disconnect",
-        "input",
-    }
-)
-_FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset(
-    {
-        "apply_to",
-        "set_logger",
-    }
-)
+_FORBIDDEN_BASE = frozenset({
+    "__call__",
+    "__repr__",
+    "__str__",
+    "__new__",
+    "__copy__",
+    "__eq__",
+    "_validate_data_type",
+    "as_completed",
+    "check_data_type",
+    "_get_citations",
+    "citations",
+    "bib",
+})
+_FORBIDDEN_COMPOSABLE = _FORBIDDEN_BASE | frozenset({
+    "__add__",
+    "disconnect",
+    "input",
+})
+_FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset({
+    "apply_to",
+    "set_logger",
+})
 
 
 def _init_subclass_setup(
@@ -1061,30 +1055,30 @@ def define_app(
     sequentially invokes the composed apps. For example, the independent
     usage of app instances ``app1`` and ``app2`` as
 
-    .. code-block:: python
-
-        app2(app1(data))
+    ```python { notest }
+    app2(app1(data))
+    ```
 
     is equivalent to
 
-    .. code-block:: python
-
-        combined = app1 + app2
-        combined(data)
+    ```python { notest }
+    combined = app1 + app2
+    combined(data)
+    ```
 
     The ``app_type`` attribute is used to constrain how apps can be composed.
     ``LOADER`` and ``WRITER`` are special cases. If included, a ``LOADER``
     must always be first, e.g.
 
-    .. code-block:: python
-
-        app = a_loader + a_generic
+    ```python { notest }
+    app = a_loader + a_generic
+    ```
 
     If included, a ``WRITER`` must always be last, e.g.
 
-    .. code-block:: python
-
-        app = a_generic + a_writer
+    ```python { notest }
+    app = a_generic + a_writer
+    ```
 
     Changing the order for either of the above will result in a ``TypeError``.
 

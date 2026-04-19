@@ -22,5 +22,5 @@ We can expand on this slightly for the problem of scientific computation by cons
 
 ## Improve the accessibility of your work for end users
 
-Apps are ready-made "functions" that you can apply to your data without needing to know all the technical details. They are easy to use, even if a user is not an expert programmer. Users do not need to be experts in structural programming logic. Because can be naturally composed into "pipelines", they can be applied to a single, or thousands, of data records without writing loops or conditionals.
+Apps are ready-made "functions" that you can apply to your data without needing to know all the technical details. They are easy to use, even if a user is not expert in structural programming logic. As apps can be naturally composed into "pipelines", they can be applied to a single, or thousands, of data records without writing loops or conditionals.
 
