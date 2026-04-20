@@ -36,6 +36,16 @@ scinexus.set_parallel_backend("loky")
 
     The `"loky"` backend uses [loky](https://loky.readthedocs.io/) which provides reusable process pools and robust pickling via `cloudpickle`. This makes it the recommended choice for Jupyter notebooks, where the stdlib `ProcessPoolExecutor` can fail to serialise closures and lambda functions.
 
+### Getting a specific backend without changing the default
+
+If your code requires a particular backend, pass the ``backend`` argument to ``get_parallel_backend``. This returns an instance of the requested backend without changing the global default, so other packages that depend on the current setting are unaffected:
+
+```python { notest }
+from scinexus import get_parallel_backend
+
+backend = get_parallel_backend(backend="loky")
+```
+
 ## Parallel computation on a single computer
 
 ### Using `app.apply_to()`

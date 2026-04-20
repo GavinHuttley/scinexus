@@ -142,6 +142,32 @@ def test_get_parallel_backend_caches():
     assert b1 is b2
 
 
+def test_get_parallel_backend_with_backend_multiprocess():
+    """returns a MultiprocessBackend when backend='multiprocess'"""
+    assert isinstance(get_parallel_backend(backend="multiprocess"), MultiprocessBackend)
+
+
+def test_get_parallel_backend_with_backend_loky():
+    """returns a LokyBackend when backend='loky'"""
+    assert isinstance(get_parallel_backend(backend="loky"), LokyBackend)
+
+
+def test_get_parallel_backend_with_backend_does_not_modify_default():
+    """passing backend does not change the global default"""
+    set_parallel_backend("multiprocess")
+    default_before = get_parallel_backend()
+    get_parallel_backend(backend="loky")
+    default_after = get_parallel_backend()
+    assert default_before is default_after
+    assert isinstance(default_after, MultiprocessBackend)
+
+
+def test_get_parallel_backend_with_backend_none():
+    """backend=None returns the current default"""
+    set_parallel_backend("loky")
+    assert isinstance(get_parallel_backend(backend=None), LokyBackend)
+
+
 def test_effective_backend_caches_mpi():
     """_effective_backend caches the MPIBackend instance"""
     mock_mpi = type("FakeMPI", (), {"COMM_WORLD": None})

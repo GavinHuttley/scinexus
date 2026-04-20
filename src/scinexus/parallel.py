@@ -7,6 +7,7 @@ import sys
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Sized
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Generic, Literal, ParamSpec, TypeVar, cast
 
 from scinexus.misc import extend_docstring_from
@@ -274,6 +275,15 @@ class PicklableAndCallable(Generic[P, R]):
         return self.func(*args, **kw)
 
 
+BACKEND_TYPES: MappingProxyType[BackendType, type[Parallel]] = MappingProxyType(
+    {
+        "multiprocess": MultiprocessBackend,
+        "loky": LokyBackend,
+        "mpi": MPIBackend,
+    }
+)
+
+
 def _resolve_max_workers_local(max_workers: int | None) -> int:
     """resolve max_workers for local (non-MPI) backends"""
     cpu = multiprocessing.cpu_count()
@@ -338,6 +348,20 @@ _default_backend: Parallel | None = None
 _mpi_backend: MPIBackend | None = None
 
 
+def _make_backend(backend: BackendType) -> Parallel:
+    """create a backend instance from a backend type string"""
+    if backend == "loky":
+        try:
+            import loky  # noqa: F401
+        except ImportError:
+            msg = 'loky is not installed, use pip install "scinexus[loky]"'
+            raise ImportError(msg) from None
+    elif backend == "mpi" and MPI is None:
+        msg = 'mpi4py is not installed, use pip install "scinexus[mpi]"'
+        raise ImportError(msg)
+    return BACKEND_TYPES[backend]()
+
+
 def set_parallel_backend(
     backend: BackendType | Parallel | None = None,
 ) -> None:
@@ -354,20 +378,8 @@ def set_parallel_backend(
 
     if backend is None or isinstance(backend, Parallel):
         _default_backend = backend
-    elif backend == "multiprocess":
-        _default_backend = MultiprocessBackend()
-    elif backend == "loky":
-        try:
-            import loky  # noqa: F401
-        except ImportError:
-            msg = 'loky is not installed, use pip install "scinexus[loky]"'
-            raise ImportError(msg) from None
-        _default_backend = LokyBackend()
-    elif backend == "mpi":
-        if MPI is None:
-            msg = 'mpi4py is not installed, use pip install "scinexus[mpi]"'
-            raise ImportError(msg)
-        _default_backend = MPIBackend()
+    elif backend in BACKEND_TYPES:
+        _default_backend = _make_backend(backend)
     else:
         msg = (
             f"unknown backend {backend!r}, expected 'multiprocess',"
@@ -376,11 +388,23 @@ def set_parallel_backend(
         raise ValueError(msg)
 
 
-def get_parallel_backend() -> Parallel:
+def get_parallel_backend(backend: BackendType | None = None) -> Parallel:
     """return the current parallel execution backend
 
-    Returns ``MultiprocessBackend`` if no backend has been set.
+    Parameters
+    ----------
+    backend
+        if provided, return an instance of this backend type without
+        changing the global default. This lets a package obtain the
+        backend it needs without disrupting the settings of other
+        packages.
+
+    Returns ``MultiprocessBackend`` when no backend has been set and
+    ``backend`` is ``None``.
     """
+    if backend is not None:
+        return _make_backend(backend)
+
     global _default_backend  # noqa: PLW0603
     if _default_backend is None:
         _default_backend = MultiprocessBackend()
