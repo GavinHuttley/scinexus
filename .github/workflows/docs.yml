@@ -5,13 +5,15 @@ concurrency:
   cancel-in-progress: true
 on:
   workflow_dispatch:
+  release:
+    types: [published]
   push:
     branches:
       - main
     paths:
       - 'docs/**'
       - '.readthedocs.yaml'
-      - 'mkdocs.yml'
+      - 'zensical.toml'
       - 'rtd_get_docs.py'
 
 permissions:
