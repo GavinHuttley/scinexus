@@ -75,7 +75,7 @@ def test_inheritance_init_vals():
             return val * self.factor
 
     app = WithInit(factor=3)
-    assert app._init_vals == {"factor": 3}  # noqa: SLF001
+    assert app._init_vals == {"factor": 3}
     assert app(5) == 15
 
 

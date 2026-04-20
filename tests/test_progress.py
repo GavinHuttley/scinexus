@@ -100,20 +100,20 @@ def test_tqdm_yields_from_generator():
 
 def test_tqdm_default_position_is_zero():
     tp = TqdmProgress()
-    assert tp._position == 0  # noqa: SLF001
+    assert tp._position == 0
 
 
 def test_tqdm_child_increments_position():
     tp = TqdmProgress()
     child = tp.child()
     assert isinstance(child, TqdmProgress)
-    assert child._position == 1  # noqa: SLF001
+    assert child._position == 1
 
 
 def test_tqdm_chained_child_positions():
     tp = TqdmProgress()
     grandchild = tp.child().child()
-    assert grandchild._position == 2  # noqa: SLF001
+    assert grandchild._position == 2
 
 
 def test_tqdm_empty_iterable():
@@ -163,17 +163,17 @@ def test_tqdm_leave_false_at_position_nonzero():
 
 def test_tqdm_custom_mininterval():
     tp = TqdmProgress(mininterval=0.5)
-    assert tp._mininterval == 0.5  # noqa: SLF001
+    assert tp._mininterval == 0.5
 
 
 def test_tqdm_custom_bar_format():
     tp = TqdmProgress(bar_format="{l_bar}{bar}")
-    assert tp._bar_format == "{l_bar}{bar}"  # noqa: SLF001
+    assert tp._bar_format == "{l_bar}{bar}"
 
 
 def test_tqdm_extra_kwargs_stored():
     tp = TqdmProgress(unit="B")
-    assert tp._tqdm_kwargs == {"unit": "B"}  # noqa: SLF001
+    assert tp._tqdm_kwargs == {"unit": "B"}
 
 
 def test_tqdm_child_inherits_options():
@@ -183,15 +183,15 @@ def test_tqdm_child_inherits_options():
         dynamic_ncols=False,
     )
     child = tp.child()
-    assert child._mininterval == 0.5  # noqa: SLF001
-    assert child._bar_format == "{l_bar}"  # noqa: SLF001
-    assert child._dynamic_ncols is False  # noqa: SLF001
+    assert child._mininterval == 0.5
+    assert child._bar_format == "{l_bar}"
+    assert child._dynamic_ncols is False
 
 
 def test_tqdm_child_inherits_tqdm_kwargs():
     tp = TqdmProgress(unit="B")
     child = tp.child()
-    assert child._tqdm_kwargs == {"unit": "B"}  # noqa: SLF001
+    assert child._tqdm_kwargs == {"unit": "B"}
 
 
 def test_tqdm_options_passed_to_tqdm():
@@ -222,18 +222,18 @@ def test_rich_child_shares_progress_context():
     rp = RichProgress(disable=True)
     list(rp([1], total=1))
     child = rp.child()
-    assert child._progress is rp._progress  # noqa: SLF001
+    assert child._progress is rp._progress
 
 
 def test_rich_custom_refresh_per_second():
     rp = RichProgress(refresh_per_second=5.0)
-    assert rp._refresh_per_second == 5.0  # noqa: SLF001
+    assert rp._refresh_per_second == 5.0
 
 
 def test_rich_child_inherits_refresh_per_second():
     rp = RichProgress(refresh_per_second=5.0)
     child = rp.child()
-    assert child._refresh_per_second == 5.0  # noqa: SLF001
+    assert child._refresh_per_second == 5.0
 
 
 def test_rich_empty_iterable():
@@ -320,15 +320,15 @@ def test_set_default_string_tqdm_with_kwargs():
     set_progress_backend("tqdm", colour="green")
     result = get_progress(True)
     assert isinstance(result, TqdmProgress)
-    assert result._colour == "green"  # noqa: SLF001
+    assert result._colour == "green"
 
 
 def test_set_default_string_rich_with_kwargs():
     set_progress_backend("rich", colour="blue", leave=True)
     result = get_progress(True)
     assert isinstance(result, RichProgress)
-    assert result._colour == "blue"  # noqa: SLF001
-    assert result._leave is True  # noqa: SLF001
+    assert result._colour == "blue"
+    assert result._leave is True
 
 
 def test_tqdm_nested_child_yields_all():
@@ -422,28 +422,28 @@ def test_tqdm_context_maps_start_end():
     tp = TqdmProgress(disable=True)
     with tp.context(start=0.0, end=0.9) as ctx:
         ctx.update(progress=0.5)
-        assert ctx._bar.n == pytest.approx(0.45)  # noqa: SLF001
+        assert ctx._bar.n == pytest.approx(0.45)
 
 
 def test_tqdm_context_full_range():
     tp = TqdmProgress(disable=True)
     with tp.context(start=0.0, end=1.0) as ctx:
         ctx.update(progress=1.0)
-        assert ctx._bar.n == pytest.approx(1.0)  # noqa: SLF001
+        assert ctx._bar.n == pytest.approx(1.0)
 
 
 def test_tqdm_context_subrange():
     tp = TqdmProgress(disable=True)
     with tp.context(start=0.9, end=1.0) as ctx:
         ctx.update(progress=0.5)
-        assert ctx._bar.n == pytest.approx(0.95)  # noqa: SLF001
+        assert ctx._bar.n == pytest.approx(0.95)
 
 
 def test_tqdm_context_msg_updates_description():
     tp = TqdmProgress(disable=True)
     with tp.context() as ctx:
         ctx.update(progress=0.5, msg="custom message")
-        assert "custom message" in ctx._bar.desc  # noqa: SLF001
+        assert "custom message" in ctx._bar.desc
 
 
 def test_tqdm_context_no_msg_does_not_update_description():
@@ -490,10 +490,10 @@ def test_rich_context_maps_start_end():
 
 def test_rich_context_creates_progress_on_first_call():
     rp = RichProgress(disable=True)
-    assert rp._progress is None  # noqa: SLF001
+    assert rp._progress is None
     with rp.context() as ctx:
         ctx.update(progress=0.5)
-    assert rp._progress is not None  # noqa: SLF001
+    assert rp._progress is not None
 
 
 def test_tqdm_context_multiphase():
@@ -504,7 +504,7 @@ def test_tqdm_context_multiphase():
         for i in range(10):
             ctx.update(progress=0.9 + i / 10 * 0.1, msg="Local")
         ctx.update(progress=1.0, msg="Done")
-        assert ctx._bar.n == pytest.approx(1.0)  # noqa: SLF001
+        assert ctx._bar.n == pytest.approx(1.0)
 
 
 def test_tqdm_leave_none_uses_position_logic():
@@ -544,19 +544,19 @@ def test_tqdm_leave_false_overrides_position():
 def test_tqdm_leave_propagated_to_child():
     tp = TqdmProgress(leave=True)
     child = tp.child()
-    assert child._leave is True  # noqa: SLF001
+    assert child._leave is True
 
 
 def test_tqdm_child_leave_override():
     tp = TqdmProgress(leave=True)
     child = tp.child(leave=False)
-    assert child._leave is False  # noqa: SLF001
+    assert child._leave is False
 
 
 def test_tqdm_child_leave_none_inherits():
     tp = TqdmProgress(leave=True)
     child = tp.child(leave=None)
-    assert child._leave is True  # noqa: SLF001
+    assert child._leave is True
 
 
 def test_tqdm_context_respects_leave():
@@ -572,7 +572,7 @@ def test_tqdm_context_respects_leave():
 
 def test_tqdm_colour_none_by_default():
     tp = TqdmProgress()
-    assert tp._colour is None  # noqa: SLF001
+    assert tp._colour is None
 
 
 def test_tqdm_colour_passed_to_tqdm():
@@ -588,7 +588,7 @@ def test_tqdm_colour_passed_to_tqdm():
 def test_tqdm_colour_propagated_to_child():
     tp = TqdmProgress(colour="green")
     child = tp.child()
-    assert child._colour == "green"  # noqa: SLF001
+    assert child._colour == "green"
 
 
 def test_tqdm_context_colour_passed():
@@ -604,15 +604,15 @@ def test_tqdm_context_colour_passed():
 
 def test_rich_leave_false_by_default():
     rp = RichProgress()
-    assert rp._leave is False  # noqa: SLF001
+    assert rp._leave is False
 
 
 def test_rich_leave_false_removes_task_on_del():
     rp = RichProgress(disable=True, leave=False)
     result = list(rp([1, 2], total=2))
     assert result == [1, 2]
-    assert len(rp._progress.tasks) == 1  # noqa: SLF001
-    progress = rp._progress  # noqa: SLF001
+    assert len(rp._progress.tasks) == 1
+    progress = rp._progress
     del rp
     assert len(progress.tasks) == 0
 
@@ -621,53 +621,53 @@ def test_rich_leave_true_keeps_task():
     rp = RichProgress(disable=True, leave=True)
     result = list(rp([1, 2], total=2))
     assert result == [1, 2]
-    assert len(rp._progress.tasks) == 1  # noqa: SLF001
-    assert rp._progress.tasks[0].completed == 2  # noqa: SLF001
+    assert len(rp._progress.tasks) == 1
+    assert rp._progress.tasks[0].completed == 2
 
 
 def test_rich_leave_propagated_to_child():
     rp = RichProgress(leave=True)
     child = rp.child()
-    assert child._leave is True  # noqa: SLF001
+    assert child._leave is True
 
 
 def test_rich_child_leave_override():
     rp = RichProgress(leave=True)
     child = rp.child(leave=False)
-    assert child._leave is False  # noqa: SLF001
+    assert child._leave is False
 
 
 def test_rich_child_leave_none_inherits():
     rp = RichProgress(leave=True)
     child = rp.child(leave=None)
-    assert child._leave is True  # noqa: SLF001
+    assert child._leave is True
 
 
 def test_rich_context_leave_false_removes_task():
     rp = RichProgress(disable=True, leave=False)
     with rp.context(msg="test") as ctx:
         ctx.update(progress=0.5)
-    assert len(rp._progress.tasks) == 0  # noqa: SLF001
+    assert len(rp._progress.tasks) == 0
 
 
 def test_rich_context_leave_true_keeps_task():
     rp = RichProgress(disable=True, leave=True)
     with rp.context(msg="test") as ctx:
         ctx.update(progress=0.5)
-    assert len(rp._progress.tasks) == 1  # noqa: SLF001
-    assert rp._progress.tasks[0].completed == 1.0  # noqa: SLF001
+    assert len(rp._progress.tasks) == 1
+    assert rp._progress.tasks[0].completed == 1.0
 
 
 def test_rich_colour_none_by_default():
     rp = RichProgress()
-    assert rp._colour is None  # noqa: SLF001
+    assert rp._colour is None
 
 
 def test_rich_colour_creates_styled_bar_column():
     from rich.progress import BarColumn  # type: ignore[import-not-found]
 
     rp = RichProgress(disable=True, colour="blue")
-    rp._ensure_progress()  # noqa: SLF001
+    rp._ensure_progress()
     bar_columns = [c for c in rp._progress.columns if isinstance(c, BarColumn)]
     assert len(bar_columns) == 1
     assert bar_columns[0].complete_style == "blue"
@@ -684,7 +684,7 @@ def test_rich_colour_not_applied_when_progress_provided():
 
     custom = RProgress(disable=True)
     rp = RichProgress(progress=custom, colour="red")
-    result = rp._ensure_progress()  # noqa: SLF001
+    result = rp._ensure_progress()
     assert result is custom
     bar_columns = [c for c in result.columns if isinstance(c, BarColumn)]
     for col in bar_columns:
@@ -694,7 +694,7 @@ def test_rich_colour_not_applied_when_progress_provided():
 def test_rich_colour_propagated_to_child():
     rp = RichProgress(colour="cyan")
     child = rp.child()
-    assert child._colour == "cyan"  # noqa: SLF001
+    assert child._colour == "cyan"
 
 
 def test_rich_default_columns_include_elapsed_and_remaining():
@@ -704,8 +704,8 @@ def test_rich_default_columns_include_elapsed_and_remaining():
     )
 
     rp = RichProgress(disable=True)
-    rp._ensure_progress()  # noqa: SLF001
-    column_types = [type(c) for c in rp._progress.columns]  # noqa: SLF001
+    rp._ensure_progress()
+    column_types = [type(c) for c in rp._progress.columns]
     assert TimeElapsedColumn in column_types
     assert TimeRemainingColumn in column_types
 
@@ -719,7 +719,7 @@ def test_no_progress_child_accepts_leave():
 
 def test_tqdm_bar_width_default():
     tp = TqdmProgress()
-    assert tp._bar_width is None  # noqa: SLF001
+    assert tp._bar_width is None
 
 
 def test_tqdm_bar_width_passed_as_ncols():
@@ -749,24 +749,20 @@ def test_tqdm_bar_width_none_uses_dynamic_ncols():
 def test_tqdm_bar_width_propagated_to_child():
     tp = TqdmProgress(bar_width=80)
     child = tp.child()
-    assert child._bar_width == 80  # noqa: SLF001
+    assert child._bar_width == 80
 
 
 def test_rich_bar_width_default():
     rp = RichProgress()
-    assert rp._bar_width is None  # noqa: SLF001
+    assert rp._bar_width is None
 
 
 def test_rich_bar_width_applied_to_bar_column():
     from rich.progress import BarColumn  # type: ignore[import-not-found]
 
     rp = RichProgress(disable=True, bar_width=80)
-    rp._ensure_progress()  # noqa: SLF001
-    bar_columns = [
-        c
-        for c in rp._progress.columns  # noqa: SLF001
-        if isinstance(c, BarColumn)
-    ]
+    rp._ensure_progress()
+    bar_columns = [c for c in rp._progress.columns if isinstance(c, BarColumn)]
     assert len(bar_columns) == 1
     assert bar_columns[0].bar_width == 80
 
@@ -774,7 +770,7 @@ def test_rich_bar_width_applied_to_bar_column():
 def test_rich_bar_width_propagated_to_child():
     rp = RichProgress(bar_width=80)
     child = rp.child()
-    assert child._bar_width == 80  # noqa: SLF001
+    assert child._bar_width == 80
 
 
 def test_tqdm_reuses_bar_across_calls():
@@ -799,8 +795,8 @@ def test_tqdm_reset_updates_total_and_msg():
     tp = TqdmProgress(disable=True)
     list(tp([], total=5, msg="first"))
     list(tp([], total=10, msg="second"))
-    assert tp._bar.total == 10  # noqa: SLF001
-    assert tp._bar.n == 0  # noqa: SLF001
+    assert tp._bar.total == 10
+    assert tp._bar.n == 0
 
 
 def test_tqdm_del_closes_bar():
@@ -824,21 +820,21 @@ def test_rich_reuses_task_across_calls():
     rp = RichProgress(disable=True)
     assert list(rp([1, 2], total=2)) == [1, 2]
     assert list(rp([3, 4, 5], total=3)) == [3, 4, 5]
-    assert len(rp._progress.tasks) == 1  # noqa: SLF001
+    assert len(rp._progress.tasks) == 1
 
 
 def test_rich_reset_updates_total():
     rp = RichProgress(disable=True)
     list(rp([1], total=1))
     list(rp([1, 2, 3], total=3))
-    task = rp._progress.tasks[0]  # noqa: SLF001
+    task = rp._progress.tasks[0]
     assert task.total == 3
 
 
 def test_rich_del_completes_task_when_leave_true():
     rp = RichProgress(disable=True, leave=True)
     list(rp([1, 2], total=2))
-    progress = rp._progress  # noqa: SLF001
+    progress = rp._progress
     del rp
     assert len(progress.tasks) == 1
     assert progress.tasks[0].completed == 2
@@ -865,21 +861,21 @@ def test_no_progress_multiple_calls():
 def test_get_progress_kwargs_forwarded():
     result = get_progress(True, colour="green")
     assert isinstance(result, TqdmProgress)
-    assert result._colour == "green"  # noqa: SLF001
+    assert result._colour == "green"
 
 
 def test_get_progress_kwargs_with_default_creates_new_instance():
     set_progress_backend("tqdm")
     result = get_progress(True, colour="green")
     assert isinstance(result, TqdmProgress)
-    assert result._colour == "green"  # noqa: SLF001
+    assert result._colour == "green"
 
 
 def test_get_progress_kwargs_with_rich_default():
     set_progress_backend("rich")
     result = get_progress(True, colour="blue")
     assert isinstance(result, RichProgress)
-    assert result._colour == "blue"  # noqa: SLF001
+    assert result._colour == "blue"
 
 
 def test_get_progress_no_kwargs_returns_default():
@@ -907,5 +903,5 @@ def test_get_progress_kwargs_false_ignored():
 def test_get_progress_multiple_kwargs():
     result = get_progress(True, colour="green", mininterval=0.5)
     assert isinstance(result, TqdmProgress)
-    assert result._colour == "green"  # noqa: SLF001
-    assert result._mininterval == 0.5  # noqa: SLF001
+    assert result._colour == "green"
+    assert result._mininterval == 0.5

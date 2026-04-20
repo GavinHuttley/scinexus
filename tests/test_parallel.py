@@ -14,6 +14,7 @@ from scinexus.parallel import (
     MultiprocessBackend,
     Parallel,
     PicklableAndCallable,
+    _clamp_max_workers_local,
     _effective_backend,
     as_completed,
     get_default_chunksize,
@@ -217,6 +218,19 @@ def test_multiprocess_as_completed_max_workers_clamped():
     assert result == sorted(x * 2 for x in data)
 
 
+def test_clamp_max_workers_local_valid():
+    """valid max_workers is returned unchanged"""
+    result = _clamp_max_workers_local(1)
+    assert result == 1
+
+
+def test_clamp_max_workers_local_too_large():
+    """max_workers exceeding cpu_count is clamped to cpu_count"""
+    cpu = multiprocessing.cpu_count()
+    result = _clamp_max_workers_local(cpu + 1)
+    assert result == cpu
+
+
 def test_loky_imap():
     """LokyBackend.imap returns ordered results"""
     backend = LokyBackend()
@@ -237,6 +251,18 @@ def test_loky_is_master_process():
     """LokyBackend.is_master_process returns True in main"""
     backend = LokyBackend()
     assert backend.is_master_process()
+
+
+def test_loky_get_rank():
+    """LokyBackend.get_rank returns 0 in main process"""
+    backend = LokyBackend()
+    assert backend.get_rank() == 0
+
+
+def test_loky_get_size():
+    """LokyBackend.get_size returns cpu_count"""
+    backend = LokyBackend()
+    assert backend.get_size() == multiprocessing.cpu_count()
 
 
 @pytest.mark.slow

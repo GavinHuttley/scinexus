@@ -27,8 +27,8 @@ exclude = [
     "venv",
     "working",
 ]
+extend-exclude = ["rtd_get_docs.py"]
 
-# Same as Black.
 line-length = 88
 indent-width = 4
 
@@ -71,6 +71,7 @@ unfixable = []
 # Allow unused variables when underscore-prefixed.
 dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
 
+
 [lint.per-file-ignores]
 "tests/**/*.py" = [
     "S101",   # asserts allowed in tests...
@@ -79,6 +80,7 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
     "N802",
     "N803",
     "S301",   # we allow pickling / unpickling in tests
+    "SLF001", # Allow accessing private attrs
 ]
 "noxfile.py" = [
     "S101",   # asserts allowed in tests...
