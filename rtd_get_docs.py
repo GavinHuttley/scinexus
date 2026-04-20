@@ -137,7 +137,7 @@ def download_and_extract_docs() -> None:
         msg = f"Unexpected version '{version}' for readthedocs."
         raise ValueError(msg)
 
-    workflow_filename = "build_docs.yml"
+    workflow_filename = "docs.yml"
 
     headers = {"Authorization": f"token {get_github_token()}"}
 
