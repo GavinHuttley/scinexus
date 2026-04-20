@@ -203,13 +203,11 @@ exec_codeblock(src=src)
 ```python { linenums="1" notest }
 from scinexus.data_store import set_id_from_source, get_id_from_source
 
-
 def extract_ensembl_id(data):
     name = str(data)
     if name.startswith("ENSG"):
         return name.split(".")[0]
     return name
-
 
 set_id_from_source(extract_ensembl_id)
 

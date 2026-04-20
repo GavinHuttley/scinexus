@@ -157,24 +157,23 @@ wheels = [
 
 [[package]]
 name = "cogent3"
-version = "2026.3.23a0"
+version = "2026.4.20a0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "charset-normalizer" },
     { name = "citeable" },
-    { name = "loky" },
     { name = "numba", marker = "python_full_version < '3.15'" },
     { name = "numpy" },
+    { name = "scinexus", extra = ["loky"] },
     { name = "scipy" },
-    { name = "scitrack" },
     { name = "stevedore" },
     { name = "tqdm" },
     { name = "typeguard" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/19/45/bce8eed9d78e394929521e09e1bd2e63eabc9f2051c9e19b386bd769430d/cogent3-2026.3.23a0.tar.gz", hash = "sha256:2c3da1ec7623cc870f0e765d31138b4fe9abacc10c62863cb3dea7402187c056", size = 17905338, upload-time = "2026-03-23T01:23:36.092Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3b/f6/0d2ba66396e421b22f9e215d21f6baed0ab267f07384916db962ff593904/cogent3-2026.4.20a0.tar.gz", hash = "sha256:739b09bcb7deaf463803a8704e97f4dd4752fdeb2c186f97aeb820d718731df2", size = 17895761, upload-time = "2026-04-20T00:44:40.843Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/9e/a439e68628b300c0078556ae25566c5eae3d5bd5f9ac44fd9acfa4ec4e8d/cogent3-2026.3.23a0-py3-none-any.whl", hash = "sha256:b74ef39b752d77aa50aa6d886269b7e339947961c7c653728674aabbeba4eb4a", size = 722683, upload-time = "2026-03-23T01:23:33.465Z" },
+    { url = "https://files.pythonhosted.org/packages/96/83/f77c995547c494295f99a112edd6f2e76782c240c24aab472afb8ecb6093/cogent3-2026.4.20a0-py3-none-any.whl", hash = "sha256:caf5fba0ee27ce81e48ee7178f82b976dcf673805c59418ec201fa16aee67832", size = 716089, upload-time = "2026-04-20T00:44:38.805Z" },
 ]
 
 [[package]]
@@ -1237,7 +1236,7 @@ provides-extras = ["loky", "mpi", "rich"]
 test = [
     { name = "click", specifier = ">=8.3.2" },
     { name = "cogapp", specifier = ">=3.6.0" },
-    { name = "cogent3", specifier = ">=2026.3.23a0" },
+    { name = "cogent3", specifier = ">=2026.4.20a0" },
     { name = "mkdocstrings-python", specifier = ">=2.0.3" },
     { name = "mypy" },
     { name = "nox" },

@@ -158,14 +158,14 @@ annotations=[
 
     # NotCompleted(type=ERROR, origin=load_aligned, source="primate_brca1",
     # message="Traceback (most recent call last):   File
-    # "/Users/gavin/repos/SciNexus/src/scinexus/composable.py", line 525, in __call__
+    # "/Users/gavin/repos/SciNexus/src/scinexus/composable.py", line 545, in __call__
     # result = self.main(val, *args, **kwargs)   File
-    # "/Users/gavin/repos/Cogent3/src/cogent3/app/io.py", line 334, in main     return
-    # _load_seqs(path, cogent3.make_aligned_seqs, self._parser, self.moltype)   File
-    # "/Users/gavin/repos/Cogent3/src/cogent3/app/io.py", line 294, in _load_seqs
-    # data = _read_it(path)   File "/opt/homebrew/Cellar/python@3.14/3.14.3_1/Framewor
-    # ks/Python.framework/Versions/3.14/lib/python3.14/functools.py", line 982, in
-    # wrapper     return dispatch(args[0].__class__)(*args, **kw) [...]
+    # "/Users/gavin/repos/SciNexus/.venv/lib/python3.14/site-
+    # packages/cogent3/app/io.py", line 334, in main     return _load_seqs(path,
+    # cogent3.make_aligned_seqs, self._parser, self.moltype)   File
+    # "/Users/gavin/repos/SciNexus/.venv/lib/python3.14/site-
+    # packages/cogent3/app/io.py", line 294, in _load_seqs     data = _read_it(path)
+    # File [...]
     ```
 
     1. An error during load — `select_seqs` is never called.
