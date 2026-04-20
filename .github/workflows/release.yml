@@ -45,26 +45,28 @@ jobs:
         run: |
           uv run --group test nox -db uv --force-python python -s testmpi
 
-  # docbuild:
-  #   name: "Test the docs"
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: "actions/checkout@v6"
-  #       with:
-  #         fetch-depth: 0
+  docbuild:
+    name: "Test the docs"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: "actions/checkout@v6"
+        with:
+          fetch-depth: 0
 
-  #     - uses: "actions/setup-python@v6"
-  #       with:
-  #           python-version: "3.14"
+      - uses: "actions/setup-python@v6"
+        with:
+            python-version: "3.14"
 
-  #     - name: Install uv
-  #       uses: astral-sh/setup-uv@v7
-  #       with:
-  #         enable-cache: true
-  #         cache-dependency-glob: "pyproject.toml"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
 
-  #     - name: "test the docs code"
-  #       run: "uv run --group test zensical build"
+      - name: "test the docs code"
+        run: |
+          uv run --group test nox -s cogdocs
+          uv run --group test zensical build
 
   build:
     name: Build wheel and sdist
@@ -99,8 +101,7 @@ jobs:
 
   release_test:
     name: Release to Test PyPI
-    needs: build
-    # needs: [build, docbuild]
+    needs: [build, docbuild]
     environment: release_test
     runs-on: ubuntu-latest
     permissions:

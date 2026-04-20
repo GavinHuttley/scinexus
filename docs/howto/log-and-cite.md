@@ -42,13 +42,13 @@ We reproduce here one of the examples from [scitrack](https://github.com/Huttley
 
 By default, `apply_to` creates a `CachingLogger` that records the composable function, package versions, output paths, MD5 checksums of every result, and total elapsed time. The log is then written into the output data store. This is the recommended setting for production analyses because it gives you a complete, self-contained record of what ran and what it produced.
 
-```python
+```python { notest }
 result = process.apply_to(dstore)  # logger=True by default
 ```
 
 You can also pass your own `CachingLogger` instance if you want to configure it beforehand or reuse one across multiple calls.
 
-```python
+```python { notest }
 from scitrack import CachingLogger
 
 LOGGER = CachingLogger()
@@ -60,7 +60,7 @@ result = process.apply_to(dstore, logger=LOGGER)
 
 Set `logger=False` to skip logging entirely.
 
-```python
+```python { notest }
 result = process.apply_to(dstore, logger=False)
 ```
 
@@ -130,10 +130,12 @@ exec_codeblock(src=src,
         version="0.1.0",
     )
 
+
     @define_app(cite=my_cite)  # (1)!
     def strict_filter(val: AlignedSeqsType) -> AlignedSeqsType:
         """Remove sequences shorter than the alignment."""
         return val.omit_bad_seqs()
+
 
     app = strict_filter()
 
@@ -204,9 +206,11 @@ exec_codeblock(src=src, annotations=["Because we are using `cogent3`, the proper
         year=2025,
     )
 
+
     @define_app(cite=my_cite)
     def strict_filter(val: AlignedSeqsType) -> AlignedSeqsType:
         return val.omit_bad_seqs()
+
 
     in_dstore = open_data_store("data/raw.zip", suffix="fa", limit=5)
     out_dstore = open_data_store("cited_results", suffix="fa", mode="w")
