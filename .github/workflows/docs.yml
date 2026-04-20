@@ -38,19 +38,12 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "pyproject.toml"
 
-      - name: Install Docs Dependencies
-        run: |
-          uv venv venv -p python
-          source venv/bin/activate
-          uv pip install ".[test]"
-
       - name: Build Documentation
         run: |
-          source venv/bin/activate
           # update executable components
-          uv run nox -s cogdocs
+          uv run --group test nox -s cogdocs
           # build actual docs
-          zensical build --clean
+          uv run --group zensical build --clean
         working-directory: ${{ github.workspace }}
 
       - name: Upload Documentation Artifact

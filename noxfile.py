@@ -21,9 +21,10 @@ def fmt(session: nox.Session) -> None:
     session.run("ruff", "format", ".", external=True)
 
 
-@nox.session(python=False)
+@nox.session(python="3.14")
 def cogdocs(session: nox.Session) -> None:
-    cmnd = 'find docs -name "*.md" | xargs uv run cog -r -I docs/scripts'
+    session.install("-e", ".", "--group", "test")
+    cmnd = 'find docs -name "*.md" | xargs uv run --group test cog -r -I docs/scripts'
     subprocess.run(cmnd, check=True, shell=True)  # noqa: S602
 
 

@@ -130,12 +130,10 @@ exec_codeblock(src=src,
         version="0.1.0",
     )
 
-
     @define_app(cite=my_cite)  # (1)!
     def strict_filter(val: AlignedSeqsType) -> AlignedSeqsType:
         """Remove sequences shorter than the alignment."""
         return val.omit_bad_seqs()
-
 
     app = strict_filter()
 
@@ -206,11 +204,9 @@ exec_codeblock(src=src, annotations=["Because we are using `cogent3`, the proper
         year=2025,
     )
 
-
     @define_app(cite=my_cite)
     def strict_filter(val: AlignedSeqsType) -> AlignedSeqsType:
         return val.omit_bad_seqs()
-
 
     in_dstore = open_data_store("data/raw.zip", suffix="fa", limit=5)
     out_dstore = open_data_store("cited_results", suffix="fa", mode="w")
