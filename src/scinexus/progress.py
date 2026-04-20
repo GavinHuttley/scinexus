@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 from abc import ABC, abstractmethod
-from types import TracebackType
 from typing import TYPE_CHECKING, Literal, TypeVar
 
 if TYPE_CHECKING:  # pragma: no cover
     from collections.abc import Iterable, Iterator
+    from types import TracebackType
     from typing import Any, Self
 
 T = TypeVar("T")
@@ -45,7 +46,7 @@ class ProgressContext(ABC):
             description text to display
         """
 
-    def close(self) -> None:
+    def close(self) -> None:  # noqa: B027
         """Close the progress bar. Override in subclasses with cleanup."""
 
     def __enter__(self) -> Self:
@@ -106,6 +107,8 @@ class _NoOpContext(ProgressContext):
 _NO_OP_CONTEXT = _NoOpContext()
 
 
+# pylint: disable=unused-argument
+# ruff: noqa: ARG002
 class NoProgress(Progress):
     """A no-op progress wrapper that passes through the iterable unchanged."""
 
@@ -241,15 +244,13 @@ class TqdmProgress(Progress):
         self._bar.refresh()
 
     def __del__(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             for child in reversed(self._children):
                 if child._bar is not None:
                     child._bar.close()
                     child._bar = None
             if self._bar is not None:
                 self._bar.close()
-        except Exception:  # noqa: BLE001
-            pass
 
     def child(self, *, leave: bool | None = None) -> TqdmProgress:
         """Return a child TqdmProgress at the next cursor position.
@@ -416,7 +417,7 @@ class RichProgress(Progress):
             self._task = None
 
     def __del__(self) -> None:
-        try:
+        with contextlib.suppress(Exception):
             for child in reversed(self._children):
                 child._cleanup_task()
             self._cleanup_task()
@@ -424,8 +425,6 @@ class RichProgress(Progress):
                 self._progress.stop()
                 self._progress.console.file.write("\n")
                 self._progress.console.file.flush()
-        except Exception:  # noqa: BLE001
-            pass
 
     def child(self, *, leave: bool | None = None) -> RichProgress:
         """Return a child RichProgress sharing the same display.
@@ -516,7 +515,5 @@ def get_progress(show_progress: bool | Progress = False, **kwargs: Any) -> Progr
     if not show_progress:
         return NoProgress()
     if _default_progress is not None:
-        if kwargs:
-            return type(_default_progress)(**kwargs)
-        return _default_progress
+        return type(_default_progress)(**kwargs) if kwargs else _default_progress
     return TqdmProgress(**kwargs)

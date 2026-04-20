@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import re
 import shutil
 import uuid
 from bz2 import open as bzip_open
@@ -17,7 +18,8 @@ from urllib.request import urlopen
 
 from charset_normalizer import detect
 
-from scinexus.misc import _wout_period
+_wout_period = re.compile(r"^\.")
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
