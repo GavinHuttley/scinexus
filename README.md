@@ -126,7 +126,7 @@ pip install scinexus
 
 ## History
 
-The app framework and utility functions in `scinexus` incubated inside [cogent3](https://github.com/cogent3/cogent3) from March 2019, accumulating over five years of development, testing, and real-world use in computational genomics before being extracted into a standalone package. The design is mature and has underpinned analyses in published studies.
+The app framework and utility functions in `scinexus` incubated inside [cogent3](https://github.com/cogent3/cogent3) from March 2019, accumulating over seven years of development, testing, and real-world use in computational genomics before being extracted into a standalone package. The design is mature and has underpinned analyses in published studies.
 
 The extraction into `scinexus` makes the infrastructure available to any scientific Python project, free of the `cogent3` dependency. See the [changelog](changelog.md) for a detailed list of changes from the cogent3 app infrastructure.
 
