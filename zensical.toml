@@ -47,10 +47,16 @@ Copyright &copy; 2026 The authors
 nav = [
     { "Home" = "index.md" },
     { "Install" = "install.md" },
-    { "Tutorials" = [
-        "tutorials/index.md",
-        "tutorials/composing-apps.md",
-        "tutorials/processing-a-dataset.md",
+    { "Explanation" = [
+        "explanation/index.md",
+        "explanation/why-composable-apps.md",
+        "explanation/app-lifecycle.md",
+        "explanation/flow.md",
+        "explanation/type-system.md",
+        "explanation/not-completed-design.md",
+        "explanation/source-tracking.md",
+        "explanation/customisation-hooks.md",
+        "explanation/data-store-model.md",
     ] },
     { "How-to guides" = [
         "howto/index.md",
@@ -66,16 +72,10 @@ nav = [
         "howto/extend-type-checking.md",
         "howto/migrate-from-cogent3.md",
     ] },
-    { "Explanation" = [
-        "explanation/index.md",
-        "explanation/why-composable-apps.md",
-        "explanation/app-lifecycle.md",
-        "explanation/flow.md",
-        "explanation/type-system.md",
-        "explanation/not-completed-design.md",
-        "explanation/source-tracking.md",
-        "explanation/customisation-hooks.md",
-        "explanation/data-store-model.md",
+    { "Tutorials" = [
+        "tutorials/index.md",
+        "tutorials/composing-apps.md",
+        "tutorials/processing-a-dataset.md",
     ] },
     { "API reference" = [
         "reference/index.md",
