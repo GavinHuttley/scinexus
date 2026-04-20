@@ -116,7 +116,7 @@ def deserialise_object(data: "PathType | str | dict[str, Any]") -> Any:
     if type_ is None:
         return data
 
-    for type_str, func in _deserialise_func_map.items():
+    for type_str, func in _deserialise_func_map.items():  # noqa: B007
         if type_str in type_:
             break
     else:

@@ -220,7 +220,7 @@ def test_data_member_eq(ro_dstore, fasta_dir):
 
 
 def test_fail_try_append(full_dstore, completed_objects):
-    full_dstore._mode = APPEND  # noqa: SLF001
+    full_dstore._mode = APPEND
     id_, data = next(iter(completed_objects.items()))
     with pytest.raises(IOError):
         full_dstore.write(unique_id=id_, data=data)
@@ -366,17 +366,17 @@ def test_no_not_completed_subdir(nc_dstore):
 
 def test_limit_datastore(nc_dstore):
     assert len(nc_dstore) == len(nc_dstore.completed) + len(nc_dstore.not_completed)
-    nc_dstore._limit = len(nc_dstore.completed) // 2  # noqa: SLF001
-    nc_dstore._completed = []  # noqa: SLF001
-    nc_dstore._not_completed = []  # noqa: SLF001
+    nc_dstore._limit = len(nc_dstore.completed) // 2
+    nc_dstore._completed = []
+    nc_dstore._not_completed = []
     assert len(nc_dstore.completed) == len(nc_dstore.not_completed) == nc_dstore.limit
     assert len(nc_dstore) == len(nc_dstore.completed) + len(nc_dstore.not_completed)
     nc_dstore.drop_not_completed()
     assert len(nc_dstore) == len(nc_dstore.completed)
     assert len(nc_dstore.not_completed) == 0
-    nc_dstore._limit = len(nc_dstore.completed) // 2  # noqa: SLF001
-    nc_dstore._completed = []  # noqa: SLF001
-    nc_dstore._not_completed = []  # noqa: SLF001
+    nc_dstore._limit = len(nc_dstore.completed) // 2
+    nc_dstore._completed = []
+    nc_dstore._not_completed = []
     assert len(nc_dstore) == len(nc_dstore.completed) == nc_dstore.limit
     assert len(nc_dstore.not_completed) == 0
 
@@ -407,7 +407,7 @@ def test_write_if_member_exists(full_dstore, write_dir):
     assert len_dstore == len(full_dstore)
     got = full_dstore.read(identifier)
     assert got == expect
-    full_dstore._mode = OVERWRITE  # noqa: SLF001
+    full_dstore._mode = OVERWRITE
     full_dstore.write(unique_id=identifier, data=expect)
     assert len_dstore == len(full_dstore)
     got = full_dstore.read(identifier)
@@ -559,7 +559,7 @@ def test_write_citations_directory(write_dir, sample_citations):
     dstore.write_citations(data=sample_citations)
     path = write_dir / CITATIONS_FILE
     assert path.exists()
-    loaded = dstore._load_citations()  # noqa: SLF001
+    loaded = dstore._load_citations()
     assert len(loaded) == 2
     assert loaded[0].title == "Tool One"
     assert loaded[1].title == "Tool Two"
@@ -593,7 +593,7 @@ def test_write_bib_no_citations(write_dir):
 
 def test_load_citations_no_file(write_dir):
     dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
-    assert dstore._load_citations() == []  # noqa: SLF001
+    assert dstore._load_citations() == []
 
 
 def test_load_citations_zipped(write_dir, sample_citations):
@@ -607,7 +607,7 @@ def test_load_citations_zipped(write_dir, sample_citations):
         root_dir=source.parent,
     )
     zipped = ReadOnlyDataStoreZipped(pathlib.Path(path), suffix="fasta")
-    loaded = zipped._load_citations()  # noqa: SLF001
+    loaded = zipped._load_citations()
     assert len(loaded) == 2
     assert loaded[0].title == "Tool One"
 
@@ -618,7 +618,7 @@ def test_citations_file_not_in_completed(write_dir, sample_citations):
     dstore.write(unique_id="sample.fasta", data=">s1\nACGT\n")
     dstore.write_citations(data=sample_citations)
     assert (write_dir / CITATIONS_FILE).exists()
-    dstore._completed = []  # noqa: SLF001
+    dstore._completed = []
     member_ids = {m.unique_id for m in dstore.completed}
     assert CITATIONS_FILE not in member_ids
     assert "sample.fasta" in member_ids
@@ -701,10 +701,10 @@ def test_validate_with_display(ro_dstore, _restore_display):
 
 def test_protected_methods_bypass_display(ro_dstore, _restore_display):
     set_summary_display(lambda data, **kw: "SHOULD_NOT_SEE")
-    assert isinstance(ro_dstore._describe(), dict)  # noqa: SLF001
-    assert isinstance(ro_dstore._summary_logs(), list)  # noqa: SLF001
-    assert isinstance(ro_dstore._summary_not_completed(), list)  # noqa: SLF001
-    assert isinstance(ro_dstore._validate(), dict)  # noqa: SLF001
+    assert isinstance(ro_dstore._describe(), dict)
+    assert isinstance(ro_dstore._summary_logs(), list)
+    assert isinstance(ro_dstore._summary_not_completed(), list)
+    assert isinstance(ro_dstore._validate(), dict)
 
 
 def test_summary_citations_with_display(write_dir, sample_citations, _restore_display):
@@ -730,7 +730,7 @@ def test_validate_incorrect_md5(write_dir):
     # corrupt the md5
     md5_path = write_dir / MD5_TABLE / "item.txt"
     md5_path.write_text("wrong_md5_value")
-    result = dstore._validate()  # noqa: SLF001
+    result = dstore._validate()
     assert result["md5_incorrect"] == 1
 
 
@@ -814,7 +814,7 @@ def test_zipped_load_citations_missing(tmp_path):
     (src / "a.txt").write_text("data")
     zpath = shutil.make_archive(str(src), "zip", root_dir=src.parent, base_dir=src.name)
     zstore = ReadOnlyDataStoreZipped(zpath, suffix="txt")
-    assert zstore._load_citations() == []  # noqa: SLF001
+    assert zstore._load_citations() == []
 
 
 def test_zipped_completed_with_limit(tmp_path):
@@ -837,7 +837,7 @@ def test_summary_logs_continuation_line(write_dir):
     logger.log_message("a long message\nthat continues", label="multi")
     logger.shutdown()
     dstore.write_log(unique_id="test.log", data=log_path.read_text())
-    rows = dstore._summary_logs()  # noqa: SLF001
+    rows = dstore._summary_logs()
     assert len(rows) == 1
 
 
@@ -887,11 +887,11 @@ def test_summary_logs_malformed_continuation():
             return [member]
 
     fake = FakeDS.__new__(FakeDS)
-    fake._completed = []  # noqa: SLF001
-    fake._not_completed = []  # noqa: SLF001
-    fake._init_vals = {}  # noqa: SLF001
+    fake._completed = []
+    fake._not_completed = []
+    fake._init_vals = {}
     with pytest.raises(ValueError, match="malformed log data"):
-        fake._summary_logs()  # noqa: SLF001
+        fake._summary_logs()
 
 
 def test_tidy_and_check_suffix_empty():
@@ -1038,13 +1038,13 @@ def test_base_write_citations_warns():
 def test_base_summary_citations_warns():
     ds = _make_minimal_ds()
     with pytest.warns(UserWarning, match="does not support saving citations"):
-        result = ds._summary_citations()  # noqa: SLF001
+        result = ds._summary_citations()
     assert result == []
 
 
 def test_base_load_citations_returns_empty():
     ds = _make_minimal_ds()
-    assert ds._load_citations() == []  # noqa: SLF001
+    assert ds._load_citations() == []
 
 
 def test_base_write_not_completed_readonly():

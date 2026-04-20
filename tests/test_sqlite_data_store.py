@@ -115,7 +115,7 @@ def test_db_init_log(tmp_dir):
     path = tmp_dir / "test_log.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     dstore.write(unique_id="test_record", data="test data")
-    assert dstore._log_id is not None  # noqa: SLF001
+    assert dstore._log_id is not None
     dstore.close()
 
 
@@ -480,7 +480,7 @@ def test_write_citations_sqlite(tmp_dir, sample_citations):
     path = tmp_dir / "test_cite.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     dstore.write_citations(data=sample_citations)
-    loaded = dstore._load_citations()  # noqa: SLF001
+    loaded = dstore._load_citations()
     assert len(loaded) == 2
     assert loaded[0].title == "Tool One"
     assert loaded[1].title == "Tool Two"
@@ -491,7 +491,7 @@ def test_write_citations_empty_sqlite(tmp_dir):
     path = tmp_dir / "test_cite_empty.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     dstore.write_citations(data=())
-    loaded = dstore._load_citations()  # noqa: SLF001
+    loaded = dstore._load_citations()
     assert len(loaded) == 0
     dstore.close()
 
@@ -565,12 +565,12 @@ def test_lock_overwrite_on_locked_db(tmp_dir):
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     _ = dstore.db  # opens and locks
     # fake a different pid in the lock
-    dstore._db.execute(  # noqa: SLF001
+    dstore._db.execute(
         "UPDATE state SET lock_pid=? WHERE state_id=1",
         (os.getpid() + 1,),
     )
     dstore2 = DataStoreSqlite(path, mode=OVERWRITE)
-    dstore2._db = dstore._db  # noqa: SLF001
+    dstore2._db = dstore._db
     with pytest.raises(OSError, match="locked"):
         dstore2.lock()
     dstore.close()
@@ -625,7 +625,7 @@ def test_write_citations_update_existing(tmp_dir, sample_citations):
     dstore.write_citations(data=sample_citations)
     # write again to trigger UPDATE path
     dstore.write_citations(data=(sample_citations[0],))
-    loaded = dstore._load_citations()  # noqa: SLF001
+    loaded = dstore._load_citations()
     assert len(loaded) == 1
     dstore.close()
 
@@ -648,24 +648,24 @@ def test_load_citations_no_table(tmp_dir):
     )
     db.close()
     dstore = DataStoreSqlite(path, mode=READONLY)
-    result = dstore._load_citations()  # noqa: SLF001
+    result = dstore._load_citations()
     assert result == []
     dstore.close()
 
 
 def test_describe_locked_different_pid(writable_store):
-    writable_store._db.execute(  # noqa: SLF001
+    writable_store._db.execute(
         "UPDATE state SET lock_pid=? WHERE state_id=1",
         (os.getpid() + 1,),
     )
-    result = writable_store._describe()  # noqa: SLF001
+    result = writable_store._describe()
     assert "Locked db store" in result["title"]
     assert str(os.getpid() + 1) in result["title"]
 
 
 def test_describe_unlocked(writable_store):
     writable_store.unlock()
-    result = writable_store._describe()  # noqa: SLF001
+    result = writable_store._describe()
     assert result["title"] == "Unlocked db store."
 
 
@@ -687,7 +687,7 @@ def test_summary_not_completed(tmp_dir):
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     nc = NotCompleted(NotCompletedType.FAIL, "dummy", "test msg", source="src")
     dstore.write_not_completed(unique_id="nc1", data=nc.to_json())
-    result = dstore._summary_not_completed()  # noqa: SLF001
+    result = dstore._summary_not_completed()
     assert isinstance(result, list)
     assert len(result) == 1
     dstore.close()
@@ -749,15 +749,15 @@ def test_write_citations_no_table(tmp_dir, sample_citations):
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     # Replace _db with a connection to the DB without citations table
     # (the lazy db property would call open_sqlite_db_rw which creates it)
-    dstore._db = sqlite3.connect(  # noqa: SLF001
+    dstore._db = sqlite3.connect(
         str(path),
         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
     )
-    dstore._db.row_factory = sqlite3.Row  # noqa: SLF001
-    dstore._open = True  # noqa: SLF001
-    assert not dstore._has_citations_table()  # noqa: SLF001
+    dstore._db.row_factory = sqlite3.Row
+    dstore._open = True
+    assert not dstore._has_citations_table()
     dstore.write_citations(data=sample_citations)
-    assert dstore._has_citations_table()  # noqa: SLF001
-    loaded = dstore._load_citations()  # noqa: SLF001
+    assert dstore._has_citations_table()
+    loaded = dstore._load_citations()
     assert len(loaded) == 2
     dstore.close()

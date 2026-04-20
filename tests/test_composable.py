@@ -189,7 +189,7 @@ def test_composable_variable_positional_args():
             return val
 
     instance = pos_var_pos1(2, 3, 4, 5, 6)
-    assert instance._init_vals == {"a": 2, "b": 3, "args": (4, 5, 6)}  # noqa: SLF001
+    assert instance._init_vals == {"a": 2, "b": 3, "args": (4, 5, 6)}
 
 
 def test_composable_minimum_parameters():
@@ -262,7 +262,7 @@ def test_composable_variable_positional_args_and_kwargs():
             return val
 
     instance = pos_var_pos_kw2(2, 3, 4, 5, 6, c=True)
-    assert instance._init_vals == {"a": 2, "args": (3, 4, 5, 6), "c": True}  # noqa: SLF001
+    assert instance._init_vals == {"a": 2, "args": (3, 4, 5, 6), "c": True}
 
 
 def test_app_decoration_fails_with_slots():
@@ -838,7 +838,7 @@ def test_single_app_with_citation():
             return val
 
     app = cited_app()
-    assert app._cite is cite  # noqa: SLF001
+    assert app._cite is cite
     assert app.citations == (cite,)
 
 
@@ -849,7 +849,7 @@ def test_single_app_without_citation():
             return val
 
     app = uncited_app()
-    assert app._cite is None  # noqa: SLF001
+    assert app._cite is None
     assert app.citations == ()
 
 
@@ -1044,7 +1044,7 @@ def test_app_copy():
     copied = copy(original)
     assert copied is not original
     assert copied.data is original.data
-    assert copied._init_vals is original._init_vals  # noqa: SLF001
+    assert copied._init_vals is original._init_vals
 
 
 def test_composition_does_not_mutate_originals():
@@ -1877,7 +1877,7 @@ def test_validate_data_type_not_completed_skip_true():
 
     app = skip_app()
     nc = NotCompleted(NotCompletedType.ERROR, "test", "msg")
-    got = app._validate_data_type(nc)  # noqa: SLF001
+    got = app._validate_data_type(nc)
     assert isinstance(got, NotCompleted)
 
 

@@ -504,9 +504,9 @@ def test_close_rename_zip_in_zip_none(tmp_path):
     path = tmp_path / "test.txt"
     zip_path = tmp_path / "test.zip"
     aw = atomic_write(path, in_zip=zip_path, mode="w")
-    aw._in_zip = None  # noqa: SLF001
+    aw._in_zip = None
     with pytest.raises(RuntimeError, match="in_zip path is unexpectedly None"):
-        aw._close_rename_zip(aw._tmppath)  # noqa: SLF001
+        aw._close_rename_zip(aw._tmppath)
 
 
 def test_atomic_write_exit_without_enter(tmp_path):

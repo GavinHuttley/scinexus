@@ -21,7 +21,7 @@ if os.environ.get("DONT_USE_MPI", 0):
 else:
     try:
         from mpi4py import MPI  # type: ignore[import-not-found,no-redef]
-        from mpi4py import futures as MPIfutures
+        from mpi4py import futures as MPIfutures  # noqa: N812
     except ImportError:
         MPI = None
     else:
@@ -234,9 +234,7 @@ class MPIBackend(Parallel):
     def is_master_process(self) -> bool:
         process_cmd = sys.argv[0]
         process_file = process_cmd.split(os.sep)[-1]
-        if process_file == "server.py":
-            return False
-        return self._comm.Get_rank() == 0
+        return False if process_file == "server.py" else self._comm.Get_rank() == 0
 
     def get_rank(self) -> int:
         return self._comm.Get_rank()
@@ -297,9 +295,7 @@ def _clamp_max_workers_local(max_workers: int | None) -> int:
 def _get_rank_local() -> int:
     """return the rank of the current process for local backends"""
     process_name = multiprocessing.current_process().name
-    if process_name != "MainProcess":
-        return int(process_name.split("-")[-1])
-    return 0
+    return int(process_name.split("-")[-1]) if process_name != "MainProcess" else 0
 
 
 def _resolve_chunksize(

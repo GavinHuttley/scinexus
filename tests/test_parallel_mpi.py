@@ -115,7 +115,7 @@ def test_imap_mpi_invalid_if_serial():
 def test_imap_mpi_if_serial_raise_size_1():
     """if_serial='raise' with SIZE==1 raises RuntimeError"""
     backend = parallel.MPIBackend()
-    backend._size = 1  # noqa: SLF001
+    backend._size = 1
     with pytest.raises(RuntimeError, match="Execution in serial"):
         list(backend.imap(_double, [1], if_serial="raise"))
 
@@ -124,7 +124,7 @@ def test_imap_mpi_if_serial_raise_size_1():
 def test_imap_mpi_if_serial_warn_size_1():
     """if_serial='warn' with SIZE==1 emits warning"""
     backend = parallel.MPIBackend()
-    backend._size = 1  # noqa: SLF001
+    backend._size = 1
     with pytest.warns(UserWarning, match="Execution in serial"):
         with pytest.raises(ZeroDivisionError):
             list(backend.imap(_double, [1], if_serial="warn"))
@@ -163,7 +163,7 @@ def test_as_completed_mpi_max_workers_warning():
 def test_as_completed_mpi_if_serial_raise_size_1():
     """_as_completed_mpi with SIZE==1 and if_serial='raise' raises RuntimeError"""
     backend = parallel.MPIBackend()
-    backend._size = 1  # noqa: SLF001
+    backend._size = 1
     with pytest.raises(RuntimeError, match="Execution in serial"):
         list(backend.as_completed(_double, [1], if_serial="raise"))
 
@@ -172,7 +172,7 @@ def test_as_completed_mpi_if_serial_raise_size_1():
 def test_as_completed_mpi_if_serial_warn_size_1():
     """_as_completed_mpi with SIZE==1 and if_serial='warn' emits warning"""
     backend = parallel.MPIBackend()
-    backend._size = 1  # noqa: SLF001
+    backend._size = 1
     with pytest.warns(UserWarning, match="Execution in serial"):
         with pytest.raises(ZeroDivisionError):
             list(backend.as_completed(_double, list(range(4)), if_serial="warn"))
@@ -182,7 +182,7 @@ def test_as_completed_mpi_if_serial_warn_size_1():
 def test_as_completed_mpi_if_serial_ignore_size_1():
     """_as_completed_mpi with SIZE==1 and if_serial='ignore' does not raise serial error"""
     backend = parallel.MPIBackend()
-    backend._size = 1  # noqa: SLF001
+    backend._size = 1
     with pytest.raises(ZeroDivisionError):
         list(backend.as_completed(_double, list(range(4)), if_serial="ignore"))
 
@@ -203,6 +203,13 @@ def test_as_completed_mpi_non_sized_iterable():
 
     result = sorted(as_completed(_double, gen(), use_mpi=True))
     assert result == [0, 2, 4, 6]
+
+
+@pytest.mark.mpi
+def test_mpi_get_size():
+    """MPIBackend.get_size returns UNIVERSE_SIZE"""
+    backend = parallel.MPIBackend()
+    assert backend.get_size() == SIZE
 
 
 @pytest.mark.mpi

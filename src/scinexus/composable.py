@@ -99,10 +99,10 @@ class NotCompleted(int):
         origin = _get_origin(origin)
         try:
             source = get_id_from_source()(source)
-        except Exception:
+        except Exception:  # noqa: BLE001
             source = None
         result = int.__new__(cls, False)  # noqa: FBT003
-        result._persistent = (type_.value, origin, message), {"source": source}
+        result._persistent = (type_.value, origin, message), {"source": source}  # noqa: SLF001
         result.type = type_
         result.origin = origin
         result.message = message

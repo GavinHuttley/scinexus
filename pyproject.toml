@@ -27,6 +27,11 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 
+[project.urls]
+Documentation = "https://scinexus.readthedocs.io"
+"Bug Tracker" = "https://github.com/cogent3/scinexus/issues"
+"Source Code" = "https://github.com/cogent3/scinexus/"
+
 [project.optional-dependencies]
 loky = ["loky"]
 mpi = ["mpi4py"]
