@@ -34,7 +34,7 @@ class my_app(  # (1)!
 1. We suggest naming your apps using the PEP8 naming style for functions (lowercase separated by underscores) because the instances will be used like functions.
 2. We type hint the input / output types with the base class.
 3. We assign the citation in the class definition.
-4. The class has a `main()` method with type hints specified for its first argument and its return type.
+4. Your class **must** have a `main()` method with type hints specified for its first argument and its return type.
 
 ## Using the `define_app` decorator
 
@@ -59,15 +59,12 @@ class my_app:
     def __init__(self, convert: Callable[[str], str]):
         self.convert = convert
 
-    def main(self, val: str) -> str:
+    def main(self, val: str) -> str:  # (2)!
         return self.convert(val)
 ```
 
-1. The `define_app` decorator is used (line 5).
-2. The class has a `main()` method (line 10).
-3. Type hints are specified for `main()`'s first argument and its return type (line 10).
-
-Instantiate with parameters (line 13), then call on data (line 17).
+1. The `define_app` decorator is used. You can specify the `app_type` here, which we don't in this case, and assign your citation.
+2. Your class **must** have a `main()` method with type hints specified for its first argument and its return type.
 
 ### Specifying the app type
 
