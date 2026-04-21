@@ -26,7 +26,7 @@ The next constraint on app composition are the input and output types of the app
 
 SciNexus defines two type-level constructs used across the framework:
 
-- `SerialisableType` -- a `Protocol` that any object with a `to_rich_dict()` method satisfies. Writer apps rely on this to serialise results before storing them in a data store.
+- `SerialisableType` -- a `Protocol` that any object with a `to_rich_dict()` method satisfies. Database writer apps rely on this to serialise results before storing them in a data store.
 - `IdentifierType` -- a type alias (`str | Path | DataMemberABC`) representing the accepted ways to identify a member of a data store. Loader apps accept this as input.
 
 See the [API reference](../reference/utilities.md#type-system) for details.
@@ -37,7 +37,7 @@ In addition to checking type compatibility when apps are composed, scinexus vali
 
 !!! important "Why this matters"
 
-    Without runtime type checking, passing the wrong data type to an app still fails — but the error occurs inside `main()` and can be confusing. For example, a message like `'NoneType' object has no attribute 'blah'` gives little indication that the real problem is a type mismatch from an upstream app. With runtime checking enabled, scinexus catches this before entering `main()` and reports the mismatch clearly.
+    Without runtime type checking, passing the wrong data type to an app still fails — but the error occurs inside the users `main()` and can be confusing. For example, a message like `'NoneType' object has no attribute 'blah'` gives little indication that the real problem is a type mismatch from an upstream app. With runtime checking enabled, scinexus catches this before entering `main()` and reports the mismatch clearly.
 
 ### Disabling type checking with `check_data_type`
 

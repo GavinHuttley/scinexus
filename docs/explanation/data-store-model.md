@@ -6,7 +6,7 @@
 
 ## Data stores -- collections of data records
 
-If you download [raw.zip](data/raw.zip) and unzip it, you will see it contains 1,035 files ending with a `.fa` filename suffix. (It also contains a tab delimited file and a log file, which we ignore for now.) The directory `raw` is a "data store" and the `.fa` files are "members" of it. In summary, a data store is a collection of members of the same "type". This means we can apply the same application to every member.
+If you download [raw.zip](../data/raw.zip) and unzip it, you will see it contains 1,035 files ending with a `.fa` filename suffix. (It also contains a tab delimited file and a log file, which we ignore for now.) The directory `raw` is a "data store" and the `.fa` files are "members" of it. In summary, a data store is a collection of members of the same "type". This means we can apply the same application to every member.
 
 ### Types of data store
 

@@ -43,7 +43,7 @@ flowchart TD
     call_input --> input_nc{result is NotCompleted?}
     input_nc -- yes --> nc_input[return same NotCompleted]
     input_nc -- no --> type_check
-    has_input -- no --> type_check{type check val}
+    has_input -- no --> type_check{val type is valid for self}
     type_check -- fail --> nc_type[create and return NotCompleted ERROR]
     type_check -- pass --> main["main(val)"]
     main -- exception --> nc_main[NotCompleted ERROR]

@@ -2,7 +2,7 @@
 
 !!! abstract ""
 
-    The different app types, their base classes, and how `define_app` transforms a class or function into a composable app.
+    The different app types, their base classes, and how `define_app` transforms a user defined class or function into a composable app.
 
 ## Types of apps
 
