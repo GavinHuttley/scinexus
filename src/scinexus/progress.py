@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 from abc import ABC, abstractmethod
+from collections.abc import Sized
 from typing import TYPE_CHECKING, Literal, TypeVar
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -230,6 +231,13 @@ class TqdmProgress(Progress):
         total: int | None = None,
         msg: str = "",
     ) -> Iterator[T]:
+        with contextlib.suppress(TypeError):
+            total = (
+                len(iterable)
+                if isinstance(iterable, Sized) and total is None
+                else total
+            )
+
         if self._bar is None:
             self._bar = self._make_bar(total=total, msg=msg)
         else:
@@ -397,6 +405,12 @@ class RichProgress(Progress):
         total: int | None = None,
         msg: str = "",
     ) -> Iterator[T]:
+        with contextlib.suppress(TypeError):
+            total = (
+                len(iterable)
+                if isinstance(iterable, Sized) and total is None
+                else total
+            )
         rp = self._ensure_progress()
         if self._task is None:
             self._task = rp.add_task(msg, total=total)
