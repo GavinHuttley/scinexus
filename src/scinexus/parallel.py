@@ -399,8 +399,10 @@ def get_parallel_backend(backend: BackendType | None = None) -> Parallel:
         backend it needs without disrupting the settings of other
         packages.
 
-    Returns ``MultiprocessBackend`` when no backend has been set and
-    ``backend`` is ``None``.
+    Returns
+    -------
+    `MultiprocessBackend`` when no backend has been set and
+    ``backend is None``.
     """
     if backend is not None:
         return _make_backend(backend)
@@ -497,7 +499,7 @@ def imap(
     and mpi4py (use pip or conda) installed. In addition, your initial script must
     have a ``if __name__ == '__main__':`` block. You then invoke your program using
 
-    $ mpiexec -n <number CPUs> python3 -m mpi4py.futures <initial script>
+    `$ mpiexec -n <number CPUs> python3 -m mpi4py.futures <initial script>`
     """
     if_serial = _validate_if_serial(if_serial)
 
