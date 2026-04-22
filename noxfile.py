@@ -60,7 +60,7 @@ def test(session):
         "-s",
         "-x",
         "-m",
-        "not slow and not mpi and not cogent3",
+        "not slow and not mpi",
         *session.posargs,
     )
 
@@ -119,7 +119,7 @@ def testcov(session):
         "-s",
         "-x",
         "-m",
-        "not mpi and not cogent3",
+        "not mpi",
     )
 
     # MPI tests when mpiexec is available
