@@ -2602,7 +2602,7 @@ def test_as_completed_progress(full_dstore, capsys, show):
     result = capsys.readouterr().err.splitlines()
     if show:
         assert len(result) > 0
-        assert "100%" in result[-1]
+        assert "6/6" in result[-1]
     else:
         assert len(result) == 0
 

@@ -415,6 +415,9 @@ class RichProgress(Progress):
             yield item
             rp.advance(self._task)
         rp.refresh()
+        if not self._leave:
+            rp.remove_task(self._task)
+            self._task = None
 
     def _cleanup_task(self) -> None:
         if self._task is not None and self._progress is not None:
