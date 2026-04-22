@@ -813,6 +813,82 @@ def test_tqdm_del_without_use_is_safe():
     del tp
 
 
+def test_tqdm_print_after_single_bar_appears_after_bar():
+    import io
+
+    buf = io.StringIO()
+    tp = TqdmProgress(leave=True, file=buf)
+    list(tp([1, 2, 3], total=3, msg="step"))
+    tp.close()
+    print("DONE", file=buf)
+    lines = buf.getvalue().splitlines()
+    done_idx = next(i for i, ln in enumerate(lines) if "DONE" in ln)
+    bar_idx = next(i for i, ln in enumerate(lines) if "step" in ln)
+    assert done_idx > bar_idx
+
+
+def test_tqdm_print_after_parent_and_child_bars_appears_after_bars():
+    import io
+
+    buf = io.StringIO()
+    tp = TqdmProgress(leave=True, file=buf)
+    child = tp.child(leave=True)
+    for _ in tp([1, 2], total=2, msg="outer"):
+        list(child([10, 20, 30], total=3, msg="inner"))
+    tp.close()
+    print("DONE", file=buf)
+    lines = buf.getvalue().splitlines()
+    done_idx = next(i for i, ln in enumerate(lines) if "DONE" in ln)
+    outer_idx = next(i for i, ln in enumerate(lines) if "outer" in ln)
+    inner_idx = next(i for i, ln in enumerate(lines) if "inner" in ln)
+    assert done_idx > outer_idx
+    assert done_idx > inner_idx
+
+
+def test_tqdm_close_as_context_manager():
+    import io
+
+    buf = io.StringIO()
+    with TqdmProgress(leave=True, file=buf) as tp:
+        list(tp([1, 2, 3], total=3, msg="step"))
+    print("DONE", file=buf)
+    lines = buf.getvalue().splitlines()
+    done_idx = next(i for i, ln in enumerate(lines) if "DONE" in ln)
+    bar_idx = next(i for i, ln in enumerate(lines) if "step" in ln)
+    assert done_idx > bar_idx
+
+
+def test_tqdm_close_idempotent():
+    import io
+
+    buf = io.StringIO()
+    tp = TqdmProgress(leave=True, file=buf)
+    list(tp([1, 2], total=2, msg="step"))
+    tp.close()
+    tp.close()
+
+
+def test_rich_close_stops_display():
+    rp = RichProgress(disable=True, leave=True)
+    list(rp([1, 2], total=2))
+    assert rp._progress is not None
+    rp.close()
+    assert rp._task is None
+
+
+def test_rich_close_as_context_manager():
+    with RichProgress(disable=True, leave=True) as rp:
+        list(rp([1, 2, 3], total=3))
+    assert rp._task is None
+
+
+def test_rich_close_idempotent():
+    rp = RichProgress(disable=True, leave=True)
+    list(rp([1, 2], total=2))
+    rp.close()
+    rp.close()
+
+
 def test_rich_reuses_task_across_calls():
     rp = RichProgress(disable=True, leave=True)
     assert list(rp([1, 2], total=2)) == [1, 2]

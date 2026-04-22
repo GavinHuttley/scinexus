@@ -106,6 +106,58 @@ for batch in pbar(range(3), msg="Processing"):
 
 The context maps progress values from `[0.0, 1.0]` to the configured `[start, end]` range and is cleaned up automatically when the `with` block exits.
 
+## Cleaning up
+
+Both `Progress` and `ProgressContext` support the context manager protocol. Using a progress bar as a context manager ensures that `close()` is called automatically, which finalises the display and moves the cursor past the bars. Without cleanup, leftover bars can leave the terminal cursor in the wrong position.
+
+=== "Using `tqdm` (default)"
+
+    ```python
+    import scinexus
+
+    with scinexus.get_progress(show_progress=True) as pbar:  # (1)!
+        child = pbar.child()
+        for batch in pbar(range(3), msg="Outer"):
+            for item in child(range(10), msg=f"Batch {batch}"):
+                pass
+    ```
+
+    1. `close()` is called automatically and the cursor position is restored.
+
+=== "Using `rich`"
+
+    ```python
+    import scinexus
+
+    scinexus.set_progress_backend("rich")
+    with scinexus.get_progress(show_progress=True) as pbar:  # (1)!
+        child = pbar.child()
+        for batch in pbar(range(3), msg="Outer"):
+            for item in child(range(10), msg=f"Batch {batch}"):
+                pass
+    ```
+
+    1. `close()` is called automatically and the cursor position is restored.
+
+???- tip "No context manager? No problem!"
+
+    ```python
+    import scinexus
+
+    pbar = scinexus.get_progress(show_progress=True)
+    child = pbar.child()
+    for batch in pbar(range(3), msg="Outer"):
+        for item in child(range(10), msg=f"Batch {batch}"):
+            pass
+    pbar.close()  # (1)!
+    ```
+
+    1. Call `close()` explicitly when you are done
+
+!!! note
+
+    Calling `close()` on a `Progress` instance also closes all of its children. For standalone `ProgressContext` objects (from `context()`), use the `with` statement as shown in the [push-based sub-contexts](#push-based-sub-contexts) section.
+
 ## Customising appearance
 
 ### Persisting bars after completion
