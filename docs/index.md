@@ -5,7 +5,7 @@
 
 # About
 
-*What `dataclasses` and `attrs` are for structured data, `scinexus` apps are for structured algorithms.*
+!!! abstract "*What `dataclasses` and `attrs` do for declaring data, `scinexus` does for declaring algorithms.*"
 
 `scinexus` (pronounced 'sigh-nexus') is a Python framework for rapid development of data processing applications. It enables interoperability between apps through defined data types, allowing development of scientific domain app ecosystems (for examples see [cogent3](https://cogent3.org/doc/app/index-app.html) and [piqtree](https://piqtree.readthedocs.io/en/stable/)).
 
