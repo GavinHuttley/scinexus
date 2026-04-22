@@ -1,0 +1,184 @@
+# scinexus
+
+> A composable app infrastructure for scientific computing
+
+scinexus (pronounced "sigh-nexus") is a Python framework for building composable, type-checked data processing pipelines. What dataclasses and attrs are for structured data, scinexus apps are for structured algorithms. It enables interoperability between apps through defined data types, supporting scientific domain app ecosystems.
+
+## Core Concepts
+
+### define_app
+
+The `@define_app` decorator transforms a class (with a `main()` method) or a function into a composable app. Apps are callable and compose with `+`.
+
+```python
+from scinexus import define_app
+
+@define_app
+class upper:
+    def main(self, data: str) -> str:
+        return data.upper()
+
+result = upper()("hello")  # "HELLO"
+```
+
+Function-based apps are also supported:
+
+```python
+@define_app
+def double(val: int) -> int:
+    return val * 2
+```
+
+### App Types
+
+- `GENERIC` (default) -- general-purpose processing step
+- `LOADER` -- must be first in a composed pipeline
+- `WRITER` -- must be last in a composed pipeline; writes results to a data store
+- `NON_COMPOSABLE` -- cannot participate in `+` composition
+
+Set via `@define_app(app_type="loader")` etc.
+
+### App Composition
+
+Apps compose with `+`. Type compatibility between the return type of the left app and the input type of the right app is checked at composition time.
+
+```python
+@define_app
+def add_one(x: int) -> int:
+    return x + 1
+
+@define_app
+def to_str(x: int) -> str:
+    return str(x)
+
+pipeline = add_one() + to_str()
+pipeline(5)  # "6"
+```
+
+Ordering rules: LOADER must be first, WRITER must be last, GENERIC can go anywhere in between.
+
+### NotCompleted
+
+A sentinel return type for failed computations. It propagates through pipelines without raising exceptions, enabling durable computing.
+
+```python
+from scinexus import NotCompleted
+
+nc = NotCompleted("ERROR", "my_app", "something went wrong", source="input.txt")
+bool(nc)  # False -- so it is falsy
+```
+
+If an app's `main()` raises an exception, the framework catches it and returns a `NotCompleted` instance. If an app receives a `NotCompleted` as input (and `skip_not_completed=True`, the default), it passes it through unchanged.
+
+## Data Stores
+
+Data stores provide checkpointed, append-only storage for pipeline results.
+
+```python
+from scinexus import open_data_store
+
+# Directory-based
+dstore = open_data_store("results/", suffix="json", mode="w")
+
+# SQLite-based
+dstore = open_data_store("results.sqlitedb", mode="w")
+
+# Read-only from a zip
+dstore = open_data_store("results.zip")
+```
+
+Key features:
+- `.describe` -- summary of stored data
+- `.summary_not_completed` -- summary of failed results
+- Completed members accessed via `.completed`
+- Membership testing with `"identifier" in dstore`
+- Logs and citations are stored alongside data
+
+## Writer Apps and apply_to
+
+Writer apps process an entire data store, with logging, checkpointing, and progress tracking:
+
+```python
+@define_app(app_type="writer")
+class save_result:
+    def __init__(self, data_store):
+        self.data_store = data_store
+
+    def main(self, data: str, identifier: str) -> str:
+        self.data_store.write(unique_id=identifier, data=data)
+        return identifier
+
+pipeline = add_one() + to_str() + save_result(dstore)
+pipeline.apply_to(input_dstore, parallel=True, show_progress=True)
+```
+
+## Parallel Execution
+
+Three backends are available:
+
+```python
+from scinexus import set_parallel_backend, get_parallel_backend
+
+set_parallel_backend("multiprocess")  # default, uses multiprocessing
+set_parallel_backend("loky")          # recommended for Jupyter
+set_parallel_backend("mpi")           # for HPC clusters via mpi4py
+```
+
+Use `parallel=True` in `apply_to()` or `as_completed()` to enable parallel execution. Configure workers via `par_kw={"max_workers": 4}`.
+
+## Progress Tracking
+
+```python
+from scinexus import set_progress_backend
+
+set_progress_backend("tqdm")  # default
+set_progress_backend("rich")  # requires rich extra
+```
+
+Pass `show_progress=True` to `apply_to()` or `as_completed()`.
+
+## Installation
+
+```
+pip install scinexus
+```
+
+Optional extras:
+- `pip install scinexus[loky]` -- process pool for Jupyter
+- `pip install scinexus[rich]` -- rich progress bars
+- `pip install scinexus[mpi]` -- MPI support via mpi4py
+
+Requires Python 3.11+.
+
+## Type System
+
+scinexus checks type compatibility when composing apps with `+`. The return type of the left app must overlap with the input type of the right app. Standard typing constructs (`Union`, `Optional`, protocols) are supported.
+
+## Public API
+
+Direct imports from `scinexus`:
+- `define_app` -- decorator for creating apps
+- `NotCompleted`, `NotCompletedType` -- failure sentinel
+- `is_app`, `is_app_composable` -- introspection helpers
+- `AppBase`, `ComposableApp`, `LoaderApp`, `WriterApp`, `NonComposableApp` -- base classes for inheritance-based app definition
+- `Progress`, `ProgressContext`, `get_progress`, `set_progress_backend` -- progress tracking
+- `__version__` -- package version
+
+Lazy imports from `scinexus`:
+- `open_data_store` -- create/open data stores
+- `open_` -- open files with format detection
+- `set_parallel_backend`, `get_parallel_backend` -- parallel configuration
+- `set_summary_display`, `get_summary_display` -- customise data store summary output
+- `set_id_from_source`, `get_id_from_source` -- customise unique identifier extraction
+
+## Documentation
+
+- How-to guides: writing function apps, writing class apps, composing apps, using data stores, handling failures, running in parallel, tracking progress, logging and citations, extending the type system, customising display, migrating from cogent3
+- Tutorials: composing apps, processing a dataset
+- Explanations: why composable apps, app lifecycle, type system, data store model, NotCompleted design, source tracking, customisation hooks, control flow
+
+## Links
+
+- Documentation: https://scinexus.readthedocs.io
+- Source: https://github.com/cogent3/scinexus
+- Bug tracker: https://github.com/cogent3/scinexus/issues
