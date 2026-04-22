@@ -51,6 +51,7 @@ class ProgressContext(ABC):
         """Close the progress bar. Override in subclasses with cleanup."""
 
     def __enter__(self) -> Self:
+        """Enter the context manager, returning self."""
         return self
 
     def __exit__(
@@ -59,6 +60,7 @@ class ProgressContext(ABC):
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        """Exit the context manager, calling close()."""
         self.close()
 
 
@@ -72,10 +74,30 @@ class Progress(ABC):
         *,
         total: int | None = None,
         msg: str = "",
-    ) -> Iterator[T]: ...
+    ) -> Iterator[T]:
+        """Wrap an iterable to display a progress bar.
+
+        Parameters
+        ----------
+        iterable
+            items to iterate over
+        total
+            total number of items. Inferred from ``len(iterable)`` when
+            possible.
+        msg
+            description text to display
+        """
 
     @abstractmethod
-    def child(self, *, leave: bool | None = None) -> Progress: ...
+    def child(self, *, leave: bool | None = None) -> Progress:
+        """Return a child Progress for nested bars.
+
+        Parameters
+        ----------
+        leave
+            whether the child bar persists after completion. ``None``
+            inherits the parent setting.
+        """
 
     @abstractmethod
     def context(
@@ -96,6 +118,22 @@ class Progress(ABC):
         end
             end of the progress range (0.0-1.0)
         """
+
+    def close(self) -> None:  # noqa: B027
+        """Finalize progress display. Override in subclasses with cleanup."""
+
+    def __enter__(self) -> Self:
+        """Enter the context manager, returning self."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
+        """Exit the context manager, calling close()."""
+        self.close()
 
 
 class _NoOpContext(ProgressContext):
@@ -120,6 +158,7 @@ class NoProgress(Progress):
         total: int | None = None,
         msg: str = "",
     ) -> Iterator[T]:
+        """Yield items from the iterable unchanged."""
         yield from iterable
 
     def child(self, *, leave: bool | None = None) -> NoProgress:
@@ -248,14 +287,19 @@ class TqdmProgress(Progress):
             self._bar.update(1)
         self._bar.refresh()
 
+    def close(self) -> None:
+        """Close all bars so the cursor moves past them."""
+        for child in reversed(self._children):
+            if child._bar is not None:
+                child._bar.close()
+                child._bar = None
+        if self._bar is not None:
+            self._bar.close()
+            self._bar = None
+
     def __del__(self) -> None:
         with contextlib.suppress(Exception):
-            for child in reversed(self._children):
-                if child._bar is not None:
-                    child._bar.close()
-                    child._bar = None
-            if self._bar is not None:
-                self._bar.close()
+            self.close()
 
     def child(self, *, leave: bool | None = None) -> TqdmProgress:
         """Return a child TqdmProgress at the next cursor position.
@@ -415,6 +459,9 @@ class RichProgress(Progress):
             yield item
             rp.advance(self._task)
         rp.refresh()
+        if not self._leave:
+            rp.remove_task(self._task)
+            self._task = None
 
     def _cleanup_task(self) -> None:
         if self._task is not None and self._progress is not None:
@@ -424,15 +471,18 @@ class RichProgress(Progress):
                 self._progress.remove_task(self._task)
             self._task = None
 
+    def close(self) -> None:
+        """Finalize the rich progress display so the cursor moves past it."""
+        for child in reversed(self._children):
+            child._cleanup_task()
+        self._cleanup_task()
+        if self._owns_progress and self._progress is not None and not self._disable:
+            self._progress.stop()
+            self._progress = None
+
     def __del__(self) -> None:
         with contextlib.suppress(Exception):
-            for child in reversed(self._children):
-                child._cleanup_task()
-            self._cleanup_task()
-            if self._owns_progress and self._progress is not None and not self._disable:
-                self._progress.stop()
-                self._progress.console.file.write("\n")
-                self._progress.console.file.flush()
+            self.close()
 
     def child(self, *, leave: bool | None = None) -> RichProgress:
         """Return a child RichProgress sharing the same display.

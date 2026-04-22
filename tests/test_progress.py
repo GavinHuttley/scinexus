@@ -607,14 +607,11 @@ def test_rich_leave_false_by_default():
     assert rp._leave is False
 
 
-def test_rich_leave_false_removes_task_on_del():
+def test_rich_leave_false_removes_task_after_iteration():
     rp = RichProgress(disable=True, leave=False)
     result = list(rp([1, 2], total=2))
     assert result == [1, 2]
-    assert len(rp._progress.tasks) == 1
-    progress = rp._progress
-    del rp
-    assert len(progress.tasks) == 0
+    assert len(rp._progress.tasks) == 0
 
 
 def test_rich_leave_true_keeps_task():
@@ -816,15 +813,99 @@ def test_tqdm_del_without_use_is_safe():
     del tp
 
 
+def test_tqdm_print_after_single_bar_appears_after_bar():
+    import io
+
+    buf = io.StringIO()
+    tp = TqdmProgress(leave=True, file=buf)
+    list(tp([1, 2, 3], total=3, msg="step"))
+    tp.close()
+    print("DONE", file=buf)
+    lines = buf.getvalue().splitlines()
+    done_idx = next(i for i, ln in enumerate(lines) if "DONE" in ln)
+    bar_idx = next(i for i, ln in enumerate(lines) if "step" in ln)
+    assert done_idx > bar_idx
+
+
+def test_tqdm_print_after_parent_and_child_bars_appears_after_bars():
+    import io
+
+    buf = io.StringIO()
+    tp = TqdmProgress(leave=True, file=buf)
+    child = tp.child(leave=True)
+    for _ in tp([1, 2], total=2, msg="outer"):
+        list(child([10, 20, 30], total=3, msg="inner"))
+    tp.close()
+    print("DONE", file=buf)
+    lines = buf.getvalue().splitlines()
+    done_idx = next(i for i, ln in enumerate(lines) if "DONE" in ln)
+    outer_idx = next(i for i, ln in enumerate(lines) if "outer" in ln)
+    inner_idx = next(i for i, ln in enumerate(lines) if "inner" in ln)
+    assert done_idx > outer_idx
+    assert done_idx > inner_idx
+
+
+def test_tqdm_close_as_context_manager():
+    import io
+
+    buf = io.StringIO()
+    with TqdmProgress(leave=True, file=buf) as tp:
+        list(tp([1, 2, 3], total=3, msg="step"))
+    print("DONE", file=buf)
+    lines = buf.getvalue().splitlines()
+    done_idx = next(i for i, ln in enumerate(lines) if "DONE" in ln)
+    bar_idx = next(i for i, ln in enumerate(lines) if "step" in ln)
+    assert done_idx > bar_idx
+
+
+def test_tqdm_close_idempotent():
+    import io
+
+    buf = io.StringIO()
+    tp = TqdmProgress(leave=True, file=buf)
+    list(tp([1, 2], total=2, msg="step"))
+    tp.close()
+    tp.close()
+
+
+def test_rich_close_stops_display():
+    rp = RichProgress(disable=True, leave=True)
+    list(rp([1, 2], total=2))
+    assert rp._progress is not None
+    rp.close()
+    assert rp._task is None
+
+
+def test_rich_close_as_context_manager():
+    with RichProgress(disable=True, leave=True) as rp:
+        list(rp([1, 2, 3], total=3))
+    assert rp._task is None
+
+
+def test_rich_close_idempotent():
+    rp = RichProgress(disable=True, leave=True)
+    list(rp([1, 2], total=2))
+    rp.close()
+    rp.close()
+
+
 def test_rich_reuses_task_across_calls():
-    rp = RichProgress(disable=True)
+    rp = RichProgress(disable=True, leave=True)
     assert list(rp([1, 2], total=2)) == [1, 2]
     assert list(rp([3, 4, 5], total=3)) == [3, 4, 5]
     assert len(rp._progress.tasks) == 1
 
 
+def test_rich_leave_false_removes_task_across_calls():
+    rp = RichProgress(disable=True, leave=False)
+    assert list(rp([1, 2], total=2)) == [1, 2]
+    assert len(rp._progress.tasks) == 0
+    assert list(rp([3, 4, 5], total=3)) == [3, 4, 5]
+    assert len(rp._progress.tasks) == 0
+
+
 def test_rich_reset_updates_total():
-    rp = RichProgress(disable=True)
+    rp = RichProgress(disable=True, leave=True)
     list(rp([1], total=1))
     list(rp([1, 2, 3], total=3))
     task = rp._progress.tasks[0]
@@ -838,6 +919,17 @@ def test_rich_del_completes_task_when_leave_true():
     del rp
     assert len(progress.tasks) == 1
     assert progress.tasks[0].completed == 2
+
+
+def test_rich_cleanup_removes_task_on_interrupted_iteration():
+    rp = RichProgress(disable=True, leave=False)
+    it = iter(rp([1, 2, 3], total=3))
+    next(it)
+    progress = rp._progress
+    assert rp._task is not None
+    rp._cleanup_task()
+    assert rp._task is None
+    assert len(progress.tasks) == 0
 
 
 def test_rich_del_without_use_is_safe():
