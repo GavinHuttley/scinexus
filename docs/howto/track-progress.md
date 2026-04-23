@@ -154,9 +154,9 @@ Both `Progress` and `ProgressContext` support the context manager protocol. Usin
 
     1. Call `close()` explicitly when you are done
 
-!!! note
+    !!! note
 
-    Calling `close()` on a `Progress` instance also closes all of its children. For standalone `ProgressContext` objects (from `context()`), use the `with` statement as shown in the [push-based sub-contexts](#push-based-sub-contexts) section.
+        Calling `close()` on a `Progress` instance also closes all of its children. For standalone `ProgressContext` objects (from `context()`), use the `with` statement as shown in the [push-based sub-contexts](#push-based-sub-contexts) section.
 
 ## Customising appearance
 
