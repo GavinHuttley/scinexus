@@ -162,9 +162,9 @@ def test_tqdm_leave_false_at_position_nonzero():
         assert mock_tqdm.call_args.kwargs["leave"] is False
 
 
-def test_tqdm_custom_mininterval():
-    tp = TqdmProgress(mininterval=0.5)
-    assert tp._mininterval == 0.5
+def test_tqdm_custom_refresh_per_second():
+    tp = TqdmProgress(refresh_per_second=5.0)
+    assert tp._refresh_per_second == 5.0
 
 
 def test_tqdm_custom_bar_format():
@@ -179,11 +179,11 @@ def test_tqdm_extra_kwargs_stored():
 
 def test_tqdm_child_inherits_options():
     tp = TqdmProgress(
-        mininterval=0.5,
+        refresh_per_second=5.0,
         bar_format="{l_bar}",
     )
     child = tp.child()
-    assert child._mininterval == 0.5
+    assert child._refresh_per_second == 5.0
     assert child._bar_format == "{l_bar}"
 
 
@@ -199,14 +199,14 @@ def test_tqdm_options_passed_to_tqdm():
         mock_tqdm.return_value = mock_bar
 
         tp = TqdmProgress(
-            mininterval=2.0,
+            refresh_per_second=5.0,
             bar_format="{l_bar}",
             bar_width=None,
         )
         list(tp([], total=0))
 
         kw = mock_tqdm.call_args.kwargs
-        assert kw["mininterval"] == 2.0
+        assert kw["mininterval"] == 0.2
         assert kw["bar_format"] == "{l_bar}"
 
 
@@ -281,7 +281,7 @@ def test_set_default_reset_with_none():
 
 
 def test_set_default_preserves_specific_instance():
-    tp = TqdmProgress(mininterval=5.0)
+    tp = TqdmProgress(refresh_per_second=5.0)
     set_progress_backend(tp)
     result = get_progress(True)
     assert result is tp
@@ -455,13 +455,13 @@ def test_tqdm_context_options_passed():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(mininterval=2.0)
+        tp = TqdmProgress(refresh_per_second=5.0)
         ctx = tp.context(msg="test")
 
         kw = mock_tqdm.call_args.kwargs
         assert kw["total"] == 1.0
         assert kw["desc"] == "test"
-        assert kw["mininterval"] == 2.0
+        assert kw["mininterval"] == 0.2
         ctx.close()
 
 
@@ -991,7 +991,7 @@ def test_get_progress_kwargs_false_ignored():
 
 
 def test_get_progress_multiple_kwargs():
-    result = get_progress(True, colour="green", mininterval=0.5)
+    result = get_progress(True, colour="green", refresh_per_second=5.0)
     assert isinstance(result, TqdmProgress)
     assert result._colour == "green"
-    assert result._mininterval == 0.5
+    assert result._refresh_per_second == 5.0

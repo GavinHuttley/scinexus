@@ -198,7 +198,7 @@ class TqdmProgress(Progress):
 
     def __init__(
         self,
-        mininterval: float = 0.1,
+        refresh_per_second: float = 10.0,
         bar_format: str
         | None = "{desc}: {bar} {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
         leave: bool | None = None,
@@ -209,8 +209,8 @@ class TqdmProgress(Progress):
         """
         Parameters
         ----------
-        mininterval
-            minimum update interval in seconds
+        refresh_per_second
+            how often to refresh the display
         bar_format
             custom bar format string passed to tqdm
         leave
@@ -225,7 +225,7 @@ class TqdmProgress(Progress):
             forwarded to tqdm
         """
         self._position = tqdm_kwargs.pop("position", 0)
-        self._mininterval = mininterval
+        self._refresh_per_second = refresh_per_second
         self._bar_format = bar_format
         self._leave = leave
         self._colour = colour
@@ -256,7 +256,7 @@ class TqdmProgress(Progress):
             desc=msg,
             position=self._position,
             leave=self._resolve_leave(),
-            mininterval=self._mininterval,
+            mininterval=1.0 / self._refresh_per_second,
             bar_format=self._bar_format,
             colour=self._colour,
             **ncols_kwargs,
@@ -311,7 +311,7 @@ class TqdmProgress(Progress):
             inherits the parent setting.
         """
         child = TqdmProgress(
-            mininterval=self._mininterval,
+            refresh_per_second=self._refresh_per_second,
             bar_format=self._bar_format,
             leave=leave if leave is not None else self._leave,
             colour=self._colour,
