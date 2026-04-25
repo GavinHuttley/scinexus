@@ -202,7 +202,6 @@ class TqdmProgress(Progress):
         mininterval: float = 0.1,
         bar_format: str
         | None = "{desc}: {bar} {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
-        dynamic_ncols: bool = True,
         leave: bool | None = None,
         colour: str | None = None,
         bar_width: int | None = None,
@@ -217,8 +216,6 @@ class TqdmProgress(Progress):
             minimum update interval in seconds
         bar_format
             custom bar format string passed to tqdm
-        dynamic_ncols
-            whether to dynamically resize the bar to terminal width
         leave
             whether the bar persists after completion. ``None`` uses
             position-based logic (persist at position 0, clear otherwise).
@@ -227,12 +224,12 @@ class TqdmProgress(Progress):
         bar_width
             total width of the progress bar in characters
         **tqdm_kwargs
-            additional keyword arguments forwarded to tqdm
+            additional keyword arguments (e.g. ``dynamic_ncols=True``)
+            forwarded to tqdm
         """
         self._position = position
         self._mininterval = mininterval
         self._bar_format = bar_format
-        self._dynamic_ncols = dynamic_ncols
         self._leave = leave
         self._colour = colour
         self._bar_width = bar_width
@@ -246,11 +243,17 @@ class TqdmProgress(Progress):
     def _make_bar(self, *, total: float | None, msg: str) -> Any:
         from tqdm.auto import tqdm  # type: ignore[import-untyped]
 
-        ncols_kwargs: dict[str, Any] = (
-            {"ncols": self._bar_width, "dynamic_ncols": False}
-            if self._bar_width is not None
-            else {"dynamic_ncols": self._dynamic_ncols}
-        )
+        if self._bar_width is not None:
+            ncols_kwargs: dict[str, Any] = {
+                "ncols": self._bar_width,
+                "dynamic_ncols": False,
+            }
+            tqdm_kw = {
+                k: v for k, v in self._tqdm_kwargs.items() if k != "dynamic_ncols"
+            }
+        else:
+            tqdm_kw = self._tqdm_kwargs
+            ncols_kwargs = {} if "dynamic_ncols" in tqdm_kw else {"dynamic_ncols": True}
         return tqdm(
             total=total,
             desc=msg,
@@ -260,7 +263,7 @@ class TqdmProgress(Progress):
             bar_format=self._bar_format,
             colour=self._colour,
             **ncols_kwargs,
-            **self._tqdm_kwargs,
+            **tqdm_kw,
         )
 
     def __call__(
@@ -314,7 +317,6 @@ class TqdmProgress(Progress):
             position=self._position + 1,
             mininterval=self._mininterval,
             bar_format=self._bar_format,
-            dynamic_ncols=self._dynamic_ncols,
             leave=leave if leave is not None else self._leave,
             colour=self._colour,
             bar_width=self._bar_width,

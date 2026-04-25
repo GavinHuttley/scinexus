@@ -180,12 +180,10 @@ def test_tqdm_child_inherits_options():
     tp = TqdmProgress(
         mininterval=0.5,
         bar_format="{l_bar}",
-        dynamic_ncols=False,
     )
     child = tp.child()
     assert child._mininterval == 0.5
     assert child._bar_format == "{l_bar}"
-    assert child._dynamic_ncols is False
 
 
 def test_tqdm_child_inherits_tqdm_kwargs():
@@ -203,14 +201,12 @@ def test_tqdm_options_passed_to_tqdm():
             mininterval=2.0,
             bar_format="{l_bar}",
             bar_width=None,
-            dynamic_ncols=False,
         )
         list(tp([], total=0))
 
         kw = mock_tqdm.call_args.kwargs
         assert kw["mininterval"] == 2.0
         assert kw["bar_format"] == "{l_bar}"
-        assert kw["dynamic_ncols"] is False
 
 
 def test_rich_yields_all_items():
@@ -458,14 +454,13 @@ def test_tqdm_context_options_passed():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(mininterval=2.0, dynamic_ncols=False)
+        tp = TqdmProgress(mininterval=2.0)
         ctx = tp.context(msg="test")
 
         kw = mock_tqdm.call_args.kwargs
         assert kw["total"] == 1.0
         assert kw["desc"] == "test"
         assert kw["mininterval"] == 2.0
-        assert kw["dynamic_ncols"] is False
         ctx.close()
 
 
