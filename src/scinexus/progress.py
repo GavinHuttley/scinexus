@@ -224,6 +224,9 @@ class TqdmProgress(Progress):
             additional keyword arguments (e.g. ``dynamic_ncols=True``)
             forwarded to tqdm
         """
+        if refresh_per_second <= 0:
+            msg = f"refresh_per_second must be positive, got {refresh_per_second!r}"
+            raise ValueError(msg)
         self._position = tqdm_kwargs.pop("position", 0)
         self._refresh_per_second = refresh_per_second
         self._bar_format = bar_format
@@ -393,6 +396,9 @@ class RichProgress(Progress):
             additional keyword arguments (e.g. ``disable=True``) forwarded
             to ``rich.progress.Progress``
         """
+        if refresh_per_second <= 0:
+            msg = f"refresh_per_second must be positive, got {refresh_per_second!r}"
+            raise ValueError(msg)
         self._progress = progress
         self._owns_progress = progress is None
         self._refresh_per_second = refresh_per_second
