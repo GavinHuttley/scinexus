@@ -43,3 +43,8 @@ With `scinexus` apps, you can use a functional programming style when developing
 - **Build applications for others** -- see [Why composable apps?](explanation/why-composable-apps.md)
 - **Use existing apps** -- see [Composing apps](tutorials/composing-apps.md)
 
+## `scinexus` origin
+
+The app infrastructure code was originally developed within [cogent3](https://cogent3.org), where it accumulated over seven years of development, testing, and real-world use in computational genomics before being extracted into `scinexus`. The design is mature and has underpinned analyses in published studies.
+
+We acknowledge here that many members of the `cogent3` community contributed to the code that now lives here, including [@rmcar17](https://github.com/rmcar17), [@Nick-Foto](https://github.com/Nick-Foto), [@KatherineCaley](https://github.com/KatherineCaley), [@fredjaya](https://github.com/fredjaya), and [@khiron](https://github.com/khiron).
