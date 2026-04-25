@@ -371,7 +371,6 @@ class RichProgress(Progress):
         self,
         progress: Any = None,
         refresh_per_second: float = 10.0,
-        disable: bool = False,
         leave: bool = False,
         colour: str | None = None,
         bar_width: int | None = None,
@@ -385,8 +384,6 @@ class RichProgress(Progress):
             create one on first call
         refresh_per_second
             how often to refresh the display
-        disable
-            whether to disable progress output
         leave
             whether completed bars persist in the display
         colour
@@ -394,12 +391,12 @@ class RichProgress(Progress):
         bar_width
             width of the progress bar portion in characters
         **rich_kwargs
-            additional keyword arguments forwarded to ``rich.progress.Progress``
+            additional keyword arguments (e.g. ``disable=True``) forwarded
+            to ``rich.progress.Progress``
         """
         self._progress = progress
         self._owns_progress = progress is None
         self._refresh_per_second = refresh_per_second
-        self._disable = disable
         self._leave = leave
         self._colour = colour
         self._bar_width = bar_width
@@ -433,7 +430,6 @@ class RichProgress(Progress):
                 TimeElapsedColumn(),
                 TimeRemainingColumn(),
                 refresh_per_second=self._refresh_per_second,
-                disable=self._disable,
                 **self._rich_kwargs,
             )
             self._progress.start()
@@ -476,7 +472,7 @@ class RichProgress(Progress):
         for child in reversed(self._children):
             child._cleanup_task()
         self._cleanup_task()
-        if self._owns_progress and self._progress is not None and not self._disable:
+        if self._owns_progress and self._progress is not None:
             self._progress.stop()
             self._progress = None
 
@@ -496,7 +492,6 @@ class RichProgress(Progress):
         child = RichProgress(
             progress=self._ensure_progress(),
             refresh_per_second=self._refresh_per_second,
-            disable=self._disable,
             leave=leave if leave is not None else self._leave,
             colour=self._colour,
             bar_width=self._bar_width,
