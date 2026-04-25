@@ -144,7 +144,7 @@ def test_tqdm_leave_true_at_position_zero():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=0)
+        tp = TqdmProgress()
         list(tp([], total=0))
 
         assert mock_tqdm.call_args.kwargs["leave"] is True
@@ -155,8 +155,9 @@ def test_tqdm_leave_false_at_position_nonzero():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=1)
-        list(tp([], total=0))
+        tp = TqdmProgress()
+        child = tp.child()
+        list(child([], total=0))
 
         assert mock_tqdm.call_args.kwargs["leave"] is False
 
@@ -280,7 +281,7 @@ def test_set_default_reset_with_none():
 
 
 def test_set_default_preserves_specific_instance():
-    tp = TqdmProgress(position=5)
+    tp = TqdmProgress(mininterval=5.0)
     set_progress_backend(tp)
     result = get_progress(True)
     assert result is tp
@@ -507,12 +508,12 @@ def test_tqdm_leave_none_uses_position_logic():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=0, leave=None)
+        tp = TqdmProgress(leave=None)
         list(tp([], total=0))
         assert mock_tqdm.call_args.kwargs["leave"] is True
 
-        tp = TqdmProgress(position=1, leave=None)
-        list(tp([], total=0))
+        child = tp.child(leave=None)
+        list(child([], total=0))
         assert mock_tqdm.call_args.kwargs["leave"] is False
 
 
@@ -521,8 +522,9 @@ def test_tqdm_leave_true_overrides_position():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=1, leave=True)
-        list(tp([], total=0))
+        tp = TqdmProgress(leave=True)
+        child = tp.child()
+        list(child([], total=0))
         assert mock_tqdm.call_args.kwargs["leave"] is True
 
 
@@ -531,7 +533,7 @@ def test_tqdm_leave_false_overrides_position():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=0, leave=False)
+        tp = TqdmProgress(leave=False)
         list(tp([], total=0))
         assert mock_tqdm.call_args.kwargs["leave"] is False
 
@@ -559,8 +561,9 @@ def test_tqdm_context_respects_leave():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=1, leave=True)
-        ctx = tp.context()
+        tp = TqdmProgress(leave=True)
+        child = tp.child()
+        ctx = child.context()
         assert mock_tqdm.call_args.kwargs["leave"] is True
         ctx.close()
 

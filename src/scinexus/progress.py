@@ -198,7 +198,6 @@ class TqdmProgress(Progress):
 
     def __init__(
         self,
-        position: int = 0,
         mininterval: float = 0.1,
         bar_format: str
         | None = "{desc}: {bar} {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
@@ -210,8 +209,6 @@ class TqdmProgress(Progress):
         """
         Parameters
         ----------
-        position
-            cursor position for the progress bar
         mininterval
             minimum update interval in seconds
         bar_format
@@ -227,7 +224,7 @@ class TqdmProgress(Progress):
             additional keyword arguments (e.g. ``dynamic_ncols=True``)
             forwarded to tqdm
         """
-        self._position = position
+        self._position = tqdm_kwargs.pop("position", 0)
         self._mininterval = mininterval
         self._bar_format = bar_format
         self._leave = leave
@@ -314,7 +311,6 @@ class TqdmProgress(Progress):
             inherits the parent setting.
         """
         child = TqdmProgress(
-            position=self._position + 1,
             mininterval=self._mininterval,
             bar_format=self._bar_format,
             leave=leave if leave is not None else self._leave,
@@ -322,6 +318,7 @@ class TqdmProgress(Progress):
             bar_width=self._bar_width,
             **self._tqdm_kwargs,
         )
+        child._position = self._position + 1
         self._children.append(child)
         return child
 
