@@ -198,11 +198,9 @@ class TqdmProgress(Progress):
 
     def __init__(
         self,
-        position: int = 0,
-        mininterval: float = 0.1,
+        refresh_per_second: float = 10.0,
         bar_format: str
         | None = "{desc}: {bar} {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
-        dynamic_ncols: bool = True,
         leave: bool | None = None,
         colour: str | None = None,
         bar_width: int | None = None,
@@ -211,14 +209,10 @@ class TqdmProgress(Progress):
         """
         Parameters
         ----------
-        position
-            cursor position for the progress bar
-        mininterval
-            minimum update interval in seconds
+        refresh_per_second
+            how often to refresh the display
         bar_format
             custom bar format string passed to tqdm
-        dynamic_ncols
-            whether to dynamically resize the bar to terminal width
         leave
             whether the bar persists after completion. ``None`` uses
             position-based logic (persist at position 0, clear otherwise).
@@ -227,12 +221,15 @@ class TqdmProgress(Progress):
         bar_width
             total width of the progress bar in characters
         **tqdm_kwargs
-            additional keyword arguments forwarded to tqdm
+            additional keyword arguments (e.g. ``dynamic_ncols=True``)
+            forwarded to tqdm
         """
-        self._position = position
-        self._mininterval = mininterval
+        if refresh_per_second <= 0:
+            msg = f"refresh_per_second must be positive, got {refresh_per_second!r}"
+            raise ValueError(msg)
+        self._position = tqdm_kwargs.pop("position", 0)
+        self._refresh_per_second = refresh_per_second
         self._bar_format = bar_format
-        self._dynamic_ncols = dynamic_ncols
         self._leave = leave
         self._colour = colour
         self._bar_width = bar_width
@@ -246,21 +243,27 @@ class TqdmProgress(Progress):
     def _make_bar(self, *, total: float | None, msg: str) -> Any:
         from tqdm.auto import tqdm  # type: ignore[import-untyped]
 
-        ncols_kwargs: dict[str, Any] = (
-            {"ncols": self._bar_width, "dynamic_ncols": False}
-            if self._bar_width is not None
-            else {"dynamic_ncols": self._dynamic_ncols}
-        )
+        if self._bar_width is not None:
+            ncols_kwargs: dict[str, Any] = {
+                "ncols": self._bar_width,
+                "dynamic_ncols": False,
+            }
+            tqdm_kw = {
+                k: v for k, v in self._tqdm_kwargs.items() if k != "dynamic_ncols"
+            }
+        else:
+            tqdm_kw = self._tqdm_kwargs
+            ncols_kwargs = {} if "dynamic_ncols" in tqdm_kw else {"dynamic_ncols": True}
         return tqdm(
             total=total,
             desc=msg,
             position=self._position,
             leave=self._resolve_leave(),
-            mininterval=self._mininterval,
+            mininterval=1.0 / self._refresh_per_second,
             bar_format=self._bar_format,
             colour=self._colour,
             **ncols_kwargs,
-            **self._tqdm_kwargs,
+            **tqdm_kw,
         )
 
     def __call__(
@@ -311,15 +314,14 @@ class TqdmProgress(Progress):
             inherits the parent setting.
         """
         child = TqdmProgress(
-            position=self._position + 1,
-            mininterval=self._mininterval,
+            refresh_per_second=self._refresh_per_second,
             bar_format=self._bar_format,
-            dynamic_ncols=self._dynamic_ncols,
             leave=leave if leave is not None else self._leave,
             colour=self._colour,
             bar_width=self._bar_width,
             **self._tqdm_kwargs,
         )
+        child._position = self._position + 1
         self._children.append(child)
         return child
 
@@ -371,7 +373,6 @@ class RichProgress(Progress):
         self,
         progress: Any = None,
         refresh_per_second: float = 10.0,
-        disable: bool = False,
         leave: bool = False,
         colour: str | None = None,
         bar_width: int | None = None,
@@ -385,8 +386,6 @@ class RichProgress(Progress):
             create one on first call
         refresh_per_second
             how often to refresh the display
-        disable
-            whether to disable progress output
         leave
             whether completed bars persist in the display
         colour
@@ -394,12 +393,15 @@ class RichProgress(Progress):
         bar_width
             width of the progress bar portion in characters
         **rich_kwargs
-            additional keyword arguments forwarded to ``rich.progress.Progress``
+            additional keyword arguments (e.g. ``disable=True``) forwarded
+            to ``rich.progress.Progress``
         """
+        if refresh_per_second <= 0:
+            msg = f"refresh_per_second must be positive, got {refresh_per_second!r}"
+            raise ValueError(msg)
         self._progress = progress
         self._owns_progress = progress is None
         self._refresh_per_second = refresh_per_second
-        self._disable = disable
         self._leave = leave
         self._colour = colour
         self._bar_width = bar_width
@@ -433,7 +435,6 @@ class RichProgress(Progress):
                 TimeElapsedColumn(),
                 TimeRemainingColumn(),
                 refresh_per_second=self._refresh_per_second,
-                disable=self._disable,
                 **self._rich_kwargs,
             )
             self._progress.start()
@@ -476,7 +477,7 @@ class RichProgress(Progress):
         for child in reversed(self._children):
             child._cleanup_task()
         self._cleanup_task()
-        if self._owns_progress and self._progress is not None and not self._disable:
+        if self._owns_progress and self._progress is not None:
             self._progress.stop()
             self._progress = None
 
@@ -496,7 +497,6 @@ class RichProgress(Progress):
         child = RichProgress(
             progress=self._ensure_progress(),
             refresh_per_second=self._refresh_per_second,
-            disable=self._disable,
             leave=leave if leave is not None else self._leave,
             colour=self._colour,
             bar_width=self._bar_width,

@@ -144,7 +144,7 @@ def test_tqdm_leave_true_at_position_zero():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=0)
+        tp = TqdmProgress()
         list(tp([], total=0))
 
         assert mock_tqdm.call_args.kwargs["leave"] is True
@@ -155,15 +155,23 @@ def test_tqdm_leave_false_at_position_nonzero():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=1)
-        list(tp([], total=0))
+        tp = TqdmProgress()
+        child = tp.child()
+        list(child([], total=0))
 
         assert mock_tqdm.call_args.kwargs["leave"] is False
 
 
-def test_tqdm_custom_mininterval():
-    tp = TqdmProgress(mininterval=0.5)
-    assert tp._mininterval == 0.5
+def test_tqdm_custom_refresh_per_second():
+    tp = TqdmProgress(refresh_per_second=5.0)
+    assert tp._refresh_per_second == 5.0
+
+
+@pytest.mark.parametrize("cls", [TqdmProgress, RichProgress])
+@pytest.mark.parametrize("value", [0, -1.0])
+def test_refresh_per_second_non_positive_raises(cls, value):
+    with pytest.raises(ValueError, match="refresh_per_second must be positive"):
+        cls(refresh_per_second=value)
 
 
 def test_tqdm_custom_bar_format():
@@ -178,14 +186,12 @@ def test_tqdm_extra_kwargs_stored():
 
 def test_tqdm_child_inherits_options():
     tp = TqdmProgress(
-        mininterval=0.5,
+        refresh_per_second=5.0,
         bar_format="{l_bar}",
-        dynamic_ncols=False,
     )
     child = tp.child()
-    assert child._mininterval == 0.5
+    assert child._refresh_per_second == 5.0
     assert child._bar_format == "{l_bar}"
-    assert child._dynamic_ncols is False
 
 
 def test_tqdm_child_inherits_tqdm_kwargs():
@@ -200,17 +206,15 @@ def test_tqdm_options_passed_to_tqdm():
         mock_tqdm.return_value = mock_bar
 
         tp = TqdmProgress(
-            mininterval=2.0,
+            refresh_per_second=5.0,
             bar_format="{l_bar}",
             bar_width=None,
-            dynamic_ncols=False,
         )
         list(tp([], total=0))
 
         kw = mock_tqdm.call_args.kwargs
-        assert kw["mininterval"] == 2.0
+        assert kw["mininterval"] == 0.2
         assert kw["bar_format"] == "{l_bar}"
-        assert kw["dynamic_ncols"] is False
 
 
 def test_rich_yields_all_items():
@@ -246,11 +250,11 @@ def test_rich_is_progress_subclass():
 
 
 def test_get_progress_false_returns_no_progress():
-    assert isinstance(get_progress(False), NoProgress)
+    assert isinstance(get_progress(show_progress=False), NoProgress)
 
 
 def test_get_progress_true_returns_tqdm_progress():
-    assert isinstance(get_progress(True), TqdmProgress)
+    assert isinstance(get_progress(show_progress=True), TqdmProgress)
 
 
 def test_get_progress_falsy_int_returns_no_progress():
@@ -274,25 +278,25 @@ def test_get_progress_default_arg_returns_no_progress():
 def test_set_default_no_progress_instance():
     np = NoProgress()
     set_progress_backend(np)
-    assert isinstance(get_progress(True), NoProgress)
+    assert isinstance(get_progress(show_progress=True), NoProgress)
 
 
 def test_set_default_reset_with_none():
     set_progress_backend(NoProgress())
     set_progress_backend(None)
-    assert isinstance(get_progress(True), TqdmProgress)
+    assert isinstance(get_progress(show_progress=True), TqdmProgress)
 
 
 def test_set_default_preserves_specific_instance():
-    tp = TqdmProgress(position=5)
+    tp = TqdmProgress(refresh_per_second=5.0)
     set_progress_backend(tp)
-    result = get_progress(True)
+    result = get_progress(show_progress=True)
     assert result is tp
 
 
 def test_set_default_false_unaffected():
     set_progress_backend(TqdmProgress())
-    assert isinstance(get_progress(False), NoProgress)
+    assert isinstance(get_progress(show_progress=False), NoProgress)
 
 
 def test_set_default_passthrough_unaffected():
@@ -303,12 +307,12 @@ def test_set_default_passthrough_unaffected():
 
 def test_set_default_string_tqdm():
     set_progress_backend("tqdm")
-    assert isinstance(get_progress(True), TqdmProgress)
+    assert isinstance(get_progress(show_progress=True), TqdmProgress)
 
 
 def test_set_default_string_rich():
     set_progress_backend("rich")
-    assert isinstance(get_progress(True), RichProgress)
+    assert isinstance(get_progress(show_progress=True), RichProgress)
 
 
 def test_set_default_invalid_string_raises():
@@ -318,14 +322,14 @@ def test_set_default_invalid_string_raises():
 
 def test_set_default_string_tqdm_with_kwargs():
     set_progress_backend("tqdm", colour="green")
-    result = get_progress(True)
+    result = get_progress(show_progress=True)
     assert isinstance(result, TqdmProgress)
     assert result._colour == "green"
 
 
 def test_set_default_string_rich_with_kwargs():
     set_progress_backend("rich", colour="blue", leave=True)
-    result = get_progress(True)
+    result = get_progress(show_progress=True)
     assert isinstance(result, RichProgress)
     assert result._colour == "blue"
     assert result._leave is True
@@ -458,14 +462,13 @@ def test_tqdm_context_options_passed():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(mininterval=2.0, dynamic_ncols=False)
+        tp = TqdmProgress(refresh_per_second=5.0)
         ctx = tp.context(msg="test")
 
         kw = mock_tqdm.call_args.kwargs
         assert kw["total"] == 1.0
         assert kw["desc"] == "test"
-        assert kw["mininterval"] == 2.0
-        assert kw["dynamic_ncols"] is False
+        assert kw["mininterval"] == 0.2
         ctx.close()
 
 
@@ -512,12 +515,12 @@ def test_tqdm_leave_none_uses_position_logic():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=0, leave=None)
+        tp = TqdmProgress(leave=None)
         list(tp([], total=0))
         assert mock_tqdm.call_args.kwargs["leave"] is True
 
-        tp = TqdmProgress(position=1, leave=None)
-        list(tp([], total=0))
+        child = tp.child(leave=None)
+        list(child([], total=0))
         assert mock_tqdm.call_args.kwargs["leave"] is False
 
 
@@ -526,8 +529,9 @@ def test_tqdm_leave_true_overrides_position():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=1, leave=True)
-        list(tp([], total=0))
+        tp = TqdmProgress(leave=True)
+        child = tp.child()
+        list(child([], total=0))
         assert mock_tqdm.call_args.kwargs["leave"] is True
 
 
@@ -536,7 +540,7 @@ def test_tqdm_leave_false_overrides_position():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=0, leave=False)
+        tp = TqdmProgress(leave=False)
         list(tp([], total=0))
         assert mock_tqdm.call_args.kwargs["leave"] is False
 
@@ -564,8 +568,9 @@ def test_tqdm_context_respects_leave():
         mock_bar = MagicMock()
         mock_tqdm.return_value = mock_bar
 
-        tp = TqdmProgress(position=1, leave=True)
-        ctx = tp.context()
+        tp = TqdmProgress(leave=True)
+        child = tp.child()
+        ctx = child.context()
         assert mock_tqdm.call_args.kwargs["leave"] is True
         ctx.close()
 
@@ -951,29 +956,29 @@ def test_no_progress_multiple_calls():
 
 
 def test_get_progress_kwargs_forwarded():
-    result = get_progress(True, colour="green")
+    result = get_progress(show_progress=True, colour="green")
     assert isinstance(result, TqdmProgress)
     assert result._colour == "green"
 
 
 def test_get_progress_kwargs_with_default_creates_new_instance():
     set_progress_backend("tqdm")
-    result = get_progress(True, colour="green")
+    result = get_progress(show_progress=True, colour="green")
     assert isinstance(result, TqdmProgress)
     assert result._colour == "green"
 
 
 def test_get_progress_kwargs_with_rich_default():
     set_progress_backend("rich")
-    result = get_progress(True, colour="blue")
+    result = get_progress(show_progress=True, colour="blue")
     assert isinstance(result, RichProgress)
     assert result._colour == "blue"
 
 
 def test_get_progress_no_kwargs_returns_default():
     set_progress_backend("tqdm")
-    default = get_progress(True)
-    assert default is get_progress(True)
+    default = get_progress(show_progress=True)
+    assert default is get_progress(show_progress=True)
 
 
 def test_get_progress_kwargs_with_instance_ignored():
@@ -988,12 +993,12 @@ def test_set_progress_backend_rich_not_installed():
 
 
 def test_get_progress_kwargs_false_ignored():
-    result = get_progress(False, colour="green")
+    result = get_progress(show_progress=False, colour="green")
     assert isinstance(result, NoProgress)
 
 
 def test_get_progress_multiple_kwargs():
-    result = get_progress(True, colour="green", mininterval=0.5)
+    result = get_progress(show_progress=True, colour="green", refresh_per_second=5.0)
     assert isinstance(result, TqdmProgress)
     assert result._colour == "green"
-    assert result._mininterval == 0.5
+    assert result._refresh_per_second == 5.0
