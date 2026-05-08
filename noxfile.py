@@ -67,7 +67,7 @@ def test(session):
 
 @nox.session(python=[f"3.{v}" for v in _py_versions])
 def testmpi(session):
-    session.install("-e", ".[mpi]")
+    session.install("-e", ".[mpi]", "--group", "dev")
     session.chdir("tests")
     py = pathlib.Path(session.bin_paths[0]) / "python"
     session.run(
