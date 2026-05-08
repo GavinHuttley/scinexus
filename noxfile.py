@@ -23,26 +23,26 @@ def fmt(session: nox.Session) -> None:
 
 @nox.session(python="3.14")
 def cogdocs(session: nox.Session) -> None:
-    session.install("-e", ".", "--group", "test")
+    session.install("-e", ".")
     cmnd = 'find docs -name "*.md" | xargs uv run --group dev cog -r -I docs/scripts'
     subprocess.run(cmnd, check=True, shell=True)  # noqa: S602
 
 
 @nox.session(python=[f"3.{v}" for v in _py_versions])
 def type_check(session):
-    session.install("-e", ".", "--group", "test")
+    session.install("-e", ".")
     session.run("mypy", "src/scinexus/")
 
 
 @nox.session(python=[f"3.{v}" for v in _py_versions])
 def test_types(session):
-    session.install("-e", ".", "--group", "test")
+    session.install("-e", ".")
     session.run("mypy", "src/scinexus/")
 
 
 @nox.session(python=[f"3.{v}" for v in _py_versions])
 def test(session):
-    session.install("-e", ".", "--group", "test")
+    session.install("-e", ".")
     session.run("uv", "pip", "list")
     # doctest modules within scinexus
     session.chdir("src/scinexus")
@@ -67,7 +67,7 @@ def test(session):
 
 @nox.session(python=[f"3.{v}" for v in _py_versions])
 def testmpi(session):
-    session.install("-e", ".[mpi]", "--group", "test")
+    session.install("-e", ".[mpi]")
     session.chdir("tests")
     py = pathlib.Path(session.bin_paths[0]) / "python"
     session.run(
@@ -91,7 +91,7 @@ def testmpi(session):
 
 @nox.session(python=[f"3.{v}" for v in _py_versions])
 def testcov(session):
-    session.install("-e", ".", "--group", "test")
+    session.install("-e", ".")
     cover_mpi = shutil.which("mpiexec") is not None
     if cover_mpi:
         session.install("-e", ".[mpi]")
@@ -162,7 +162,7 @@ def testcov(session):
 
 @nox.session(python=[f"3.{v}" for v in _py_versions])
 def test_docs(session):
-    session.install("-e", ".", "--group", "test")
+    session.install("-e", ".")
     session.run("uv", "pip", "list")
     # doctest modules within scinexus
     session.chdir("docs")
