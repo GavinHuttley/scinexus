@@ -1,69 +1,23 @@
-*.py[cod]
-
-# C extensions
-*.so
-
-# Packages
-*.egg
-*.egg-info
-dist
-build
-eggs
-parts
-bin
-var
-sdist
-develop-eggs
-.installed.cfg
-lib
-lib64
-doc/_build
-
-# docker stuff
-.devcontainer/*
-
-# Installer logs
-pip-log.txt
-
-# Unit test / coverage reports
-.mypy*
-**/.mypy_cache/*
-.coverage*
-.tox
-.nox
-coverage.xml
-junit-*.xml
-nosetests.xml
-lcov*.info
-.ruff_cache/*
-
-# Translations
-*.mo
-
-# Mr Developer
-.mr.developer.cfg
-.project
-.pydevproject
-.idea/*
-.DS_Store
-__pycache__
-*.code-workspace
-*.wpr
-*.wpu
-.vscode/*
-venv*
-.venv*
-working/
-*.ipynb
-*.ipynb_checkpoints/
-
-# vi
-.*.swp
-
-
-CLAUDE.md
-
-site/*
-
-#Ignore vscode AI rules
-.github/instructions/codacy.instructions.md
+*
+!.github/**/*.yml
+!.readthedocs.yaml
+!.hgignore
+!LICENSE
+!README.md
+!changelog.md
+!docs/conftest.py
+!docs/**/*.md
+!docs/**/*.svg
+!docs/*.txt
+!noxfile.py
+!pyproject.toml
+!rtd_get_docs.py
+!ruff.toml
+!scripts/*.py
+!src/**/*.py
+!tests/data/*.fasta
+!tests/data/*.gz
+!tests/data/*.tsv
+!tests/data/*.log
+!tests/**/*.py
+!zensical.toml
