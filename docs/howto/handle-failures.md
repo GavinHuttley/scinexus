@@ -89,7 +89,7 @@ exec_codeblock(src=src, max_lines=4, admonition='???- example "Example"')
     # NotCompleted(type=ERROR, origin=load_aligned, source="primate_brca1",
     # message="Traceback (most recent call last):   File
     # "/Users/gavin/repos/SciNexus/src/scinexus/composable.py", line 545, in __call__
-    # result = self.main(val, *args, **kwargs)   File [...]
+    # result = self.main(val, *args, **kwargs) [...]
     ```
 <!-- [[[end]]] -->
 
