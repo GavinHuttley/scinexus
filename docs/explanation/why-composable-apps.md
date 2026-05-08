@@ -18,7 +18,7 @@ As the robustness of POSIX based operating systems (think Linux, Mac OS, Unix) c
 
 We can expand on this slightly for the problem of scientific computation by considering the critical benchmark of satisfying the conditions for reproducibile computation, i.e. the obligation to track all of the properties affecting the execution of your algorithm. Examples of this are the operating system, the language version, the seed used for the random number generator, etc.
 
-**`scinexus` does this for you.** For example, we intercept all arguments (including default values) passed to the construction of apps and record them so that the app state is logged. If you, the developer, also leverage the capabilities of the [`scitrack`](https://pypi.org/project/scitrack/) logging package (which `scinexus` has as a dependency), you can capture extra information such as versions of packages that your application depends on. We provide an [example][leveraging-scitrack-for-reproducibility] of using `scitrack` for these cases.
+**`scinexus` does this for you.** For example, we intercept all arguments (including default values) passed to the construction of apps and record them so that the app state is logged. If you, the developer, also leverage the capabilities of the [`scitrack`](https://pypi.org/project/scitrack/) logging package (which `scinexus` has as a dependency), you can capture extra information such as versions of packages that your application depends on. We provide an [example](../howto/log-and-cite.md#leveraging-scitrack-for-reproducibility) of using `scitrack` for these cases.
 
 ## Improve the accessibility of your work for end users
 

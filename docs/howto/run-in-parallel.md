@@ -145,7 +145,7 @@ On systems with multiple nodes (e.g. an HPC cluster), use MPI via the [mpi4py](h
 pip install mpi4py
 ```
 
-or installing `scinexus` [with `mpi` extra][optional-extras].
+or installing `scinexus` [with `mpi` extra](../install.md#optional-extras).
 
 Set the backend to MPI:
 
