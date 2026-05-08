@@ -44,9 +44,9 @@ jobs:
       - name: Build Documentation
         run: |
           # update executable components
-          uv run --group test nox -s cogdocs
+          uv run --group dev nox -s cogdocs
           # build actual docs
-          uv run --group test zensical build --clean
+          uv run --group dev zensical build --clean
         working-directory: ${{ github.workspace }}
 
       - name: Upload Documentation Artifact
