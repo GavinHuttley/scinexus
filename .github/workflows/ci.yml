@@ -47,7 +47,7 @@ jobs:
           lname="snx-${{matrix.os}}-${{matrix.python-version}}.lcov"
           xname="snx-${{matrix.os}}-${{matrix.python-version}}.xml"
           cov="lcov -o$lname xml -o$xname"
-          uv run --group test nox --force-python python -s testcov -- $cov
+          uv run --group dev nox --force-python python -s testcov -- $cov
 
       - name: Coveralls Parallel
         uses: coverallsapp/github-action@v2
@@ -83,7 +83,7 @@ jobs:
 
       - name: "Run Type Checking for ${{ matrix.python-version }}"
         run: |
-          uv run --group test nox --force-python python -s type_check
+          uv run --group dev nox --force-python python -s type_check
 
   finish:
     name: "Finish Coveralls"

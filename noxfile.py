@@ -24,7 +24,7 @@ def fmt(session: nox.Session) -> None:
 @nox.session(python="3.14")
 def cogdocs(session: nox.Session) -> None:
     session.install("-e", ".", "--group", "test")
-    cmnd = 'find docs -name "*.md" | xargs uv run --group test cog -r -I docs/scripts'
+    cmnd = 'find docs -name "*.md" | xargs uv run --group dev cog -r -I docs/scripts'
     subprocess.run(cmnd, check=True, shell=True)  # noqa: S602
 
 

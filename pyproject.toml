@@ -38,7 +38,7 @@ mpi = ["mpi4py"]
 rich = ["rich"]
 
 [dependency-groups]
-test = [
+dev = [
     "pymdown-extensions>=10.21.2",
     "zensical>=0.0.33",
     "cogent3[extra]>=2026.4.20a0",
