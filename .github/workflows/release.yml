@@ -35,15 +35,15 @@ jobs:
       - name: "Run nox for ${{ matrix.python-version }}"
         shell: bash
         run: |
-          uv run --group test nox -db uv --force-python python -s test
-          uv run --group test nox -db uv --force-python python -s test_types
-          uv run --group test nox -db uv --force-python python -s test_docs
+          uv run --group dev nox -db uv --force-python python -s test
+          uv run --group dev nox -db uv --force-python python -s test_types
+          uv run --group dev nox -db uv --force-python python -s test_docs
 
       - name: "Run MPI tests"
         if: startsWith(matrix.os, 'ubuntu')
         shell: bash
         run: |
-          uv run --group test nox -db uv --force-python python -s testmpi
+          uv run --group dev nox -db uv --force-python python -s testmpi
 
   docbuild:
     name: "Test the docs"
@@ -65,8 +65,8 @@ jobs:
 
       - name: "test the docs code"
         run: |
-          uv run --group test nox -s cogdocs
-          uv run --group test zensical build
+          uv run --group dev nox -s cogdocs
+          uv run --group dev zensical build
 
   build:
     name: Build wheel and sdist

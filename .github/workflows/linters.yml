@@ -22,7 +22,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Format code using ruff
-        run: uv run --group test nox -s fmt
+        run: uv run --group dev nox -s fmt
 
       - name: Commit changes
         uses: EndBug/add-and-commit@v10
