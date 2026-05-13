@@ -29,7 +29,7 @@ With `scinexus` apps, you can use a functional programming style when developing
 - Customisable experience (progress bars[^2], parallelisation[^3], data store representations etc..)
 
 [^1]: Failures are automatically recorded as `NotCompleted` records which get propagated and stored in [data stores](explanation/not-completed-design.md). These records record salient details that help you identify the cause of the failure.
-[^2]: `tqdm` is the default because of its robustness in notebooks, but you can choose `rich`
+[^2]: `tqdm` is the default because of its robustness in notebooks, but you can choose `rich`.
 [^3]: The default is Python’s standard library `multiprocessing` module. If you're using Jupyter Notebooks, however, it's recommended that you use `loky`. This is an [installation option](install.md#optional-extras) and [configuration is easy](howto/run-in-parallel.md#choosing-a-parallel-backend).
 
 ## Standalone utilities
@@ -38,13 +38,13 @@ With `scinexus` apps, you can use a functional programming style when developing
 
 ## Get started
 
-- **Install `scinexus`** -- see [Installing from pypi](install.md)
+- **Install `scinexus`** -- see [Installing from PyPI](install.md)
 - **Build algorithms** -- see [How to write apps](howto/write-a-function-app.md)
 - **Build applications for others** -- see [Why composable apps?](explanation/why-composable-apps.md)
 - **Use existing apps** -- see [Composing apps](tutorials/composing-apps.md)
 
-## `scinexus` origin
+## The `scinexus` origin story
 
 The app infrastructure code was originally developed within [cogent3](https://cogent3.org), where it accumulated over seven years of development, testing, and real-world use in computational genomics before being extracted into `scinexus`. The design is mature and has underpinned analyses in published studies.
 
-We acknowledge here that many members of the `cogent3` community contributed to the code that now lives here, including [@rmcar17](https://github.com/rmcar17), [@Nick-Foto](https://github.com/Nick-Foto), [@KatherineCaley](https://github.com/KatherineCaley), [@fredjaya](https://github.com/fredjaya), and [@khiron](https://github.com/khiron).
+We acknowledge here that many members of the `cogent3` community contributed to the code that now lives here, including [@GavinHuttley](https://github.com/GavinHuttley), [@rmcar17](https://github.com/rmcar17), [@Nick-Foto](https://github.com/Nick-Foto), [@KatherineCaley](https://github.com/KatherineCaley), [@fredjaya](https://github.com/fredjaya), and [@khiron](https://github.com/khiron).
