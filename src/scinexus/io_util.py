@@ -472,3 +472,82 @@ def iter_line_blocks(
 
     if lines:
         yield lines
+
+
+def iter_record_chunks(
+    path: PathType,
+    delimiter: bytes,
+    chunk_size: int | None = 5_000_000,
+) -> Iterator[bytes]:
+    """yield bytes between successive occurrences of ``delimiter``
+
+    Parameters
+    ----------
+    path
+        data file. Accepts a path, URL, or any ``PathType`` and opens it
+        via ``open_(path, mode="rb")`` so compressed formats are handled
+        transparently. If ``path`` is a URL the stream is read in full
+        (``chunk_size`` is forced to ``None``).
+    delimiter
+        bytes delimiter on which records are split. Must be non-empty.
+    chunk_size
+        bytes read per iteration. If ``None``, or if the on-disk file is
+        smaller than ``chunk_size``, the file is read in a single call.
+
+    Yields
+    ------
+    bytes
+        each item is the content between two successive delimiters. The
+        first item is whatever precedes the first delimiter (often
+        empty for files that start with a delimiter). The final item is
+        whatever follows the last delimiter; callers filter as needed
+        for their format.
+
+    Raises
+    ------
+    ValueError
+        if ``delimiter`` is empty.
+
+    Notes
+    -----
+    Reads ``path`` in chunks of ``chunk_size`` bytes and splits on
+    ``delimiter``, holding any trailing partial record across chunk
+    boundaries so that delimiters spanning a boundary are detected
+    correctly. Peak memory is bounded by ``chunk_size`` plus the size
+    of the largest record, rather than the full file size.
+
+    Operates on raw bytes only; callers that need text decoding should
+    do so per yielded record.
+
+    Examples
+    --------
+    >>> import tempfile, pathlib
+    >>> with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
+    ...     _ = f.write(b">a\\nAAA>b\\nBBB>c\\nCCC")
+    ...     tmp = pathlib.Path(f.name)
+    >>> list(iter_record_chunks(tmp, b">", chunk_size=8))
+    [b'', b'a\\nAAA', b'b\\nBBB', b'c\\nCCC']
+    >>> tmp.unlink()
+    """
+    if not delimiter:
+        msg = "delimiter must be non-empty"
+        raise ValueError(msg)
+
+    if is_url(path):
+        chunk_size = None
+    else:
+        path = Path(path).expanduser()
+        if chunk_size and path.stat().st_size < chunk_size:
+            chunk_size = None
+
+    with open_(path, mode="rb") as infile:
+        last = b""
+        while True:
+            chunk = infile.read() if chunk_size is None else infile.read(chunk_size)
+            if not chunk:
+                break
+            parts = (last + chunk).split(delimiter)
+            last = parts.pop()
+            yield from parts
+        if last:
+            yield last
