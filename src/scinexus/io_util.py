@@ -475,6 +475,7 @@ def iter_line_blocks(
 
 
 def iter_record_chunks(
+    *,
     path: PathType,
     delimiter: bytes,
     chunk_size: int | None = 5_000_000,
@@ -525,7 +526,7 @@ def iter_record_chunks(
     >>> with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as f:
     ...     _ = f.write(b">a\\nAAA>b\\nBBB>c\\nCCC")
     ...     tmp = pathlib.Path(f.name)
-    >>> list(iter_record_chunks(tmp, b">", chunk_size=8))
+    >>> list(iter_record_chunks(path=tmp, delimiter=b">", chunk_size=8))
     [b'', b'a\\nAAA', b'b\\nBBB', b'c\\nCCC']
     >>> tmp.unlink()
     """
