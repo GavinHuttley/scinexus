@@ -528,7 +528,7 @@ def test_iter_record_chunks_chunk_size_independence(tmp_path, chunk_size):
     data = b"record1\n//record2 is longer\n//record3"
     path = tmp_path / "records.bin"
     path.write_bytes(data)
-    got = list(iter_record_chunks(path, delim, chunk_size=chunk_size))
+    got = list(iter_record_chunks(path=path, delimiter=delim, chunk_size=chunk_size))
     assert got == [b"record1", b"record2 is longer", b"record3"]
 
 
@@ -538,7 +538,7 @@ def test_iter_record_chunks_delimiter_spans_chunk_boundary(tmp_path):
     path = tmp_path / "records.bin"
     path.write_bytes(data)
     chunk_size = data.index(delim) + 1
-    got = list(iter_record_chunks(path, delim, chunk_size=chunk_size))
+    got = list(iter_record_chunks(path=path, delimiter=delim, chunk_size=chunk_size))
     assert got == [b"AAAAA", b"BBBBB", b"CCCCC"]
 
 
@@ -548,7 +548,7 @@ def test_iter_record_chunks_record_larger_than_chunk(tmp_path):
     data = delim + record + delim + b"short"
     path = tmp_path / "records.bin"
     path.write_bytes(data)
-    got = list(iter_record_chunks(path, delim, chunk_size=16))
+    got = list(iter_record_chunks(path=path, delimiter=delim, chunk_size=16))
     assert got == [b"", record, b"short"]
 
 
@@ -557,7 +557,7 @@ def test_iter_record_chunks_chunk_size_one(tmp_path):
     data = b">a>b>c"
     path = tmp_path / "records.bin"
     path.write_bytes(data)
-    got = list(iter_record_chunks(path, delim, chunk_size=1))
+    got = list(iter_record_chunks(path=path, delimiter=delim, chunk_size=1))
     assert got == [b"", b"a", b"b", b"c"]
 
 
@@ -566,7 +566,7 @@ def test_iter_record_chunks_ends_on_delimiter(tmp_path):
     data = b"record1\n//record2\n//"
     path = tmp_path / "records.bin"
     path.write_bytes(data)
-    got = list(iter_record_chunks(path, delim, chunk_size=8))
+    got = list(iter_record_chunks(path=path, delimiter=delim, chunk_size=8))
     assert got == [b"record1", b"record2"]
 
 
@@ -574,14 +574,14 @@ def test_iter_record_chunks_no_delimiter(tmp_path):
     data = b"no delimiter present at all"
     path = tmp_path / "records.bin"
     path.write_bytes(data)
-    got = list(iter_record_chunks(path, b">", chunk_size=8))
+    got = list(iter_record_chunks(path=path, delimiter=b">", chunk_size=8))
     assert got == [data]
 
 
 def test_iter_record_chunks_empty_file(tmp_path):
     path = tmp_path / "empty.bin"
     path.write_bytes(b"")
-    got = list(iter_record_chunks(path, b">"))
+    got = list(iter_record_chunks(path=path, delimiter=b">"))
     assert got == []
 
 
@@ -589,7 +589,7 @@ def test_iter_record_chunks_empty_delimiter_raises(tmp_path):
     path = tmp_path / "records.bin"
     path.write_bytes(b"anything")
     with pytest.raises(ValueError, match="delimiter must be non-empty"):
-        list(iter_record_chunks(path, b""))
+        list(iter_record_chunks(path=path, delimiter=b""))
 
 
 @pytest.mark.parametrize("compression", ["gz", "bz2"])
@@ -598,7 +598,7 @@ def test_iter_record_chunks_compressed(tmp_path, compression):
     path = tmp_path / f"records.bin.{compression}"
     with open_(path, mode="wb") as f:
         f.write(data)
-    got = list(iter_record_chunks(path, b">", chunk_size=4))
+    got = list(iter_record_chunks(path=path, delimiter=b">", chunk_size=4))
     assert got == [b"", b"a\nAAA", b"b\nBBB", b"c\nCCC"]
 
 
@@ -607,7 +607,7 @@ def test_iter_record_chunks_read_all(tmp_path, chunk_size):
     data = b">a>b>c"
     path = tmp_path / "records.bin"
     path.write_bytes(data)
-    got = list(iter_record_chunks(path, b">", chunk_size=chunk_size))
+    got = list(iter_record_chunks(path=path, delimiter=b">", chunk_size=chunk_size))
     assert got == [b"", b"a", b"b", b"c"]
 
 
@@ -616,5 +616,5 @@ def test_iter_record_chunks_url(tmp_path):
     src = tmp_path / "records.bin"
     src.write_bytes(data)
     uri = src.absolute().as_uri()
-    got = list(iter_record_chunks(uri, b">", chunk_size=4))
+    got = list(iter_record_chunks(path=uri, delimiter=b">", chunk_size=4))
     assert got == [b"", b"a\nAAA", b"b\nBBB", b"c\nCCC"]
