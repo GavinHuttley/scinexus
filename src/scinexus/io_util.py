@@ -541,14 +541,34 @@ def iter_record_chunks(
         if chunk_size and path.stat().st_size < chunk_size:
             chunk_size = None
 
+    # We accommodate a chunked read falling within a delimiter
+    # by extracting the overlap_len of the last (potentially partial)
+    # record and prepending it to the next chunk.
+    # We only need to keep the last len(delimiter) - 1 bytes, as a delimiter
+    # cannot span more than that.
+    overlap_len = len(delimiter) - 1
     with open_(path, mode="rb") as infile:
-        last = b""
+        pending: list[bytes] = []
+        # carry represents the portion of the last (potentially partial) record
+        # that we need to prepend to the next chunk.
+        carry = b""
         while True:
             chunk = infile.read() if chunk_size is None else infile.read(chunk_size)
             if not chunk:
                 break
-            parts = (last + chunk).split(delimiter)
+
+            parts = (carry + chunk).split(delimiter)
             last = parts.pop()
-            yield from parts
-        if last:
-            yield last
+            cut = max(len(last) - overlap_len, 0)
+            carry = last[cut:]
+            for part in parts:
+                pending.append(part)
+                yield b"".join(pending)
+                pending.clear()
+
+            if cut:
+                pending.append(last[:cut])
+
+        if pending or carry:
+            pending.append(carry)
+            yield b"".join(pending)
