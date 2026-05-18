@@ -76,3 +76,10 @@ testpaths = ["tests"]
 
 [tool.mypy]
 plugins = ["scinexus._mypy_plugin"]
+
+[tool.uv.pip]
+exclude-newer = "7 days"
+
+[tool.uv.pip.exclude-newer-package]
+# but we allow other cogent3 packages to be more recent
+citeable = false
