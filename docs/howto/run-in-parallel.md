@@ -238,3 +238,6 @@ class DaskBackend(Parallel):
 
 set_parallel_backend(DaskBackend(client))
 ```
+
+!!! warning "The above is a hypothetical wrapping of dask!"
+    The above example for adding [dask](https://www.dask.org) as a parallelisation backend is not tested! Also note that this would require installing `"dask[distributed]"`.
