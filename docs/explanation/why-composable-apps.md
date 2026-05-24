@@ -22,4 +22,24 @@ We can expand on this slightly for the problem of scientific computation by cons
 
 ## Improve the accessibility of your work for end users
 
-Apps are ready-made functions that users can run on their data without needing technical expertise. They’re easy for non-programmers to use, and can be linked together into pipelines. This lets users process one or thousands of records at once—without writing loops, conditionals, or other structural code.
+Apps are ready-made functions that users can run on their data without needing technical expertise. They’re easy for non-programmers to use, and can be linked together into pipelines. This lets users process one or millions of records at once—without writing loops, conditionals, or other structural code.
+
+## When to use apps
+
+Here are three examples of when to use apps.
+
+### To make a callable class
+
+You want a class to be callable, optionally with its input and output types checked at runtime, without writing the boilerplate yourself.
+
+### To make a composite data transform
+
+You want to chain several steps into a single transformation and reuse that combination across a code base. For example, converting an object to a JSON string and then compressing it involves two separate functions, plus possible configuration options for compression. By writing each step as an app, you can compose them into a single instance, assign it to a module-level variable. Importing and using that instance wherever it is needed ensures consistency in transformation behaviour.
+
+!!! tip "Composite apps can themselves be used as attributes of other apps — apps can have apps as attributes 🤯🚀"
+
+### To make a robust multi-step pipeline
+
+You have a composite transformation that you want to apply to many data records. Written conventionally, this would require a loop that calls each step in turn, traps any exceptions, handles their consequences, and passes successful results on to the next step.
+
+The `apply_to()` and `as_completed()` methods on composed apps handle this pattern for you. They iterate over the input records, run each one through the pipeline, and collect the results — so you do not need to write the loop, the exception handling, or the conditional checks between steps. And as an extra bonus, you can turn on parallelisation using a single argument.
