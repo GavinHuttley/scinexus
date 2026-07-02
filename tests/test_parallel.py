@@ -292,6 +292,9 @@ def test_loky_get_size():
 
 
 @pytest.mark.slow
+@pytest.mark.skipif(
+    multiprocessing.cpu_count() < 2, reason="requires at least 2 CPU cores"
+)
 def test_create_processes():
     """Processor pool should create multiple distinct processes"""
     max_worker_count = multiprocessing.cpu_count() - 1
