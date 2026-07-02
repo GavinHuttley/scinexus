@@ -883,7 +883,7 @@ class WriterApp(ComposableApp[T, R]):
         if active_logger:
             taken = time.time() - start
             active_logger.log_message(f"{taken}", label="TIME TAKEN")
-            log_file_path = Path(active_logger.log_file_path)
+            log_file_path = Path(active_logger.log_file_path or ".")
             active_logger.shutdown()
             self.data_store.write_log(
                 unique_id=log_file_path.name,
