@@ -12,7 +12,7 @@ from lzma import open as lzma_open
 from os import PathLike
 from pathlib import Path, PurePath
 from tempfile import mkdtemp
-from typing import IO, TYPE_CHECKING, Any
+from typing import IO, TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import ParseResult, urlparse
 from urllib.request import urlopen
 
@@ -103,7 +103,11 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
             msg = "Archive is supposed to have only one record."
             raise ValueError(msg)
 
-        opened = zf.open(zf.namelist()[0], mode=mode, **kwargs)
+        opened = zf.open(
+            zf.namelist()[0],
+            mode=cast("Literal['r', 'w']", mode),
+            **kwargs,
+        )
 
         return opened if binary_mode else TextIOWrapper(opened, encoding=encoding)
 
