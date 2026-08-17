@@ -108,8 +108,7 @@ print(dstore.describe)
 exec_codeblock(src=src, use_wrap=False, display_src=False)
   ]]] -->
 ```python { linenums="1" notest }
-
-{'completed': 175, 'not_completed': 0, 'logs': 1, 'title': 'Unlocked db store.'}
+{"completed": 175, "not_completed": 0, "logs": 1, "title": "Unlocked db store."}
 ```
 <!-- [[[end]]] -->
 
@@ -138,7 +137,6 @@ print(dstore.summary_logs)
 exec_codeblock(src=src, display_src=False, max_lines=4)
   ]]] -->
 ```python { linenums="1" notest }
-
 # [{'time': '2019-07-24 14:42:56', 'name': 'logs/load_unaligned-progressive_align-
 # write_db-pid8650.log', 'python_version': '3.7.3', 'who': 'gavin', 'command':
 # '/Users/gavin/miniconda3/envs/c3dev/lib/python3.7/site-
@@ -163,7 +161,6 @@ print(dstore.logs)
 exec_codeblock(src=src, display_src=False, max_lines=4)
   ]]] -->
 ```python { linenums="1" notest }
-
 # [DataMember(data_store=/Users/gavin/repos/SciNexus/docs/data/demo-
 # locked.sqlitedb, unique_id=logs/load_unaligned-progressive_align-write_db-
 # pid8650.log)]
@@ -193,7 +190,6 @@ print(dstore.logs[0].read()[:225])
 exec_codeblock(src=src, display_src=False, max_lines=4)
   ]]] -->
 ```python { linenums="1" notest }
-
 # 2019-07-24 14:42:56     Eratosthenes.local:8650 INFO    system_details :
 # system=Darwin Kernel Version 18.6.0: Thu Apr 25 23:16:27 PDT 2019;
 # root:xnu-4903.261.4~2/RELEASE_X86_64 2019-07-24 14:42:56
@@ -258,9 +254,11 @@ my_cite = Software(
     year=2025,
 )
 
+
 @define_app(cite=my_cite)
 def strict_filter(val: AlignedSeqsType) -> AlignedSeqsType:
     return val.omit_bad_seqs()
+
 
 in_dstore = open_data_store("data/raw.zip", suffix="fa", limit=5)
 out_dstore = open_data_store("cited_results", suffix="fa", mode="w")

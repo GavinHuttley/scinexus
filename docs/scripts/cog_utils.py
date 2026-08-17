@@ -41,12 +41,12 @@ _register_cogent3_types()
 def setup_installed() -> None:
     zip_dest = DATA_DIR / "raw.zip"
     if not zip_dest.exists():
-        urllib.request.urlretrieve(DATA_URL, filename=zip_dest)  # noqa: S310
+        urllib.request.urlretrieve(DATA_URL, filename=zip_dest)
         return
 
     decompress_dest = DATA_DIR / "demo-locked.sqlitedb.zip"
     if not decompress_dest.exists():
-        urllib.request.urlretrieve(DECOMPRESS_URL, filename=decompress_dest)  # noqa: S310
+        urllib.request.urlretrieve(DECOMPRESS_URL, filename=decompress_dest)
         with zipfile.ZipFile(decompress_dest, "r") as zip_ref:
             zip_ref.extractall(DATA_DIR)
         return

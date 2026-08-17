@@ -61,6 +61,7 @@ annotations=["`cogent3` defines many types (`Alignment`, `PhyloNode`, `Table`, e
 
     _resolution_ns = None
 
+
     def _get_resolution_namespace():
         global _resolution_ns
         if _resolution_ns is not None:
@@ -77,6 +78,7 @@ annotations=["`cogent3` defines many types (`Alignment`, `PhyloNode`, `Table`, e
             # ... other types ...
         }
         return _resolution_ns
+
 
     register_type_namespace(_get_resolution_namespace)  # (2)!
     ```
