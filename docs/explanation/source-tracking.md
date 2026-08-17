@@ -23,9 +23,9 @@ When `as_completed()` or `apply_to()` processes a data store, each member is wra
 from scinexus.composable import source_proxy
 
 proxy = source_proxy(some_data)
-proxy.source      # the original input
-proxy.uuid        # unique identifier for this proxy
-proxy.any_attr    # delegates to some_data.any_attr
+proxy.source  # the original input
+proxy.uuid  # unique identifier for this proxy
+proxy.any_attr  # delegates to some_data.any_attr
 ```
 
 ## How `propagate_source` preserves the link
