@@ -335,6 +335,24 @@ def test_iter_splitlines_chunk_endswith_newline(tmp_path, value):
     assert got == value
 
 
+def test_iter_splitlines_line_spans_multiple_chunks(tmp_path):
+    path = tmp_path / "long-lines.txt"
+    value = ["a" * 12, "b" * 12]
+    path.write_text("\n".join(value))
+    # each line is spread over 3 chunks
+    got = list(iter_splitlines(path, chunk_size=5))
+    assert got == value
+
+
+@pytest.mark.parametrize("chunk_size", [5, None])
+def test_iter_splitlines_trailing_carriage_return(tmp_path, chunk_size):
+    path = tmp_path / "trailing-cr.txt"
+    value = "We have some\n\r"
+    path.write_text(value, newline="")
+    got = list(iter_splitlines(path, chunk_size=chunk_size))
+    assert got == value.splitlines()
+
+
 def test_iter_splitlines_chunk_empty_file(tmp_path):
     path = tmp_path / "zero.txt"
     path.write_text("")

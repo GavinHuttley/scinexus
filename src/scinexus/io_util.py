@@ -426,29 +426,36 @@ def iter_splitlines(
             chunk_size = None
 
     with open_(path) as infile:
-        last = ""
+        # fragments of a line that spans a chunk boundary, joined only
+        # when the line is complete and about to be yielded
+        pending: list[str] = []
         while True:
             data = infile.read() if chunk_size is None else infile.read(chunk_size)
             if not data:  # end of file
                 break
 
-            data = last + data
-            end_is_newline = data.endswith("\n")
+            # even if text is from Windows and uses "\r\n", pythons
+            # string splitlines() will respect \n
             lines = data.splitlines()
-            last = lines.pop(-1)
-            if end_is_newline:
-                # even if text is from Windows and uses "\r\n", pythons
-                # string splitlines() will respect \n
-                last += "\n"
+            if data.endswith("\n"):
+                # every line in this chunk is complete
+                tail = None
+            else:
+                # the last line continues into the next chunk
+                tail = lines.pop(-1)
 
-            if not len(lines):
-                # we have not seen a newline
-                continue
+            if lines and pending:
+                pending.append(lines[0])
+                lines[0] = "".join(pending)
+                pending.clear()
 
             yield from lines
 
-        if last:
-            yield from last.splitlines()
+            if tail is not None:
+                pending.append(tail)
+
+        if pending:
+            yield "".join(pending)
 
 
 def iter_line_blocks(
