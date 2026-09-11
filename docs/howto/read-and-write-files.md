@@ -121,6 +121,13 @@ for line in iter_splitlines("large_file.txt"):
     process(line)
 ```
 
+Pass `as_bytes=True` to open the file in binary mode and get `bytes` lines, skipping the decoding step.
+
+```python { notest }
+for line in iter_splitlines("large_file.txt", as_bytes=True):
+    process(line)  # line is bytes, e.g. b"first line"
+```
+
 ### `iter_line_blocks`
 
 `iter_line_blocks(path, num_lines=1000, chunk_size=5_000_000)` builds on `iter_splitlines` — it accumulates lines into lists of `num_lines` and yields each list. This is useful when downstream processing works on batches (e.g. FASTA records where each record spans a fixed number of lines).
@@ -131,5 +138,7 @@ from scinexus.io_util import iter_line_blocks
 for block in iter_line_blocks("large_file.txt", num_lines=1000):
     process_batch(block)  # block is a list of up to 1000 strings
 ```
+
+It takes `as_bytes` too, in which case each block is a list of `bytes`.
 
 Use `iter_splitlines` when you need one line at a time. Use `iter_line_blocks` when your processing naturally operates on batches of lines.
