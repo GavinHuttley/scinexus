@@ -539,11 +539,43 @@ def iter_splitlines(
             yield from _splitlines(text, chunk_size, "\n", "\r", "")
 
 
+@overload
+def iter_line_blocks(
+    path: PathType,
+    num_lines: int | None = ...,
+    chunk_size: int | None = ...,
+    *,
+    as_bytes: Literal[False] = ...,
+) -> Iterator[list[str]]: ...
+
+
+@overload
+def iter_line_blocks(
+    path: PathType,
+    num_lines: int | None = ...,
+    chunk_size: int | None = ...,
+    *,
+    as_bytes: Literal[True],
+) -> Iterator[list[bytes]]: ...
+
+
+@overload
+def iter_line_blocks(
+    path: PathType,
+    num_lines: int | None = ...,
+    chunk_size: int | None = ...,
+    *,
+    as_bytes: bool,
+) -> Iterator[list[str] | list[bytes]]: ...
+
+
 def iter_line_blocks(
     path: PathType,
     num_lines: int | None = 1000,
     chunk_size: int | None = 5_000_000,
-) -> Iterator[list[str]]:
+    *,
+    as_bytes: bool = False,
+) -> Iterator[list[Any]]:
     """yields list with num_lines str from path
 
     Parameters
@@ -554,9 +586,12 @@ def iter_line_blocks(
         number of lines per block. If None just returns all lines.
     chunk_size
         number of bytes to load in one go from path
+    as_bytes
+        if True, lines are returned as bytes and path is opened in
+        binary mode, otherwise lines are returned as str
     """
     lines = []
-    for line in iter_splitlines(path, chunk_size=chunk_size):
+    for line in iter_splitlines(path, chunk_size=chunk_size, as_bytes=as_bytes):
         lines.append(line)
         if len(lines) == num_lines:
             yield lines

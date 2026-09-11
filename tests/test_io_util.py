@@ -466,6 +466,30 @@ def test_iter_line_blocks_one(tmp_path):
     assert got == [[value]]
 
 
+def test_iter_line_blocks_as_bytes_correct_size(tmp_path):
+    path = tmp_path / "multi-line.txt"
+    value = ["We have some", "text on different lines", "which load"]
+    path.write_text("\n".join(value))
+    got = list(iter_line_blocks(path, num_lines=2, chunk_size=5, as_bytes=True))
+    expect = [line.encode("utf8") for line in value]
+    assert got == [expect[:2], expect[-1:]]
+
+
+def test_iter_line_blocks_as_bytes_empty(tmp_path):
+    path = tmp_path / "zero.txt"
+    path.write_text("")
+    got = list(iter_line_blocks(path, num_lines=2, as_bytes=True))
+    assert not got
+
+
+def test_iter_line_blocks_as_bytes_none_num_lines(tmp_path):
+    path = tmp_path / "multi-line.txt"
+    value = ["We have some", "text on different lines", "which load"]
+    path.write_text("\n".join(value))
+    got = list(iter_line_blocks(path, num_lines=None, as_bytes=True))
+    assert got == [[line.encode("utf8") for line in value]]
+
+
 def test_iter_line_blocks_none_num_lines(tmp_path):
     path = tmp_path / "multi-line.txt"
     value = ["We have some", "text on different lines", "which load"]
