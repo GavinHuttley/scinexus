@@ -456,6 +456,9 @@ def _splitlines(
     # fragments of a line that spans a chunk boundary, joined only
     # when the line is complete and about to be yielded
     pending: list[_StrOrBytes] = []
+    # an empty line, held back until a later line proves it was not the
+    # last one, as a trailing empty line is not yielded
+    held: _StrOrBytes | None = None
     # whether the previous chunk ended on a carriage return, which may
     # be the first half of a "\r\n" split by the chunk boundary
     split_return = False
@@ -480,12 +483,23 @@ def _splitlines(
             lines[0] = sep.empty.join(pending)
             pending.clear()
 
-        yield from lines
+        if lines:
+            if held is not None:
+                # these lines follow it, so it was not the last one
+                yield held
+                held = None
+
+            if not lines[-1]:
+                held = lines.pop(-1)
+
+            yield from lines
 
         if tail is not None:
             pending.append(tail)
 
     if pending:
+        if held is not None:
+            yield held
         yield sep.empty.join(pending)
 
 
@@ -536,7 +550,10 @@ def iter_splitlines(
 
     Notes
     -----
-    Loads chunks of data from the file, yields one line at a time
+    Loads chunks of data from the file, yields one line at a time.
+
+    An empty last line is not yielded, so a file ending on a line
+    terminator gives the same lines as one that does not.
     """
     if is_url(path):
         chunk_size = None

@@ -350,7 +350,9 @@ def test_iter_splitlines_trailing_carriage_return(tmp_path, chunk_size):
     value = "We have some\n\r"
     path.write_text(value, newline="")
     got = list(iter_splitlines(path, chunk_size=chunk_size))
-    assert got == value.splitlines()
+    # the file ends on a line terminator, splitlines() would report a
+    # trailing empty line here
+    assert got == ["We have some"]
 
 
 LINE_BOUNDARIES = [
@@ -389,6 +391,51 @@ def test_iter_splitlines_as_bytes_not_line_boundaries(tmp_path, boundary, chunk_
     path.write_bytes(content)
     got = list(iter_splitlines(path, chunk_size=chunk_size, as_bytes=True))
     assert got == [content]
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 3, None])
+@pytest.mark.parametrize(
+    ("content", "expect"),
+    [
+        ("abcd\n", ["abcd"]),
+        ("abcd\n\n", ["abcd"]),
+        ("abcd\n\n\n", ["abcd", ""]),
+        ("abcd\n\x0c", ["abcd"]),
+        ("abcd\nefgh\n\n", ["abcd", "efgh"]),
+        ("abcd\n\nefgh", ["abcd", "", "efgh"]),
+        ("\n", []),
+        ("\n\n", [""]),
+    ],
+)
+def test_iter_splitlines_no_trailing_empty_line(tmp_path, content, expect, chunk_size):
+    path = tmp_path / "trailing.txt"
+    path.write_text(content, newline="", encoding="utf8")
+    got = list(iter_splitlines(path, chunk_size=chunk_size))
+    assert got == expect
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 3, None])
+@pytest.mark.parametrize(
+    ("content", "expect"),
+    [
+        (b"abcd\n", [b"abcd"]),
+        (b"abcd\n\n", [b"abcd"]),
+        (b"abcd\n\r", [b"abcd"]),
+        (b"abcd\r\n\r\n", [b"abcd"]),
+        (b"abcd\n\n\n", [b"abcd", b""]),
+        (b"\n", []),
+    ],
+)
+def test_iter_splitlines_as_bytes_no_trailing_empty_line(
+    tmp_path,
+    content,
+    expect,
+    chunk_size,
+):
+    path = tmp_path / "trailing.dat"
+    path.write_bytes(content)
+    got = list(iter_splitlines(path, chunk_size=chunk_size, as_bytes=True))
+    assert got == expect
 
 
 def test_iter_splitlines_chunk_empty_file(tmp_path):
