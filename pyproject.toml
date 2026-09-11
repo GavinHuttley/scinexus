@@ -52,8 +52,8 @@ dev = [
     "rich",
     "ruff",
     "cogapp>=3.6.0",
-    "click>=8.3.2",
-    "mkdocstrings-python>=2.0.3",
+    "click>=8.5.0",
+    "mkdocstrings-python>=2.0.8",
 ]
 
 [build-system]
