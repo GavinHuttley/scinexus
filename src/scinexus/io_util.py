@@ -12,7 +12,17 @@ from lzma import open as lzma_open
 from os import PathLike
 from pathlib import Path, PurePath
 from tempfile import mkdtemp
-from typing import IO, TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
+from typing import (
+    IO,
+    TYPE_CHECKING,
+    Any,
+    Generic,
+    Literal,
+    NamedTuple,
+    TypeVar,
+    cast,
+    overload,
+)
 from urllib.parse import ParseResult, urlparse
 from urllib.request import urlopen
 
@@ -28,6 +38,26 @@ if TYPE_CHECKING:
 PathType = str | PathLike[Any] | PurePath | Path
 
 _StrOrBytes = TypeVar("_StrOrBytes", str, bytes)
+
+
+class _Separators(NamedTuple, Generic[_StrOrBytes]):
+    """line separators matching the mode a file object was opened in"""
+
+    boundaries: _StrOrBytes
+    newline: _StrOrBytes
+    carriage_return: _StrOrBytes
+    empty: _StrOrBytes
+
+
+# str.splitlines() breaks on all of these, bytes.splitlines() breaks
+# only on newline and carriage return
+_TEXT_SEPARATORS = _Separators(
+    "\n\r\v\f\x1c\x1d\x1e\x85\N{LINE SEPARATOR}\N{PARAGRAPH SEPARATOR}",
+    "\n",
+    "\r",
+    "",
+)
+_BINARY_SEPARATORS = _Separators(b"\n\r", b"\n", b"\r", b"")
 
 
 @functools.singledispatch
@@ -404,9 +434,7 @@ def path_exists(path: PathType) -> bool:
 def _splitlines(
     infile: IO[_StrOrBytes],
     chunk_size: int | None,
-    newline: _StrOrBytes,
-    carriage_return: _StrOrBytes,
-    empty: _StrOrBytes,
+    sep: _Separators[_StrOrBytes],
 ) -> Iterator[_StrOrBytes]:
     """yields lines from an open file object
 
@@ -416,17 +444,13 @@ def _splitlines(
         open file object, in text or binary mode
     chunk_size
         number of bytes to load in one go, None means read it all
-    newline
-        the newline character, matching the mode of infile
-    carriage_return
-        the carriage return character, matching the mode of infile
-    empty
-        the empty string, matching the mode of infile
+    sep
+        line separators matching the mode of infile
 
     Notes
     -----
     A file opened in text mode has its line endings translated to
-    newline by the reader, so carriage_return is only ever seen for a
+    newline by the reader, so a carriage return is only ever seen for a
     file opened in binary mode.
     """
     # fragments of a line that spans a chunk boundary, joined only
@@ -441,23 +465,19 @@ def _splitlines(
             break
 
         lines = data.splitlines()
-        if split_return and data.startswith(newline):
+        if split_return and data.startswith(sep.newline):
             # this newline completes the line ending started by the
             # previous chunk, it does not begin a new line
             del lines[0]
 
-        split_return = data.endswith(carriage_return)
-        if data.endswith(newline) or split_return:
-            # every line in this chunk is complete, a trailing carriage
-            # return ends its line whether or not a newline follows
-            tail = None
-        else:
-            # the last line continues into the next chunk
-            tail = lines.pop(-1)
+        split_return = data.endswith(sep.carriage_return)
+        # a chunk ending on a line boundary has no unfinished last line,
+        # otherwise that line continues into the next chunk
+        tail = None if data[-1:] in sep.boundaries else lines.pop(-1)
 
         if lines and pending:
             pending.append(lines[0])
-            lines[0] = empty.join(pending)
+            lines[0] = sep.empty.join(pending)
             pending.clear()
 
         yield from lines
@@ -466,7 +486,7 @@ def _splitlines(
             pending.append(tail)
 
     if pending:
-        yield empty.join(pending)
+        yield sep.empty.join(pending)
 
 
 @overload
@@ -532,11 +552,11 @@ def iter_splitlines(
             # open_ is typed as returning IO[Any], the cast binds the
             # type variable so a mismatched separator is a type error
             binary = cast("IO[bytes]", infile)
-            yield from _splitlines(binary, chunk_size, b"\n", b"\r", b"")
+            yield from _splitlines(binary, chunk_size, _BINARY_SEPARATORS)
     else:
         with open_(path) as infile:
             text = cast("IO[str]", infile)
-            yield from _splitlines(text, chunk_size, "\n", "\r", "")
+            yield from _splitlines(text, chunk_size, _TEXT_SEPARATORS)
 
 
 @overload

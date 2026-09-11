@@ -353,6 +353,44 @@ def test_iter_splitlines_trailing_carriage_return(tmp_path, chunk_size):
     assert got == value.splitlines()
 
 
+LINE_BOUNDARIES = [
+    "\n",
+    "\r",
+    "\r\n",
+    "\v",
+    "\f",
+    "\x1c",
+    "\x1d",
+    "\x1e",
+    "\x85",
+    "\N{LINE SEPARATOR}",
+    "\N{PARAGRAPH SEPARATOR}",
+]
+
+
+@pytest.mark.parametrize("chunk_size", [3, 4, 5, 6, 7, None])
+@pytest.mark.parametrize("boundary", LINE_BOUNDARIES)
+def test_iter_splitlines_line_boundaries(tmp_path, boundary, chunk_size):
+    # str.splitlines() breaks on more than "\n", and the result must not
+    # depend on where the chunk boundary falls
+    path = tmp_path / "boundary.txt"
+    content = f"abcd{boundary}efgh"
+    path.write_text(content, newline="", encoding="utf8")
+    got = list(iter_splitlines(path, chunk_size=chunk_size))
+    assert got == ["abcd", "efgh"]
+
+
+@pytest.mark.parametrize("chunk_size", [3, 4, 5, 6, 7, None])
+@pytest.mark.parametrize("boundary", [b"\v", b"\f", b"\x1c", b"\x1d", b"\x1e"])
+def test_iter_splitlines_as_bytes_not_line_boundaries(tmp_path, boundary, chunk_size):
+    # bytes.splitlines() breaks only on "\n", "\r" and "\r\n"
+    path = tmp_path / "boundary.dat"
+    content = b"abcd" + boundary + b"efgh"
+    path.write_bytes(content)
+    got = list(iter_splitlines(path, chunk_size=chunk_size, as_bytes=True))
+    assert got == [content]
+
+
 def test_iter_splitlines_chunk_empty_file(tmp_path):
     path = tmp_path / "zero.txt"
     path.write_text("")
