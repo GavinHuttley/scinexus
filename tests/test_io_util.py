@@ -360,6 +360,81 @@ def test_iter_splitlines_chunk_empty_file(tmp_path):
     assert not got
 
 
+def test_iter_splitlines_as_bytes_one(tmp_path):
+    path = tmp_path / "one-line.txt"
+    value = "We have text on one line."
+    path.write_text(value)
+    got = list(iter_splitlines(path, as_bytes=True))
+    assert got == [value.encode("utf8")]
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("chunk_size", [5, None])
+def test_iter_splitlines_as_bytes_multi_line(tmp_path, newline, chunk_size):
+    path = tmp_path / "multi-line.txt"
+    value = ["We have some", "text on different lines", "which load"]
+    with open_(path, mode="w", newline=newline) as out:
+        out.write("\n".join(value))
+    got = list(iter_splitlines(path, chunk_size=chunk_size, as_bytes=True))
+    assert got == [line.encode("utf8") for line in value]
+
+
+def test_iter_splitlines_as_bytes_file_endswith_newline(tmp_path):
+    path = tmp_path / "multi-line.txt"
+    value = ["We have some", "text on different lines", "which load"]
+    path.write_text("\n".join(value) + "\n")
+    got = list(iter_splitlines(path, chunk_size=5, as_bytes=True))
+    assert got == [line.encode("utf8") for line in value]
+
+
+def test_iter_splitlines_as_bytes_empty_file(tmp_path):
+    path = tmp_path / "zero.txt"
+    path.write_text("")
+    got = list(iter_splitlines(path, as_bytes=True))
+    assert not got
+
+
+def test_iter_splitlines_as_bytes_not_decodable(tmp_path):
+    # bytes that are not valid utf8 are returned unchanged
+    path = tmp_path / "binary.dat"
+    value = [b"\xff\xfe some", b"\x00 bytes"]
+    path.write_bytes(b"\n".join(value))
+    got = list(iter_splitlines(path, chunk_size=4, as_bytes=True))
+    assert got == value
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 3, 4, None])
+@pytest.mark.parametrize(
+    "content",
+    [
+        b"ab\rcd",
+        b"ab\r\rcd",
+        b"ab\r\ncd",
+        b"ab\r\n\r\ncd",
+        b"ab\r",
+        b"ab\r\n",
+        b"\rab",
+        b"\nab",
+    ],
+)
+def test_iter_splitlines_as_bytes_carriage_return(tmp_path, content, chunk_size):
+    # binary mode does no newline translation, so a chunk boundary can
+    # fall between the "\r" and the "\n" of a "\r\n"
+    path = tmp_path / "cr.dat"
+    path.write_bytes(content)
+    got = list(iter_splitlines(path, chunk_size=chunk_size, as_bytes=True))
+    assert got == content.splitlines()
+
+
+def test_iter_splitlines_as_bytes_compressed(tmp_path):
+    path = tmp_path / "multi-line.txt.gz"
+    value = ["We have some", "text on different lines", "which load"]
+    with open_(path, mode="wt") as out:
+        out.write("\n".join(value))
+    got = list(iter_splitlines(path, chunk_size=5, as_bytes=True))
+    assert got == [line.encode("utf8") for line in value]
+
+
 @pytest.mark.parametrize("transform", [str, pathlib.Path])
 def test_iter_splitlines_tilde(home_file, transform):
     expect = pathlib.Path(home_file).expanduser().read_text().splitlines()
@@ -538,6 +613,13 @@ def test_iter_splitlines_url(DATA_DIR):
     uri = (DATA_DIR / "sample.tsv").absolute().as_uri()
     got = list(iter_splitlines(uri))
     assert len(got) > 0
+
+
+def test_iter_splitlines_url_as_bytes(DATA_DIR):
+    path = (DATA_DIR / "sample.tsv").absolute()
+    uri = path.as_uri()
+    got = list(iter_splitlines(uri, as_bytes=True))
+    assert got == [line.encode("utf8") for line in iter_splitlines(path)]
 
 
 @pytest.mark.parametrize("chunk_size", [1, 16, 64, 1024, 5_000_000])

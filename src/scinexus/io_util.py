@@ -12,7 +12,7 @@ from lzma import open as lzma_open
 from os import PathLike
 from pathlib import Path, PurePath
 from tempfile import mkdtemp
-from typing import IO, TYPE_CHECKING, Any, Literal, cast
+from typing import IO, TYPE_CHECKING, Any, Literal, TypeVar, cast, overload
 from urllib.parse import ParseResult, urlparse
 from urllib.request import urlopen
 
@@ -26,6 +26,8 @@ if TYPE_CHECKING:
     from types import TracebackType
 
 PathType = str | PathLike[Any] | PurePath | Path
+
+_StrOrBytes = TypeVar("_StrOrBytes", str, bytes)
 
 
 @functools.singledispatch
@@ -399,10 +401,107 @@ def path_exists(path: PathType) -> bool:
     return False
 
 
+def _splitlines(
+    infile: IO[_StrOrBytes],
+    chunk_size: int | None,
+    newline: _StrOrBytes,
+    carriage_return: _StrOrBytes,
+    empty: _StrOrBytes,
+) -> Iterator[_StrOrBytes]:
+    """yields lines from an open file object
+
+    Parameters
+    ----------
+    infile
+        open file object, in text or binary mode
+    chunk_size
+        number of bytes to load in one go, None means read it all
+    newline
+        the newline character, matching the mode of infile
+    carriage_return
+        the carriage return character, matching the mode of infile
+    empty
+        the empty string, matching the mode of infile
+
+    Notes
+    -----
+    A file opened in text mode has its line endings translated to
+    newline by the reader, so carriage_return is only ever seen for a
+    file opened in binary mode.
+    """
+    # fragments of a line that spans a chunk boundary, joined only
+    # when the line is complete and about to be yielded
+    pending: list[_StrOrBytes] = []
+    # whether the previous chunk ended on a carriage return, which may
+    # be the first half of a "\r\n" split by the chunk boundary
+    split_return = False
+    while True:
+        data = infile.read() if chunk_size is None else infile.read(chunk_size)
+        if not data:  # end of file
+            break
+
+        lines = data.splitlines()
+        if split_return and data.startswith(newline):
+            # this newline completes the line ending started by the
+            # previous chunk, it does not begin a new line
+            del lines[0]
+
+        split_return = data.endswith(carriage_return)
+        if data.endswith(newline) or split_return:
+            # every line in this chunk is complete, a trailing carriage
+            # return ends its line whether or not a newline follows
+            tail = None
+        else:
+            # the last line continues into the next chunk
+            tail = lines.pop(-1)
+
+        if lines and pending:
+            pending.append(lines[0])
+            lines[0] = empty.join(pending)
+            pending.clear()
+
+        yield from lines
+
+        if tail is not None:
+            pending.append(tail)
+
+    if pending:
+        yield empty.join(pending)
+
+
+@overload
+def iter_splitlines(
+    path: PathType,
+    chunk_size: int | None = ...,
+    *,
+    as_bytes: Literal[False] = ...,
+) -> Iterator[str]: ...
+
+
+@overload
+def iter_splitlines(
+    path: PathType,
+    chunk_size: int | None = ...,
+    *,
+    as_bytes: Literal[True],
+) -> Iterator[bytes]: ...
+
+
+@overload
+def iter_splitlines(
+    path: PathType,
+    chunk_size: int | None = ...,
+    *,
+    as_bytes: bool,
+) -> Iterator[str | bytes]: ...
+
+
 def iter_splitlines(
     path: PathType,
     chunk_size: int | None = 1_000_000,
-) -> Iterator[str]:
+    *,
+    as_bytes: bool = False,
+) -> Iterator[Any]:
     """yields line from file
 
     Parameters
@@ -411,6 +510,9 @@ def iter_splitlines(
         data file
     chunk_size
         number of bytes to load in one go from path
+    as_bytes
+        if True, lines are returned as bytes and path is opened in
+        binary mode, otherwise lines are returned as str
 
     Notes
     -----
@@ -425,37 +527,16 @@ def iter_splitlines(
             # load it all
             chunk_size = None
 
-    with open_(path) as infile:
-        # fragments of a line that spans a chunk boundary, joined only
-        # when the line is complete and about to be yielded
-        pending: list[str] = []
-        while True:
-            data = infile.read() if chunk_size is None else infile.read(chunk_size)
-            if not data:  # end of file
-                break
-
-            # even if text is from Windows and uses "\r\n", pythons
-            # string splitlines() will respect \n
-            lines = data.splitlines()
-            if data.endswith("\n"):
-                # every line in this chunk is complete
-                tail = None
-            else:
-                # the last line continues into the next chunk
-                tail = lines.pop(-1)
-
-            if lines and pending:
-                pending.append(lines[0])
-                lines[0] = "".join(pending)
-                pending.clear()
-
-            yield from lines
-
-            if tail is not None:
-                pending.append(tail)
-
-        if pending:
-            yield "".join(pending)
+    if as_bytes:
+        with open_(path, mode="rb") as infile:
+            # open_ is typed as returning IO[Any], the cast binds the
+            # type variable so a mismatched separator is a type error
+            binary = cast("IO[bytes]", infile)
+            yield from _splitlines(binary, chunk_size, b"\n", b"\r", b"")
+    else:
+        with open_(path) as infile:
+            text = cast("IO[str]", infile)
+            yield from _splitlines(text, chunk_size, "\n", "\r", "")
 
 
 def iter_line_blocks(
