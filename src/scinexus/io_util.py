@@ -554,6 +554,13 @@ def iter_splitlines(
 
     An empty last line is not yielded, so a file ending on a line
     terminator gives the same lines as one that does not.
+
+    The two modes do not always split a file into the same number of
+    lines. Text mode reads with universal newlines, so "\\r", "\\n" and
+    "\\r\\n" all become line breaks, and str.splitlines() breaks on a
+    further eight characters including vertical tab and form feed.
+    Binary mode does no translation and bytes.splitlines() breaks only
+    on "\\r", "\\n" and "\\r\\n".
     """
     if is_url(path):
         chunk_size = None
@@ -613,7 +620,7 @@ def iter_line_blocks(
     *,
     as_bytes: bool = False,
 ) -> Iterator[list[Any]]:
-    """yields list with num_lines str from path
+    """yields list of num_lines lines from path
 
     Parameters
     ----------
@@ -626,6 +633,12 @@ def iter_line_blocks(
     as_bytes
         if True, lines are returned as bytes and path is opened in
         binary mode, otherwise lines are returned as str
+
+    Notes
+    -----
+    Lines are produced by iter_splitlines, see its notes for how the
+    two modes differ. If num_lines is None the whole file accumulates
+    in one block, so peak memory is the size of the file.
     """
     lines = []
     for line in iter_splitlines(path, chunk_size=chunk_size, as_bytes=as_bytes):
