@@ -622,22 +622,41 @@ def test_open_url_local(DATA_DIR, tmp_path):
     assert remote_data.splitlines() == local_data.splitlines()
 
 
-@pytest.fixture
-def gzip_uri(DATA_DIR, tmp_path):
-    inpath = DATA_DIR / "sample.tsv"
-    data = inpath.read_text()
-    outpath = tmp_path / "sample.tsv.gz"
-    with open_(outpath, "wb") as outfile:
-        outfile.write(data.encode("utf8"))
-    return outpath.as_uri()
+COMPRESSED_SAMPLE = "id\tname\n1\talpha\n2\tbeta\n3\tgamma\n"
+
+
+@pytest.fixture(params=["gz", "bz2", "zip", "lzma", "xz"])
+def compressed_path(tmp_path, request):
+    """path to text written under each compressed suffix
+
+    The content is ascii deliberately. open_ sniffs the encoding of a
+    local file while open_url takes it from the response headers, which
+    a file:// url does not set, so the two sides only agree on content
+    that decodes the same way under any locale.
+    """
+    outpath = tmp_path / f"sample.tsv.{request.param}"
+    with open_(outpath, "wt") as outfile:
+        outfile.write(COMPRESSED_SAMPLE)
+    return outpath
 
 
 @pytest.mark.parametrize("mode", ["r", "rb", "rt"])
-def test_open_url_gzip_mode(gzip_uri, mode):
-    with open_url(gzip_uri, mode=mode) as infile:
+def test_open_url_compressed_local(compressed_path, mode):
+    """a compressed file:// url reads the same as the local path
+
+    zip is the regression guarded here, it was the only suffix whose
+    handler defaulted to text rather than bytes.
+    """
+    # open_url gives bytes only when "b" is in the mode, so "r" reads as
+    # text. The local read spells that out because open_(path, "r") is
+    # separately broken for gz, bz2, xz and lzma.
+    with open_(compressed_path, mode="rb" if "b" in mode else "rt") as infile:
+        expect = infile.read()
+
+    with open_url(compressed_path.as_uri(), mode=mode) as infile:
         got = infile.read()
-    expect_type = bytes if "b" in mode else str
-    assert isinstance(got, expect_type)
+
+    assert got == expect
 
 
 @pytest.mark.slow
