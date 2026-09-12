@@ -697,16 +697,27 @@ def test_open_zip_write_keeps_member_compression_and_comments(tmp_path):
 
 
 def test_open_zip_write_keeps_the_mode_of_the_archive(tmp_path):
-    """the rewritten archive is not widened to the umask default"""
+    """the rewritten archive is not widened to the umask default
+
+    What is asserted is that the mode survives the rewrite, not that it
+    is any particular value. Windows models only the read-only bit, so
+    a chmod to 0o600 there leaves the file at 0o666 and the check is
+    weak rather than wrong: it holds, but a new file would have had
+    that mode anyway. On a platform with real permission bits the
+    rewritten file would come back 0o644 from the umask without the
+    mode being carried across.
+    """
     outpath = tmp_path / "sample.tsv.zip"
     with open_(outpath, mode="wt") as outfile:
         outfile.write("first\n")
 
     outpath.chmod(0o600)
+    before = outpath.stat().st_mode & 0o777
+
     with open_(outpath, mode="wt") as outfile:
         outfile.write("second\n")
 
-    assert outpath.stat().st_mode & 0o777 == 0o600
+    assert outpath.stat().st_mode & 0o777 == before
 
 
 def test_open_zip_write_cleans_up_when_the_rewrite_fails(tmp_path, monkeypatch):
