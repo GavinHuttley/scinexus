@@ -9,7 +9,7 @@ import shutil
 import uuid
 from bz2 import open as bzip_open
 from gzip import open as gzip_open
-from io import BytesIO, TextIOWrapper
+from io import BufferedIOBase, BytesIO, TextIOWrapper
 from lzma import open as lzma_open
 from os import PathLike
 from pathlib import Path, PurePath
@@ -389,6 +389,76 @@ def _decompressed(response: IO[Any], compression: str | None) -> IO[Any]:
     return response
 
 
+class _ClosingReader(BufferedIOBase):
+    """a binary reader that also closes the stream it was built over
+
+    Notes
+    -----
+    gzip, bz2 and lzma close only a file they opened themselves, so a
+    file object handed to them is left open when the reader over it is
+    closed, and a zip member does the same. A url response decompressed
+    through one of them therefore stays open once open_url has
+    returned, with no handle on it anywhere to close it with.
+
+    It is an io.BufferedIOBase rather than a bare delegating object so
+    that it is still an I/O object to anything that asks. typeguard
+    tests IO[bytes] and IO[str] with isinstance against the io ABCs, so
+    a plain proxy is rejected by every one of them, and a text read is
+    a real TextIOWrapper built over this rather than a proxy around
+    one.
+    """
+
+    def __init__(self, reader: IO[bytes], stream: IO[Any]) -> None:
+        """
+        Parameters
+        ----------
+        reader
+            the object reads are served from
+        stream
+            the one underneath it, closed after it
+        """
+        self._reader = reader
+        self._stream = stream
+
+    def __getattr__(self, name: str) -> Any:
+        # only reached when normal lookup fails, and the lookup of
+        # _reader must not come back here when __init__ has not run, as
+        # it has not for the instance copy.copy makes with __new__
+        reader = self.__dict__.get("_reader")
+        if reader is None:
+            raise AttributeError(name)
+
+        return getattr(reader, name)
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int | None = -1) -> bytes:
+        return self._reader.read(-1 if size is None else size)
+
+    def read1(self, size: int = -1) -> bytes:
+        return self.read(size)
+
+    def seekable(self) -> bool:
+        return self._reader.seekable()
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._reader.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._reader.tell()
+
+    def close(self) -> None:
+        """closes the reader, then the stream under it"""
+        try:
+            self._reader.close()
+        finally:
+            try:
+                self._stream.close()
+            finally:
+                super().close()
+
+
 def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]:
     """open a url
 
@@ -460,18 +530,26 @@ def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]
     # the cleanup is registered rather than hung off it
     with contextlib.ExitStack() as cleanup:
         cleanup.callback(response.close)
-        if binary_mode:
-            reader = _decompressed(response, compression)
-        else:
-            if encoding is None:
-                encoding = response.headers.get_content_charset()
+        # the charset is taken before the decompression, which for a
+        # zip that cannot seek has already closed the response by the
+        # time it returns
+        if not binary_mode and encoding is None:
+            encoding = response.headers.get_content_charset()
 
-            reader = TextIOWrapper(
-                _decompressed(response, compression),
-                encoding=encoding,
-                **kwargs,
-            )
+        source = _decompressed(response, compression)
+        if compression:
+            # without a compression the source is the response itself,
+            # and closing it, or a TextIOWrapper over it, closes it.
+            # With one there is a decompressor in between that will not,
+            # so the ownership is spelled out. It goes on the binary
+            # layer so that a text read is a TextIOWrapper over this
+            # rather than something wrapped around a TextIOWrapper
+            # typeshed models BufferedIOBase as an IOBase and not as an
+            # IO[bytes], where at runtime it answers to both, so the
+            # cast says what isinstance already agrees with
+            source = cast("IO[Any]", _ClosingReader(source, response))
 
+        reader = source if binary_mode else TextIOWrapper(source, encoding, **kwargs)
         cleanup.pop_all()
 
     return reader

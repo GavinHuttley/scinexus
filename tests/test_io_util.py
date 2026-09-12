@@ -1,13 +1,16 @@
 import bz2
+import copy
 import email.message
 import gzip
 import io
 import pathlib
+import typing
 import urllib.response
 import zipfile
 from urllib.parse import urlparse
 
 import pytest
+import typeguard
 
 import scinexus.io_util
 from scinexus.composable import NotCompleted
@@ -945,6 +948,163 @@ def test_open_url_closes_response_on_a_keyboard_interrupt(tmp_path, monkeypatch)
         open_url(path.as_uri())
 
     assert [r.closed for r in responses] == [True]
+
+
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "xz", "lzma", "zip", "tsv"])
+@pytest.mark.parametrize("mode", ["rt", "rb"])
+def test_open_url_reader_closes_the_response(tmp_path, monkeypatch, suffix, mode):
+    """closing what open_url returned closes the response behind it
+
+    gzip, bz2 and lzma leave a file object they were handed open when
+    the reader over them is closed, and so does a zip member, so for a
+    compressed url the response was left open with no handle on it
+    anywhere once open_url had returned. Reading such a url in a loop
+    leaks one connection per call.
+    """
+    outpath = tmp_path / f"sample.tsv.{suffix}"
+    with open_(outpath, mode="wt", newline="\n") as outfile:
+        outfile.write("id\tname\n")
+
+    responses = []
+
+    def fake_urlopen(url, timeout=None):  # noqa: ARG001
+        response = urllib.response.addinfourl(
+            outpath.open("rb"),
+            email.message.Message(),
+            url,
+        )
+        responses.append(response)
+        return response
+
+    monkeypatch.setattr(scinexus.io_util, "urlopen", fake_urlopen)
+
+    with open_url(outpath.as_uri(), mode=mode) as infile:
+        assert infile.read() in (b"id\tname\n", "id\tname\n")
+
+    assert [r.closed for r in responses] == [True]
+
+
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "xz", "lzma", "zip", "tsv"])
+def test_open_url_text_returns_an_io_object(tmp_path, monkeypatch, suffix):
+    """what comes back is still an I/O object to anything that asks
+
+    typeguard tests IO[str] with isinstance against io.TextIOBase, so
+    an object that merely forwards every call to a reader is rejected.
+    It is a runtime dependency here, and an app whose signature names a
+    handle would have started refusing compressed urls, and only
+    compressed urls.
+    """
+    outpath = tmp_path / f"sample.tsv.{suffix}"
+    with open_(outpath, mode="wt", newline="\n") as outfile:
+        outfile.write("id\tname\n")
+
+    def fake_urlopen(url, timeout=None):  # noqa: ARG001
+        return urllib.response.addinfourl(
+            outpath.open("rb"),
+            email.message.Message(),
+            url,
+        )
+
+    monkeypatch.setattr(scinexus.io_util, "urlopen", fake_urlopen)
+
+    with open_url(outpath.as_uri()) as infile:
+        typeguard.check_type(infile, typing.IO[str])
+
+
+@pytest.mark.parametrize("hint", [typing.IO[bytes], typing.IO[typing.Any]])
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "xz", "lzma", "zip"])
+def test_open_url_binary_returns_an_io_object(tmp_path, monkeypatch, suffix, hint):
+    """as above for a binary read of a compressed url
+
+    The uncompressed suffixes are not here. A binary read of one hands
+    back the response itself, so whether it is an I/O object is the
+    transport's business: http.client.HTTPResponse is a BufferedIOBase
+    and the addinfourl wrapping a file:// read is not. That is not
+    something this changes either way.
+    """
+    outpath = tmp_path / f"sample.tsv.{suffix}"
+    with open_(outpath, mode="wt", newline="\n") as outfile:
+        outfile.write("id\tname\n")
+
+    def fake_urlopen(url, timeout=None):  # noqa: ARG001
+        return urllib.response.addinfourl(
+            outpath.open("rb"),
+            email.message.Message(),
+            url,
+        )
+
+    monkeypatch.setattr(scinexus.io_util, "urlopen", fake_urlopen)
+
+    with open_url(outpath.as_uri(), mode="rb") as infile:
+        typeguard.check_type(infile, hint)
+
+
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "xz", "lzma", "zip"])
+def test_open_url_binary_reader_reads_like_the_stream_under_it(
+    tmp_path,
+    monkeypatch,
+    suffix,
+):
+    """the owning reader serves reads, seeks and iteration unchanged"""
+    outpath = tmp_path / f"sample.tsv.{suffix}"
+    with open_(outpath, mode="wt", newline="\n") as outfile:
+        outfile.write("id\tname\nrow\tone\n")
+
+    def fake_urlopen(url, timeout=None):  # noqa: ARG001
+        return urllib.response.addinfourl(
+            outpath.open("rb"),
+            email.message.Message(),
+            url,
+        )
+
+    monkeypatch.setattr(scinexus.io_util, "urlopen", fake_urlopen)
+
+    with open_url(outpath.as_uri(), mode="rb") as infile:
+        assert infile.readable()
+        assert infile.read(3) == b"id\t"
+        assert list(infile) == [b"name\n", b"row\tone\n"]
+        if infile.seekable():
+            assert infile.seek(0) == 0
+            assert infile.tell() == 0
+            assert infile.read() == b"id\tname\nrow\tone\n"
+
+    assert infile.closed
+
+
+def test_closing_reader_read1_serves_the_reader(tmp_path):
+    """read1 is served like read, not left to the base class
+
+    io.BufferedIOBase leaves read1 raising, and TextIOWrapper prefers
+    it over read when the buffer offers one.
+    """
+    outpath = tmp_path / "sample.bin"
+    outpath.write_bytes(b"id\tname\n")
+
+    stream = outpath.open("rb")
+    reader = scinexus.io_util._ClosingReader(io.BytesIO(b"id\tname\n"), stream)
+    with reader:
+        assert reader.read1(3) == b"id\t"
+        assert reader.read1() == b"name\n"
+
+    assert stream.closed
+
+
+def test_closing_reader_without_a_reader_does_not_recurse():
+    """an instance made without __init__ raises rather than recursing
+
+    A proxy that looks its own attribute up through __getattr__ calls
+    itself forever when that attribute is missing, which is the state
+    copy.copy builds before it probes for __setstate__.
+    """
+    bare = scinexus.io_util._ClosingReader.__new__(scinexus.io_util._ClosingReader)
+
+    # name is not defined on the class, so it is the delegation that
+    # answers for it, where read and close are the class's own
+    with pytest.raises(AttributeError):
+        _ = bare.name
+
+    assert not hasattr(bare, "__setstate__")
+    assert copy.copy(scinexus.io_util._ClosingReader(io.BytesIO(b""), io.BytesIO(b"")))
 
 
 def test_open_url_binary_rejects_unknown_argument(tmp_path):
