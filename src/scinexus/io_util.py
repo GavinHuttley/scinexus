@@ -406,6 +406,8 @@ class _ClosingReader(BufferedIOBase):
     a plain proxy is rejected by every one of them, and a text read is
     a real TextIOWrapper built over this rather than a proxy around
     one.
+
+    one.
     """
 
     def __init__(self, reader: IO[bytes], stream: IO[Any]) -> None:
@@ -449,12 +451,25 @@ class _ClosingReader(BufferedIOBase):
         return self._reader.tell()
 
     def close(self) -> None:
-        """closes the reader, then the stream under it"""
+        """closes the reader, then the stream under it
+
+        Notes
+        -----
+        The two are looked for rather than assumed. IOBase calls this
+        from __del__, and an instance that never went through __init__
+        has neither, which is what copy.copy builds before it looks for
+        __setstate__. An exception in __del__ cannot be raised, so it
+        would be reported as an unraisable rather than handled.
+        """
+        reader = self.__dict__.get("_reader")
+        stream = self.__dict__.get("_stream")
         try:
-            self._reader.close()
+            if reader is not None:
+                reader.close()
         finally:
             try:
-                self._stream.close()
+                if stream is not None:
+                    stream.close()
             finally:
                 super().close()
 

@@ -1,6 +1,7 @@
 import bz2
 import copy
 import email.message
+import gc
 import gzip
 import io
 import pathlib
@@ -1116,6 +1117,26 @@ def test_closing_reader_without_a_reader_does_not_recurse():
 
     assert not hasattr(bare, "__setstate__")
     assert copy.copy(scinexus.io_util._ClosingReader(io.BytesIO(b""), io.BytesIO(b"")))
+
+
+def test_closing_reader_without_a_reader_closes_quietly(recwarn):
+    """such an instance can be closed, and so can be finalised
+
+    io.IOBase calls close from __del__, and an exception there cannot
+    be raised, so it is reported as an unraisable and turns into a
+    warning under pytest. A copy.copy of one of these is finalised
+    exactly this way.
+    """
+    bare = scinexus.io_util._ClosingReader.__new__(scinexus.io_util._ClosingReader)
+    bare.close()
+
+    assert bare.closed
+
+    del bare
+    gc.collect()
+
+    unraisable = [w for w in recwarn if "Unraisable" in type(w.message).__name__]
+    assert unraisable == []
 
 
 def test_open_url_binary_rejects_unknown_argument(tmp_path):
