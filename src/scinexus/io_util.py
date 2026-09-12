@@ -230,7 +230,10 @@ def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]
     if compression:
         opener = _get_compression_open(compression=compression)
         if opener is not None:
-            response = opener(response)
+            # the handlers disagree on what their default mode means,
+            # open_zip's "r" is text while the others are binary, so ask
+            # for bytes and leave the text decision to the return below
+            response = opener(response, mode="rb")
 
     return response if "b" in mode else TextIOWrapper(response, encoding=encoding)
 
