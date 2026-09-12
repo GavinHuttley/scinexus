@@ -109,13 +109,24 @@ def _get_compression_open(
 def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
     """open a single member zip-compressed file
 
+    Parameters
+    ----------
+    filename
+        path to the archive
+    mode
+        a read mode returns the member, a write mode returns an
+        atomic_write() instance
+    kwargs
+        an encoding is used for the text modes and passed on for a
+        write, the rest go to ZipFile.open
+
     Note
     ----
-    If mode="r". The function raises ValueError if zip has > 1 record.
-    The returned object is wrapped by TextIOWrapper with latin encoding
-    (so it's not a bytes string).
+    A read raises ValueError if the archive holds more than one record.
 
-    If mode="w", returns an atomic_write() instance.
+    A read in a text mode decodes with the given encoding, falling back
+    to latin-1, which decodes any byte. A read in a binary mode returns
+    the member itself and does no decoding.
     """
     # import of standard library io module as some code quality tools
     # confuse this with a circular import
@@ -123,16 +134,27 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
     binary_mode = "b" in mode
     mode = mode[:1]
 
-    encoding = kwargs.pop("encoding") if "encoding" in kwargs else "latin-1"
+    encoding = kwargs.pop("encoding", None)
     if mode.startswith("w"):
         # mode has been truncated to its first letter, so put the b back
-        # for a binary write. atomic_write hands the mode on to open_ for
-        # its temporary file
+        # for a binary write. the encoding goes on unfiltered: pairing one
+        # with a binary mode is a caller error, and passing it through
+        # means it is reported here as it is for the other suffixes
         write_mode = "wb" if binary_mode else mode
-        return atomic_write(filename, mode=write_mode, in_zip=True)  # type: ignore[return-value]
+        return atomic_write(  # type: ignore[return-value]
+            filename,
+            mode=write_mode,
+            in_zip=True,
+            encoding=encoding,
+        )
 
     from zipfile import ZipFile
 
+    # latin-1 decodes any byte, so it is the fallback when the caller
+    # names no encoding. the test is against None rather than falsiness,
+    # so that an empty encoding reaches the codec lookup and is rejected
+    # here as it is for the other suffixes
+    encoding = encoding if encoding is not None else "latin-1"
     mode = mode.strip("t")
     with ZipFile(filename) as zf:
         if len(zf.namelist()) != 1:
@@ -204,8 +226,10 @@ def open_(filename: PathType, mode: str = "rt", **kwargs: Any) -> IO[Any]:
     op = _get_compression_open(filename) or open
 
     encoding = kwargs.pop("encoding", None)
+    # the pop above means kwargs can no longer hold an encoding, so ask
+    # the value whether the caller named one
     need_encoding = mode.startswith("r") and "b" not in mode
-    if need_encoding and "encoding" not in kwargs:
+    if need_encoding and encoding is None:
         with op(filename, mode="rb") as infile:
             data = infile.read(100)
 

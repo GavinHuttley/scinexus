@@ -659,6 +659,29 @@ def compressed_path(tmp_path, request):
     return outpath
 
 
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "zip", "lzma", "xz", "tsv"])
+def test_open_uses_given_encoding(tmp_path, suffix):
+    """an encoding argument is used instead of sniffing the content
+
+    The text is written as cp1252, which is not valid utf-8, so reading
+    it back correctly is only possible with the encoding the caller
+    names.
+    """
+    outpath = tmp_path / f"sample.tsv.{suffix}"
+    text = "temperature 20\N{DEGREE SIGN}C \N{EURO SIGN}5"
+    with open_(outpath, mode="wt", encoding="cp1252") as outfile:
+        outfile.write(text)
+
+    # the bytes are checked as well as the round trip, since a round
+    # trip alone cannot tell an encoding that was honoured from one that
+    # was ignored the same way on both sides
+    with open_(outpath, mode="rb") as infile:
+        assert infile.read() == text.encode("cp1252")
+
+    with open_(outpath, mode="rt", encoding="cp1252") as infile:
+        assert infile.read() == text
+
+
 @pytest.mark.parametrize("mode", ["w", "wt", "wb"])
 @pytest.mark.parametrize("suffix", ["gz", "bz2", "zip", "lzma", "xz", "tsv"])
 def test_open_write_modes(tmp_path, suffix, mode):
