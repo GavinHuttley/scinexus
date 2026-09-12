@@ -846,6 +846,71 @@ def test_open_url_binary_rejects_text_arguments(tmp_path, kwargs):
         open_url(path.as_uri(), mode="rb", **kwargs)
 
 
+@pytest.mark.parametrize("mode", ["rt", "rb"])
+def test_open_url_closes_response_on_a_corrupt_archive(tmp_path, monkeypatch, mode):
+    """a decompression that fails also releases the response
+
+    The archive is opened after the request has been made, so this is
+    the same problem as a rejected argument and not a different one.
+    The error is BadZipFile rather than anything the wrapper raises,
+    which is why the release cannot hang off a list of argument errors.
+    """
+    path = tmp_path / "sample.zip"
+    path.write_bytes(b"not a zip at all")
+
+    responses = []
+
+    def fake_urlopen(url, timeout=None):  # noqa: ARG001
+        response = urllib.response.addinfourl(
+            path.open("rb"),
+            email.message.Message(),
+            url,
+        )
+        responses.append(response)
+        return response
+
+    monkeypatch.setattr(scinexus.io_util, "urlopen", fake_urlopen)
+
+    with pytest.raises(zipfile.BadZipFile):
+        open_url(path.as_uri(), mode=mode)
+
+    assert [r.closed for r in responses] == [True]
+
+
+def test_open_url_closes_response_on_a_keyboard_interrupt(tmp_path, monkeypatch):
+    """an interrupt mid-construction releases the response too
+
+    This is the whole of what registering the cleanup buys over
+    catching Exception and re-raising: a KeyboardInterrupt does not
+    derive from Exception, so it used to go past and leave the socket
+    open with no handle on it anywhere.
+    """
+    path = tmp_path / "sample.txt"
+    path.write_bytes(b"data")
+
+    responses = []
+
+    def fake_urlopen(url, timeout=None):  # noqa: ARG001
+        response = urllib.response.addinfourl(
+            path.open("rb"),
+            email.message.Message(),
+            url,
+        )
+        responses.append(response)
+        return response
+
+    def interrupt(*_args, **_kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(scinexus.io_util, "urlopen", fake_urlopen)
+    monkeypatch.setattr(scinexus.io_util, "TextIOWrapper", interrupt)
+
+    with pytest.raises(KeyboardInterrupt):
+        open_url(path.as_uri())
+
+    assert [r.closed for r in responses] == [True]
+
+
 def test_open_url_binary_rejects_unknown_argument(tmp_path):
     """an unknown argument is a TypeError in either mode
 
@@ -1304,10 +1369,16 @@ def test_iter_splitlines_strips_a_byte_order_mark(tmp_path):
 
 
 def _outcome(read):
-    """what a read returned, or the name of what it raised"""
+    """what a read returned, or the name of the decoding error it raised
+
+    Only a decoding failure becomes a value to compare, since that is
+    the one outcome the two readers are allowed to differ on. Anything
+    else, from either of them, goes on and fails the test rather than
+    being turned into a value that the other side might match.
+    """
     try:
         return ("read", read())
-    except Exception as e:  # noqa: BLE001
+    except UnicodeDecodeError as e:
         return ("raised", type(e).__name__)
 
 
@@ -1331,8 +1402,9 @@ def test_iter_splitlines_unsniffable_file_behaves_like_open(tmp_path, suffix):
     every opener but one takes None as the locale default, and open_zip
     substitutes latin-1, which decodes any byte. So a zip of these
     bytes reads as text where the others raise, and this has to follow
-    it. The comparison is against open_ rather than a named exception
-    so the test does not depend on the locale.
+    it. What is asserted is that the two agree, not which of the two
+    outcomes happens, so a locale that decodes these bytes rather than
+    raising on them still exercises the same thing.
     """
     path = tmp_path / f"raw.{suffix}"
     with open_(path, mode="wb") as outfile:

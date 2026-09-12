@@ -280,13 +280,18 @@ def open_zip(filename: PathType | IO[Any], mode: str = "r", **kwargs: Any) -> IO
         if binary_mode:
             return opened
 
-        try:
-            return TextIOWrapper(opened, encoding=encoding, **text_kwargs)
-        except Exception:
-            # an unknown codec or an illegal newline is rejected by the
-            # wrapper, leaving the member open with no handle on it
-            opened.close()
-            raise
+        # the member is open and is not the caller's to close until it
+        # is returned, so a wrapper that rejects the encoding with
+        # LookupError or the newline with ValueError has to release it.
+        # the cleanup is registered rather than hung off those two
+        # names, so that it also runs for whatever else may come out of
+        # the constructor
+        with contextlib.ExitStack() as cleanup:
+            cleanup.callback(opened.close)
+            wrapper = TextIOWrapper(opened, encoding=encoding, **text_kwargs)
+            cleanup.pop_all()
+
+        return wrapper
 
 
 _compression_handlers: dict[str, Callable[..., Any]] = {
@@ -441,24 +446,32 @@ def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]
     url_parsed = url if isinstance(url, ParseResult) else urlparse(url)
 
     response = urlopen(url_parsed.geturl(), timeout=10)
-    try:
+
+    # the request has been made, and until the reader is returned there
+    # is no handle on the response for anyone else to close, so a
+    # failure between here and there leaks a socket. The wrapper gives
+    # LookupError for an unknown codec, ValueError for an illegal
+    # newline and TypeError for an unknown argument, and opening a zip
+    # adds BadZipFile and the ValueError for a multi-member archive.
+    # That list is what has been seen rather than what can happen, so
+    # the cleanup is registered rather than hung off it
+    with contextlib.ExitStack() as cleanup:
+        cleanup.callback(response.close)
         if binary_mode:
-            return _decompressed(response, compression)
+            reader = _decompressed(response, compression)
+        else:
+            if encoding is None:
+                encoding = response.headers.get_content_charset()
 
-        if encoding is None:
-            encoding = response.headers.get_content_charset()
+            reader = TextIOWrapper(
+                _decompressed(response, compression),
+                encoding=encoding,
+                **kwargs,
+            )
 
-        return TextIOWrapper(
-            _decompressed(response, compression),
-            encoding=encoding,
-            **kwargs,
-        )
-    except Exception:
-        # the wrapper rejects an unknown codec or an illegal newline
-        # after the request has been made, and the caller gets an
-        # exception rather than the object that would have closed it
-        response.close()
-        raise
+        cleanup.pop_all()
+
+    return reader
 
 
 def _path_relative_to_zip_parent(zip_path: Path, member_path: Path) -> Path:
@@ -583,20 +596,23 @@ class atomic_write:
     def _get_fileobj(self) -> IO[Any]:
         """returns file to be written to"""
         if self._file is None:
-            try:
+            # __init__ has already made the directory to write into, and
+            # a failure here means the caller never gets the object
+            # whose exit or close would have removed it again. an
+            # argument the open will not take is TypeError, an unknown
+            # codec LookupError and a text-only argument under a binary
+            # mode ValueError, but the open can also fail for reasons
+            # that have nothing to do with the arguments, so the cleanup
+            # is registered rather than tied to those three
+            with contextlib.ExitStack() as cleanup:
+                cleanup.callback(shutil.rmtree, self._tmppath.parent)
                 self._file = open_(
                     self._tmppath,
                     self._mode,
                     encoding=self._encoding,
                     **self._open_kwargs,
                 )
-            except Exception:
-                # an argument the open will not take is only found here,
-                # after __init__ has made the directory to write into,
-                # and the caller never gets the object whose exit or
-                # close would have removed it
-                shutil.rmtree(self._tmppath.parent)
-                raise
+                cleanup.pop_all()
 
         return self._file
 
@@ -677,7 +693,19 @@ class atomic_write:
         from zipfile import ZipFile
 
         rewritten = in_zip.parent / f"{uuid.uuid4()}.zip"
-        try:
+
+        # every other member is decompressed on the way across, so this
+        # can fail on the content of a member that has nothing to do
+        # with the one being replaced: BadZipFile for a bad CRC,
+        # RuntimeError for an encrypted member, OSError for the disk.
+        # That list is what has been seen rather than what can happen,
+        # so the cleanup is registered rather than hung off it. It
+        # covers the put-back as well, so that nothing is left beside
+        # the original until the rename has taken. Once that succeeds
+        # the path no longer exists and the callback would be a no-op,
+        # but it is dropped rather than relied on to do nothing
+        with contextlib.ExitStack() as cleanup:
+            cleanup.callback(rewritten.unlink, missing_ok=True)
             with (
                 ZipFile(in_zip) as existing,
                 ZipFile(rewritten, "w") as out,
@@ -694,13 +722,11 @@ class atomic_write:
                         shutil.copyfileobj(member, dest)
 
                 out.write(str(src), arcname=arcname)
-        except Exception:
-            rewritten.unlink(missing_ok=True)
-            raise
 
-        target = in_zip.resolve() if in_zip.is_symlink() else in_zip
-        shutil.copymode(target, rewritten)
-        rewritten.replace(target)
+            target = in_zip.resolve() if in_zip.is_symlink() else in_zip
+            shutil.copymode(target, rewritten)
+            rewritten.replace(target)
+            cleanup.pop_all()
 
     def __exit__(
         self,
