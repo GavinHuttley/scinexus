@@ -294,6 +294,145 @@ def test_open_zip_multi(tmp_dir):
         open_(zip_path)
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "zip", "lzma", "xz", "tsv"])
+def test_open_write_uses_given_newline(tmp_path, suffix, newline):
+    """a newline argument controls the line endings that are written
+
+    Without the argument a bare newline is translated to os.linesep, so
+    whichever of the two below matches the platform cannot tell a
+    forwarded argument from a dropped one. The other one can, so the
+    pair covers any platform.
+    """
+    outpath = tmp_path / f"sample.tsv.{suffix}"
+    with open_(outpath, mode="wt", newline=newline) as outfile:
+        outfile.write("first\nsecond\n")
+
+    with open_(outpath, mode="rb") as infile:
+        assert infile.read() == f"first{newline}second{newline}".encode()
+
+
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "zip", "lzma", "xz", "tsv"])
+def test_open_read_uses_given_newline(tmp_path, suffix):
+    """a newline argument turns off the translation of line endings"""
+    outpath = tmp_path / f"sample.tsv.{suffix}"
+    with open_(outpath, mode="wb") as outfile:
+        outfile.write(b"first\r\nsecond\r\n")
+
+    with open_(outpath, mode="rt", encoding="utf-8", newline="") as infile:
+        assert infile.read() == "first\r\nsecond\r\n"
+
+
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "zip", "lzma", "xz", "tsv"])
+def test_open_read_uses_given_errors(tmp_path, suffix):
+    """an errors argument reaches the decoder"""
+    outpath = tmp_path / f"sample.tsv.{suffix}"
+    with open_(outpath, mode="wb") as outfile:
+        outfile.write(b"caf\xe9")
+
+    with open_(outpath, mode="rt", encoding="utf-8", errors="replace") as infile:
+        assert infile.read() == "caf\N{REPLACEMENT CHARACTER}"
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"encoding": "utf-8"}, {"errors": "x"}, {"newline": ""}]
+)
+@pytest.mark.parametrize("mode", ["rb", "wb"])
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "zip", "lzma", "xz", "tsv"])
+def test_open_binary_rejects_decoding_arguments(tmp_path, suffix, mode, kwargs):
+    """a decoding argument with a binary mode raises for every suffix
+
+    zip was the odd one out: it dropped the encoding on the floor and
+    let ZipFile.open report errors and newline as an unexpected keyword,
+    so a caller catching ValueError caught five suffixes and missed the
+    sixth.
+    """
+    outpath = tmp_path / f"sample.tsv.{suffix}"
+    with open_(outpath, mode="wb") as outfile:
+        outfile.write(b"data\n")
+
+    with pytest.raises(ValueError, match="not supported|doesn't take|does not take"):
+        open_(outpath, mode=mode, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"encoding": None}, {"errors": None}, {"newline": None}],
+)
+@pytest.mark.parametrize("mode", ["rb", "wb"])
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "zip", "lzma", "xz", "tsv"])
+def test_open_binary_allows_none_decoding_arguments(tmp_path, suffix, mode, kwargs):
+    """a decoding argument of None is not an argument
+
+    builtin open, gzip, bz2 and lzma all test the value rather than ask
+    whether the name was passed, so that a caller relaying an unset
+    argument of its own is not rejected for it. A guard that checked for
+    the name would make zip and a url the only two that broke such a
+    caller.
+    """
+    outpath = tmp_path / f"sample.tsv.{suffix}"
+    with open_(outpath, mode="wb") as outfile:
+        outfile.write(b"data\n")
+
+    with open_(outpath, mode=mode, **kwargs) as handle:
+        assert handle is not None
+
+
+def test_open_zip_write_does_not_take_atomic_write_parameters(tmp_path):
+    """a caller argument cannot bind to a parameter of atomic_write
+
+    tmpdir is the dangerous one. Bound as a parameter it names the
+    directory that _close_rename_zip removes with rmtree once the write
+    succeeds, so forwarding it would delete a directory of the caller's.
+    """
+    keep = tmp_path / "keep"
+    keep.mkdir()
+    (keep / "precious.txt").write_text("do not delete me")
+
+    with pytest.raises(TypeError):
+        handle = open_(tmp_path / "out.tsv.zip", mode="wt", tmpdir=keep)
+        handle.__enter__()
+
+    assert (keep / "precious.txt").exists()
+    # the rejection happens after __init__ has made somewhere to write,
+    # so the failure has to take that directory away again
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["keep"]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expect"),
+    [
+        ({"encoding": "not-a-real-codec"}, LookupError),
+        ({"encoding": "utf-8", "newline": "X"}, ValueError),
+    ],
+)
+def test_open_zip_read_closes_member_on_a_bad_argument(tmp_path, kwargs, expect):
+    """a rejected decoding argument does not leave the member open
+
+    The codec is looked up and the newline validated by the wrapper, so
+    the two arrive as different exception types and a handler narrowed
+    to one of them would leak on the other.
+    """
+    outpath = tmp_path / "sample.tsv.zip"
+    with open_(outpath, mode="wt") as outfile:
+        outfile.write("data\n")
+
+    opened = []
+    real_open = zipfile.ZipFile.open
+
+    def spy(self, name, mode="r", pwd=None, **kwargs):
+        member = real_open(self, name, mode, pwd, **kwargs)
+        opened.append(member)
+        return member
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(zipfile.ZipFile, "open", spy)
+        with pytest.raises(expect):
+            open_(outpath, mode="rt", **kwargs)
+
+    assert [member.closed for member in opened] == [True]
+
+
 def test_open_url_write_exceptions():
     """Test 'w' mode (should raise Exception)"""
     with pytest.raises(Exception):

@@ -106,6 +106,39 @@ def _get_compression_open(
     return None if compression is None else _compression_handlers.get(compression)
 
 
+def _check_binary_mode_args(encoding: str | None, kwargs: dict[str, Any]) -> None:
+    """raises if a decoding argument is paired with a binary mode
+
+    Parameters
+    ----------
+    encoding
+        the encoding the caller named, None meaning they named none
+    kwargs
+        the remaining arguments, inspected for errors and newline. Ones
+        whose value is None are removed, having named nothing
+
+    Notes
+    -----
+    builtin open, gzip, bz2 and lzma all raise ValueError here, and all
+    of them test the value against None rather than asking whether the
+    argument was passed, so that a caller relaying an unset argument of
+    its own is not rejected for it. The openers that do their own
+    decoding follow them on both counts.
+    """
+    named = ["encoding"] if encoding is not None else []
+    for name in ("errors", "newline"):
+        if name not in kwargs:
+            continue
+        if kwargs[name] is None:
+            del kwargs[name]
+        else:
+            named.append(name)
+
+    if named:
+        msg = f"binary mode does not take {', '.join(named)}"
+        raise ValueError(msg)
+
+
 def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
     """open a single member zip-compressed file
 
@@ -117,8 +150,10 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
         a read mode returns the member, a write mode returns an
         atomic_write() instance
     kwargs
-        an encoding is used for the text modes and passed on for a
-        write, the rest go to ZipFile.open
+        encoding, errors and newline are used for the decoding of a
+        text read. A text write hands all three to the file it opens,
+        along with anything else it is given. On a read the rest go to
+        ZipFile.open, which takes pwd and force_zip64
 
     Note
     ----
@@ -127,6 +162,10 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
     A read in a text mode decodes with the given encoding, falling back
     to latin-1, which decodes any byte. A read in a binary mode returns
     the member itself and does no decoding.
+
+    A binary mode raises ValueError if given an encoding, errors or
+    newline whose value is not None. A None means the caller named
+    nothing, as it does for builtin open.
     """
     # import of standard library io module as some code quality tools
     # confuse this with a circular import
@@ -135,20 +174,31 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
     mode = mode[:1]
 
     encoding = kwargs.pop("encoding", None)
+    if binary_mode:
+        _check_binary_mode_args(encoding, kwargs)
+
     if mode.startswith("w"):
         # mode has been truncated to its first letter, so put the b back
-        # for a binary write. the encoding goes on unfiltered: pairing one
-        # with a binary mode is a caller error, and passing it through
-        # means it is reported here as it is for the other suffixes
+        # for a binary write. what is left goes to the file the writes
+        # land in, under its own argument rather than splatted, so that
+        # a name like tmpdir cannot bind to a parameter of atomic_write
         write_mode = "wb" if binary_mode else mode
         return atomic_write(  # type: ignore[return-value]
             filename,
             mode=write_mode,
             in_zip=True,
             encoding=encoding,
+            open_kwargs=kwargs,
         )
 
     from zipfile import ZipFile
+
+    # ZipFile.open takes pwd and force_zip64 and nothing else, so the
+    # arguments that belong to the decoding are taken out here. the
+    # guard above means a binary mode has none of them left to take
+    text_kwargs = {
+        name: kwargs.pop(name) for name in ("errors", "newline") if name in kwargs
+    }
 
     # latin-1 decodes any byte, so it is the fallback when the caller
     # names no encoding. the test is against None rather than falsiness,
@@ -167,7 +217,16 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
             **kwargs,
         )
 
-        return opened if binary_mode else TextIOWrapper(opened, encoding=encoding)
+        if binary_mode:
+            return opened
+
+        try:
+            return TextIOWrapper(opened, encoding=encoding, **text_kwargs)
+        except Exception:
+            # an unknown codec or an illegal newline is rejected by the
+            # wrapper, leaving the member open with no handle on it
+            opened.close()
+            raise
 
 
 _compression_handlers: dict[str, Callable[..., Any]] = {
@@ -285,8 +344,8 @@ def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]
     Raises IOError if mode is write or it's not a url.
 
     Raises ValueError if encoding, errors or newline is given with a
-    binary mode. An encoding of None counts as not given, as it does
-    for builtin open.
+    binary mode. A value of None counts as not given, as it does for
+    builtin open.
 
     Returns
     -------
@@ -308,19 +367,18 @@ def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]
     binary_mode = "b" in mode
     encoding = kwargs.pop("encoding", None)
     if binary_mode:
-        # builtin open rejects the text-only arguments under a binary
-        # mode rather than accepting ones it cannot use. an encoding of
-        # None is not an argument: open_ hands its kwargs on before it
-        # pops the encoding, so a None arrives here for any binary read
-        named = ["encoding"] if encoding is not None else []
-        named += sorted(kwargs.keys() & {"errors", "newline"})
-        if named:
-            msg = f"binary mode does not take {', '.join(named)}"
-            raise ValueError(msg)
+        # an encoding of None is not an argument: open_ hands its kwargs
+        # on before it pops the encoding, so a None arrives here for any
+        # binary read
+        _check_binary_mode_args(encoding, kwargs)
 
         if kwargs:
-            # a text mode gets this from TextIOWrapper, a binary mode has
-            # nothing to hand the argument to, so raise the same error
+            # the guard above leaves nothing that belongs to a text mode,
+            # so anything still here is a name the function does not
+            # take. a binary mode has nothing to hand it to, where a
+            # text mode would at least reach TextIOWrapper and be told
+            # off by it, so raise the error that would have come from
+            # there rather than ignore the argument
             msg = f"open_url() got an unexpected keyword argument {min(kwargs)!r}"
             raise TypeError(msg)
 
@@ -377,6 +435,8 @@ class atomic_write:
         in_zip: PathType | bool | None = None,
         mode: str = "w",
         encoding: str | None = None,
+        *,
+        open_kwargs: dict[str, Any] | None = None,
     ) -> None:
         """
 
@@ -394,6 +454,11 @@ class atomic_write:
             file writing mode
         encoding
             text encoding
+        open_kwargs
+            further arguments for open_, so errors and newline reach the
+            file the writes go to. A dict rather than **kwargs, so that
+            a name matching one of the parameters above cannot bind to
+            it instead
         """
         path = Path(path).expanduser()
         _, cmp = get_format_suffixes(path)
@@ -416,6 +481,7 @@ class atomic_write:
         self._mode = mode
         self._file: IO[Any] | None = None
         self._encoding = encoding
+        self._open_kwargs = open_kwargs or {}
         self._in_zip = zip_path
         self._tmppath = self._make_tmppath(tmpdir)
 
@@ -461,7 +527,20 @@ class atomic_write:
     def _get_fileobj(self) -> IO[Any]:
         """returns file to be written to"""
         if self._file is None:
-            self._file = open_(self._tmppath, self._mode, encoding=self._encoding)
+            try:
+                self._file = open_(
+                    self._tmppath,
+                    self._mode,
+                    encoding=self._encoding,
+                    **self._open_kwargs,
+                )
+            except Exception:
+                # an argument the open will not take is only found here,
+                # after __init__ has made the directory to write into,
+                # and the caller never gets the object whose exit or
+                # close would have removed it
+                shutil.rmtree(self._tmppath.parent)
+                raise
 
         return self._file
 
