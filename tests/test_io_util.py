@@ -1168,6 +1168,90 @@ def test_iter_line_blocks_none_num_lines(tmp_path):
     assert got == expect
 
 
+@pytest.mark.parametrize("num_lines", [0, -1, 1.5])
+def test_iter_line_blocks_unusable_num_lines(tmp_path, num_lines):
+    """a block size that cannot be met is an error, not the whole file
+
+    len(lines) == num_lines never holds for any of these, so the whole
+    file came back as one block, which is what num_lines=None asks for
+    and the opposite of what a small number asks for. A fraction is in
+    the list because nothing downstream of num_lines would catch one.
+    """
+    path = tmp_path / "multi-line.txt"
+    path.write_text("a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="num_lines"):
+        list(iter_line_blocks(path, num_lines=num_lines))
+
+
+def test_iter_line_blocks_num_lines_one(tmp_path):
+    """the smallest usable block size still works
+
+    The guard above has to stop below one without taking one with it.
+    """
+    path = tmp_path / "multi-line.txt"
+    path.write_text("a\nb\nc\n")
+
+    assert list(iter_line_blocks(path, num_lines=1)) == [["a"], ["b"], ["c"]]
+
+
+@pytest.mark.parametrize("chunk_size", [0, -1])
+@pytest.mark.parametrize("as_bytes", [False, True])
+def test_iter_splitlines_non_positive_chunk_size(tmp_path, chunk_size, as_bytes):
+    """zero and a negative fail in opposite directions, neither loudly
+
+    read(0) returns an empty string, which the loop takes for the end
+    of the file, so nothing at all was yielded for a file that plainly
+    has lines. read(-1) reads to the end, so the whole file arrived in
+    one chunk, which is what None already means and the opposite of the
+    bounded memory the argument asks for.
+    """
+    path = tmp_path / "multi-line.txt"
+    path.write_text("a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="chunk_size"):
+        list(iter_splitlines(path, chunk_size=chunk_size, as_bytes=as_bytes))
+
+
+@pytest.mark.parametrize("chunk_size", [0, -1])
+def test_iter_record_chunks_non_positive_chunk_size(tmp_path, chunk_size):
+    """zero yields nothing and a negative reads the lot, neither loudly"""
+    path = tmp_path / "records.bin"
+    path.write_bytes(b">a\nAAA>b\nBBB")
+
+    with pytest.raises(ValueError, match="chunk_size"):
+        list(iter_record_chunks(path=path, delimiter=b">", chunk_size=chunk_size))
+
+
+@pytest.mark.parametrize("chunk_size", [0, -1])
+def test_iter_line_blocks_non_positive_chunk_size(tmp_path, chunk_size):
+    """the chunk_size check reaches through iter_line_blocks
+
+    It delegates the reading, so it needs no check of its own for this.
+    """
+    path = tmp_path / "multi-line.txt"
+    path.write_text("a\nb\nc\n")
+
+    with pytest.raises(ValueError, match="chunk_size"):
+        list(iter_line_blocks(path, chunk_size=chunk_size))
+
+
+def test_iter_splitlines_chunk_size_checked_before_the_path(tmp_path):
+    """a bad chunk_size is reported as one, not as a missing file
+
+    The check sits above the stat, so the argument the caller got wrong
+    is what they are told about rather than the path they would have
+    got wrong next.
+    """
+    missing = tmp_path / "does-not-exist.txt"
+
+    with pytest.raises(ValueError, match="chunk_size"):
+        list(iter_splitlines(missing, chunk_size=0))
+
+    with pytest.raises(ValueError, match="chunk_size"):
+        list(iter_record_chunks(path=missing, delimiter=b">", chunk_size=0))
+
+
 @pytest.mark.parametrize(
     "url",
     [

@@ -723,6 +723,37 @@ def path_exists(path: PathType) -> bool:
     return False
 
 
+def _check_chunk_size(chunk_size: int | None) -> None:
+    """raises if chunk_size is not a usable number of bytes
+
+    Parameters
+    ----------
+    chunk_size
+        number of bytes to read in one go, None meaning read it all
+
+    Raises
+    ------
+    ValueError
+        if chunk_size is not a positive whole number, None excepted
+
+    Notes
+    -----
+    Zero and a negative fail in opposite directions, and neither says
+    so. read(0) returns an empty string, which a read loop cannot tell
+    from the end of the file, so nothing at all is yielded for a file
+    that plainly has contents. read(-1) reads to the end, so the whole
+    file arrives in one chunk, which is what None already means and the
+    opposite of the bounded memory the argument exists to ask for.
+
+    A fraction is rejected too. read() raises TypeError for one, but
+    the same value reaching num_lines has nothing downstream to catch
+    it, so both are refused in the same terms.
+    """
+    if chunk_size is not None and (chunk_size <= 0 or chunk_size % 1):
+        msg = f"chunk_size must be a positive whole number of bytes, not {chunk_size!r}"
+        raise ValueError(msg)
+
+
 def _splitlines(
     infile: IO[_StrOrBytes],
     chunk_size: int | None,
@@ -840,6 +871,14 @@ def iter_splitlines(
         if True, lines are returned as bytes and path is opened in
         binary mode, otherwise lines are returned as str
 
+    Raises
+    ------
+    ValueError
+        if chunk_size is not a positive whole number, None excepted.
+        Raised on the first iteration, as any error inside a generator
+        function is, and before path is looked at, so a bad argument is
+        reported as one rather than as a missing file
+
     Notes
     -----
     Loads chunks of data from the file, yields one line at a time.
@@ -854,11 +893,13 @@ def iter_splitlines(
     Binary mode does no translation and bytes.splitlines() breaks only
     on "\\r", "\\n" and "\\r\\n".
     """
+    _check_chunk_size(chunk_size)
+
     if is_url(path):
         chunk_size = None
     else:
         path = Path(path).expanduser()
-        if chunk_size and path.stat().st_size < chunk_size:
+        if chunk_size is not None and path.stat().st_size < chunk_size:
             # file is smaller than provided chunk_size, just
             # load it all
             chunk_size = None
@@ -926,12 +967,28 @@ def iter_line_blocks(
         if True, lines are returned as bytes and path is opened in
         binary mode, otherwise lines are returned as str
 
+    Raises
+    ------
+    ValueError
+        if num_lines or chunk_size is not a positive whole number,
+        None excepted. Raised on the first iteration, as any error
+        inside a generator function is
+
     Notes
     -----
     Lines are produced by iter_splitlines, see its notes for how the
     two modes differ. If num_lines is None the whole file accumulates
     in one block, so peak memory is the size of the file.
     """
+    if num_lines is not None and (num_lines <= 0 or num_lines % 1):
+        # the block is complete when its length equals num_lines, which
+        # never holds for a value that is not a positive whole number,
+        # so the whole file came back as one block. That is what
+        # num_lines=None asks for and the opposite of what a small
+        # number asks for
+        msg = f"num_lines must be a positive whole number of lines, not {num_lines!r}"
+        raise ValueError(msg)
+
     lines = []
     for line in iter_splitlines(path, chunk_size=chunk_size, as_bytes=as_bytes):
         lines.append(line)
@@ -976,7 +1033,7 @@ def iter_record_chunks(
     Raises
     ------
     ValueError
-        if ``delimiter`` is empty.
+        if ``delimiter`` is empty, or if ``chunk_size`` is zero or less.
 
     Notes
     -----
@@ -1003,11 +1060,13 @@ def iter_record_chunks(
         msg = "delimiter must be non-empty"
         raise ValueError(msg)
 
+    _check_chunk_size(chunk_size)
+
     if is_url(path):
         chunk_size = None
     else:
         path = Path(path).expanduser()
-        if chunk_size and path.stat().st_size < chunk_size:
+        if chunk_size is not None and path.stat().st_size < chunk_size:
             chunk_size = None
 
     # We accommodate a chunked read falling within a delimiter
