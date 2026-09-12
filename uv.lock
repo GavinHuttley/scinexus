@@ -2919,14 +2919,14 @@ provides-extras = ["loky", "mpi", "rich"]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "click", specifier = ">=8.5.0" },
+    { name = "click", specifier = ">=8.3.2" },
     { name = "cogapp", specifier = ">=3.6.0" },
-    { name = "cogent3", extras = ["extra"], specifier = ">=2026.9.10" },
-    { name = "mkdocstrings-python", specifier = ">=2.0.8" },
+    { name = "cogent3", extras = ["extra"], specifier = ">=2026.4.20a0" },
+    { name = "mkdocstrings-python", specifier = ">=2.0.3" },
     { name = "mypy" },
     { name = "nox" },
     { name = "numpy" },
-    { name = "pymdown-extensions", specifier = ">=11.0.2" },
+    { name = "pymdown-extensions", specifier = ">=10.21.2" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-markdown-docs" },
