@@ -640,6 +640,18 @@ def compressed_path(tmp_path, request):
     return outpath
 
 
+def test_open_compressed_bare_read_mode(compressed_path):
+    """a bare r reads text, as it does for an uncompressed file
+
+    gzip, bz2 and lzma read a bare r as binary where builtin open and
+    open_zip read it as text, so open_ has to say which it means.
+    """
+    with open_(compressed_path, mode="r") as infile:
+        got = infile.read()
+
+    assert got == COMPRESSED_SAMPLE
+
+
 @pytest.mark.parametrize("mode", ["r", "rb", "rt"])
 def test_open_url_compressed_local(compressed_path, mode):
     """a compressed file:// url reads the same as the local path
