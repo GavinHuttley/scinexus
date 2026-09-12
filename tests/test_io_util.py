@@ -467,7 +467,11 @@ def test_open_zip_reads_a_stream_that_cannot_seek(tmp_path, mode):
     all rather than as something that cannot be read this way.
     """
     outpath = tmp_path / "sample.tsv.zip"
-    with open_(outpath, mode="wt") as outfile:
+    # newline is named so the member holds the bytes asserted below on
+    # every platform. Without it a bare "\n" is written as os.linesep,
+    # so the archive holds "\r\n" on Windows and a binary read of it
+    # does not match
+    with open_(outpath, mode="wt", newline="\n") as outfile:
         outfile.write("id\tname\n")
 
     with open_zip(_NotSeekable(outpath.read_bytes()), mode=mode) as infile:
@@ -530,7 +534,11 @@ def test_open_url_reads_a_zip_over_a_stream_that_cannot_seek(
     which is why the existing url tests did not catch it.
     """
     outpath = tmp_path / "sample.tsv.zip"
-    with open_(outpath, mode="wt") as outfile:
+    # newline is named so the member holds the bytes asserted below on
+    # every platform. Without it a bare "\n" is written as os.linesep,
+    # so the archive holds "\r\n" on Windows and a binary read of it
+    # does not match
+    with open_(outpath, mode="wt", newline="\n") as outfile:
         outfile.write("id\tname\n")
 
     def fake_urlopen(url, timeout=None):  # noqa: ARG001
@@ -579,7 +587,13 @@ def test_open_zip_write_keeps_the_other_members(tmp_path):
         zf.writestr("sample/first.tsv", "one\n")
         zf.writestr("sample/second.tsv", "two\n")
 
-    aw = atomic_write(pathlib.Path("sample/second.tsv"), in_zip=outpath, mode="wt")
+    # as above, the newline keeps the bytes the same on every platform
+    aw = atomic_write(
+        pathlib.Path("sample/second.tsv"),
+        in_zip=outpath,
+        mode="wt",
+        open_kwargs={"newline": "\n"},
+    )
     aw.write("replaced\n")
     aw.close()
 
