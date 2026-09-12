@@ -261,10 +261,13 @@ def open_zip(filename: PathType | IO[Any], mode: str = "r", **kwargs: Any) -> IO
     if is_stream:
         stream = cast("IO[bytes]", filename)
         if not stream.seekable():
-            filename = BytesIO(stream.read())
-            # it has been read to the end and nothing else holds it, so
-            # closing here is what releases the connection behind it
-            stream.close()
+            # draining it is what takes ownership, and from there it is
+            # closed whether the read finishes or not: nothing else
+            # holds it, so a read that fails part way, as a network
+            # stream that drops does, would otherwise leave it open with
+            # the exception going past it
+            with contextlib.closing(stream):
+                filename = BytesIO(stream.read())
 
     with ZipFile(filename) as zf:
         if len(zf.namelist()) != 1:

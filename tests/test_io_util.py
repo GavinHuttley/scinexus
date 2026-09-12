@@ -498,6 +498,28 @@ def test_open_zip_closes_a_stream_it_had_to_buffer(tmp_path):
     assert stream.closed
 
 
+def test_open_zip_closes_a_stream_whose_read_fails():
+    """a stream that fails part way through is still closed
+
+    Buffering it is what takes ownership, so the failure has to release
+    it. A network stream that drops mid-transfer is the case: the read
+    raises, and without this the response stays open with nothing
+    holding it while the exception goes past.
+    """
+
+    class _FailsPartWay(_NotSeekable):
+        def read(self, _size=-1):
+            msg = "connection dropped"
+            raise OSError(msg)
+
+    stream = _FailsPartWay(b"")
+
+    with pytest.raises(OSError, match="connection dropped"):
+        open_zip(stream)
+
+    assert stream.closed
+
+
 def test_open_zip_leaves_a_seekable_stream_alone(tmp_path):
     """a stream that can seek is used directly, not copied
 
