@@ -253,6 +253,25 @@ def test_open_writes_zip(tmp_dir):
         assert got == b"any str"
 
 
+def test_open_writes_zip_binary(tmp_dir):
+    """a wb mode writes bytes to a zip unchanged
+
+    The payload is not valid utf-8 and carries a carriage return, so a
+    member that had been through a text encode or a newline translation
+    would not match. Reading the member back with zipfile rather than
+    with open_ keeps this independent of the read path.
+    """
+    zip_path = tmp_dir / "foo.txt.zip"
+    payload = b"\xff\xfe\x00\x80 raw \r\n bytes"
+
+    with open_(zip_path, "wb") as f:
+        f.write(payload)
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        name = zf.namelist()[0]
+        assert zf.open(name).read() == payload
+
+
 def test_open_zip_multi(tmp_dir):
     """zip with multiple records cannot be opened using open_"""
     text_path1 = tmp_dir / "foo.txt"

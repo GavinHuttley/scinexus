@@ -125,7 +125,11 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
 
     encoding = kwargs.pop("encoding") if "encoding" in kwargs else "latin-1"
     if mode.startswith("w"):
-        return atomic_write(filename, mode=mode, in_zip=True)  # type: ignore[return-value]
+        # mode has been truncated to its first letter, so put the b back
+        # for a binary write. atomic_write hands the mode on to open_ for
+        # its temporary file
+        write_mode = "wb" if binary_mode else mode
+        return atomic_write(filename, mode=write_mode, in_zip=True)  # type: ignore[return-value]
 
     from zipfile import ZipFile
 
