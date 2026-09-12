@@ -1,6 +1,7 @@
 import bz2
 import email.message
 import gzip
+import io
 import pathlib
 import urllib.response
 import zipfile
@@ -20,6 +21,7 @@ from scinexus.io_util import (
     iter_splitlines,
     open_,
     open_url,
+    open_zip,
     path_exists,
 )
 
@@ -431,6 +433,116 @@ def test_open_zip_read_closes_member_on_a_bad_argument(tmp_path, kwargs, expect)
             open_(outpath, mode="rt", **kwargs)
 
     assert [member.closed for member in opened] == [True]
+
+
+class _NotSeekable(io.BufferedIOBase):
+    """a readable stream with no seek, as an http response is
+
+    http.client.HTTPResponse is a BufferedIOBase whose seekable comes
+    straight from io.IOBase and answers False.
+    """
+
+    def __init__(self, data):
+        self._buffer = io.BytesIO(data)
+
+    def read(self, size=-1):
+        return self._buffer.read(size)
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return False
+
+
+@pytest.mark.parametrize("mode", ["rt", "rb"])
+def test_open_zip_reads_a_stream_that_cannot_seek(tmp_path, mode):
+    """a zip read buffers a stream ZipFile could not otherwise use
+
+    ZipFile finds the central directory by seeking to the end of the
+    archive, so a stream without seek is reported as not being a zip at
+    all rather than as something that cannot be read this way.
+    """
+    outpath = tmp_path / "sample.tsv.zip"
+    with open_(outpath, mode="wt") as outfile:
+        outfile.write("id\tname\n")
+
+    with open_zip(_NotSeekable(outpath.read_bytes()), mode=mode) as infile:
+        got = infile.read()
+
+    assert got == (b"id\tname\n" if "b" in mode else "id\tname\n")
+
+
+def test_open_zip_closes_a_stream_it_had_to_buffer(tmp_path):
+    """the drained stream is closed, since nothing else holds it
+
+    open_url hands the response over and returns the member, so if the
+    buffering did not close it the connection behind it would stay open
+    with no handle anywhere to close it with.
+    """
+    outpath = tmp_path / "sample.tsv.zip"
+    with open_(outpath, mode="wt") as outfile:
+        outfile.write("id\tname\n")
+
+    stream = _NotSeekable(outpath.read_bytes())
+    with open_zip(stream) as infile:
+        infile.read()
+
+    assert stream.closed
+
+
+def test_open_zip_leaves_a_seekable_stream_alone(tmp_path):
+    """a stream that can seek is used directly, not copied
+
+    ZipFile reads only the parts of the archive it needs from a
+    seekable source, so buffering one would be a whole extra copy of it
+    in memory for nothing.
+    """
+    outpath = tmp_path / "sample.tsv.zip"
+    with open_(outpath, mode="wt") as outfile:
+        outfile.write("id\tname\n")
+
+    stream = io.BytesIO(outpath.read_bytes())
+    with open_zip(stream) as infile:
+        assert infile.read() == "id\tname\n"
+
+    assert not stream.closed
+
+
+@pytest.mark.parametrize("mode", ["wt", "wb"])
+def test_open_zip_write_rejects_a_stream(mode):
+    """a write names an archive to create, so it needs a path"""
+    with pytest.raises(TypeError, match="not an open stream"):
+        open_zip(io.BytesIO(), mode=mode)
+
+
+@pytest.mark.parametrize("mode", ["rt", "rb"])
+def test_open_url_reads_a_zip_over_a_stream_that_cannot_seek(
+    tmp_path, monkeypatch, mode
+):
+    """a zip url works where the response cannot seek
+
+    http.client.HTTPResponse has no seek, so this is what a real zip
+    over http does. A file:// response wraps a real file and can seek,
+    which is why the existing url tests did not catch it.
+    """
+    outpath = tmp_path / "sample.tsv.zip"
+    with open_(outpath, mode="wt") as outfile:
+        outfile.write("id\tname\n")
+
+    def fake_urlopen(url, timeout=None):  # noqa: ARG001
+        return urllib.response.addinfourl(
+            _NotSeekable(outpath.read_bytes()),
+            email.message.Message(),
+            url,
+        )
+
+    monkeypatch.setattr(scinexus.io_util, "urlopen", fake_urlopen)
+
+    with open_url(outpath.as_uri(), mode=mode) as infile:
+        got = infile.read()
+
+    assert got == (b"id\tname\n" if "b" in mode else "id\tname\n")
 
 
 def test_open_url_write_exceptions():

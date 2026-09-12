@@ -7,7 +7,7 @@ import shutil
 import uuid
 from bz2 import open as bzip_open
 from gzip import open as gzip_open
-from io import TextIOWrapper
+from io import BytesIO, TextIOWrapper
 from lzma import open as lzma_open
 from os import PathLike
 from pathlib import Path, PurePath
@@ -139,13 +139,16 @@ def _check_binary_mode_args(encoding: str | None, kwargs: dict[str, Any]) -> Non
         raise ValueError(msg)
 
 
-def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
+def open_zip(filename: PathType | IO[Any], mode: str = "r", **kwargs: Any) -> IO[Any]:
     """open a single member zip-compressed file
 
     Parameters
     ----------
     filename
-        path to the archive
+        path to the archive, or, for a read, an open stream of it. One
+        that cannot seek is read into memory and closed, since a zip
+        cannot be read front to back. A write raises TypeError for a
+        stream, having an archive to create rather than one to read
     mode
         a read mode returns the member, a write mode returns an
         atomic_write() instance
@@ -167,24 +170,33 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
     newline whose value is not None. A None means the caller named
     nothing, as it does for builtin open.
     """
-    # import of standard library io module as some code quality tools
-    # confuse this with a circular import
     mode = mode or "r"
     binary_mode = "b" in mode
     mode = mode[:1]
+
+    # a path has no seekable attribute and a stream does, which is how
+    # the two are told apart without asking the caller
+    is_stream = hasattr(filename, "seekable")
 
     encoding = kwargs.pop("encoding", None)
     if binary_mode:
         _check_binary_mode_args(encoding, kwargs)
 
     if mode.startswith("w"):
+        if is_stream:
+            # atomic_write would reach Path(path) with it and complain
+            # about __fspath__, naming its own parameter rather than
+            # what the caller did
+            msg = "a write needs a path to the archive, not an open stream"
+            raise TypeError(msg)
+
         # mode has been truncated to its first letter, so put the b back
         # for a binary write. what is left goes to the file the writes
         # land in, under its own argument rather than splatted, so that
         # a name like tmpdir cannot bind to a parameter of atomic_write
         write_mode = "wb" if binary_mode else mode
         return atomic_write(  # type: ignore[return-value]
-            filename,
+            cast("PathType", filename),
             mode=write_mode,
             in_zip=True,
             encoding=encoding,
@@ -206,6 +218,19 @@ def open_zip(filename: PathType, mode: str = "r", **kwargs: Any) -> IO[Any]:
     # here as it is for the other suffixes
     encoding = encoding if encoding is not None else "latin-1"
     mode = mode.strip("t")
+
+    # a zip is read back to front, ZipFile seeks to the end to find the
+    # central directory, so a stream that cannot seek has to be held in
+    # memory first. an http response is such a stream, and reporting it
+    # as not being a zip is what ZipFile does with one
+    if is_stream:
+        stream = cast("IO[bytes]", filename)
+        if not stream.seekable():
+            filename = BytesIO(stream.read())
+            # it has been read to the end and nothing else holds it, so
+            # closing here is what releases the connection behind it
+            stream.close()
+
     with ZipFile(filename) as zf:
         if len(zf.namelist()) != 1:
             msg = "Archive is supposed to have only one record."
