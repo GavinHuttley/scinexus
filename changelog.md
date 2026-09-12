@@ -25,6 +25,7 @@ Changes from the original cogent3 app infrastructure.
 - `StrOrBytes` type alias replaced with `str | bytes` throughout.
 - Inline `assert` statements replaced with explicit `ValueError` / `TypeError` raises.
 - Type-hint-related imports moved under `TYPE_CHECKING` for lighter runtime import overhead.
+- `open_()` takes a bare `"r"` or `"w"` as text for every suffix, matching builtin `open` rather than `gzip`, `bz2` and `lzma`, which take a bare mode as binary. Previously `open_(path, "w")` on a `.gz` gave a binary handle and `open_(path, "r")` raised. Use `"rb"` or `"wb"` for bytes. This also applies to `atomic_write`, whose mode defaults to `"w"`.
 
 ## Deprecated
 

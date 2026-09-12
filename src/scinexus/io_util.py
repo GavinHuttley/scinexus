@@ -175,10 +175,15 @@ def open_(filename: PathType, mode: str = "rt", **kwargs: Any) -> IO[Any]:
 
     Notes
     -----
-    A mode of "r" reads text, for a compressed file as much as for an
-    uncompressed one. A mode of "w" is not treated the same way: it
-    writes bytes for gz, bz2, xz and lzma, and text for zip and for
-    uncompressed files, so a text write to a compressed path needs "wt".
+    A bare "r" or "w" means text, for a compressed file as much as for
+    an uncompressed one, so it agrees with builtin open rather than with
+    gzip, bz2 and lzma, which take a bare mode as binary. Use "rb" or
+    "wb" for bytes.
+
+    This applies to "r" and "w" only. A bare "a" is still binary for gz,
+    bz2, xz and lzma and text for an uncompressed file, and neither "a"
+    nor "x" works on a zip at all, since a zip member can only be opened
+    for reading or writing.
     """
     if not filename:
         msg = f"{filename} not a valid file name or url"
@@ -188,11 +193,13 @@ def open_(filename: PathType, mode: str = "rt", **kwargs: Any) -> IO[Any]:
         return open_url(filename, mode=mode, **kwargs)  # type: ignore[arg-type]
 
     mode = mode or "rt"
-    if mode == "r":
-        # gzip, bz2 and lzma read a bare "r" as binary, where builtin
-        # open and open_zip read it as text. Say which is meant, so the
-        # encoding worked out below is one the handler will accept
-        mode = "rt"
+    if mode in {"r", "w"}:
+        # gzip, bz2 and lzma take a bare "r" or "w" as binary, where
+        # builtin open and open_zip take it as text. Say which is meant,
+        # so that r and w agree across the suffixes and, for a read, so
+        # the encoding worked out below is one the handler will accept.
+        # "a" and "x" are left alone, open_zip cannot support them
+        mode = f"{mode}t"
     filename = Path(filename).expanduser()
     op = _get_compression_open(filename) or open
 

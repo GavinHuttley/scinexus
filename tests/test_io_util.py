@@ -659,6 +659,26 @@ def compressed_path(tmp_path, request):
     return outpath
 
 
+@pytest.mark.parametrize("mode", ["w", "wt", "wb"])
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "zip", "lzma", "xz", "tsv"])
+def test_open_write_modes(tmp_path, suffix, mode):
+    """a bare w writes text, as it does for an uncompressed file
+
+    Writing a str to a handle that turned out to be binary raises
+    TypeError, so a round trip with a payload chosen to match the mode
+    is what pins text against binary.
+    """
+    outpath = tmp_path / f"sample.tsv.{suffix}"
+    binary = "b" in mode
+    payload = COMPRESSED_SAMPLE.encode("utf-8") if binary else COMPRESSED_SAMPLE
+
+    with open_(outpath, mode=mode) as outfile:
+        outfile.write(payload)
+
+    with open_(outpath, mode="rb" if binary else "rt") as infile:
+        assert infile.read() == payload
+
+
 def test_open_compressed_bare_read_mode(compressed_path):
     """a bare r reads text, as it does for an uncompressed file
 
