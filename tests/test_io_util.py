@@ -1640,7 +1640,10 @@ def test_iter_splitlines_truncated_character_behaves_like_open(tmp_path, chunk_s
 def test_iter_splitlines_text_agrees_with_open_for_every_suffix(tmp_path, suffix):
     """the lines are what reading the whole thing and splitting gives"""
     path = tmp_path / f"sample.tsv.{suffix}"
-    with open_(path, mode="wt") as outfile:
+    # the encoding is named because the content is not ascii and a text
+    # write that is given none uses the locale's, which on Windows is
+    # cp1252 and cannot encode CJK at all
+    with open_(path, mode="wt", encoding="utf-8") as outfile:
         outfile.write("\n".join([MIXED_LINE] * 20))
 
     assert _agrees_with_open(path, chunk_size=64)
