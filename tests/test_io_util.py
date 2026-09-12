@@ -545,6 +545,173 @@ def test_open_url_reads_a_zip_over_a_stream_that_cannot_seek(
     assert got == (b"id\tname\n" if "b" in mode else "id\tname\n")
 
 
+def test_open_zip_write_twice_replaces_the_member(tmp_path):
+    """a second write to the same path replaces the first
+
+    Appending instead left two entries under one name, which zipfile
+    warns about and open_ then refuses to read at all, so the second
+    write destroyed the archive rather than updating it.
+    """
+    outpath = tmp_path / "sample.tsv.zip"
+    for text in ("first\n", "second\n"):
+        with open_(outpath, mode="wt") as outfile:
+            outfile.write(text)
+
+    with zipfile.ZipFile(outpath) as zf:
+        assert zf.namelist() == ["sample.tsv"]
+
+    with open_(outpath) as infile:
+        assert infile.read() == "second\n"
+
+
+def test_open_zip_write_keeps_the_other_members(tmp_path):
+    """replacing one member leaves the rest of the archive alone
+
+    atomic_write can be aimed at a named member of a multi-member
+    archive, so replacing one must not rewrite the archive down to just
+    that one.
+    """
+    outpath = tmp_path / "sample.zip"
+    with zipfile.ZipFile(outpath, "w") as zf:
+        zf.writestr("sample/first.tsv", "one\n")
+        zf.writestr("sample/second.tsv", "two\n")
+
+    aw = atomic_write(pathlib.Path("sample/second.tsv"), in_zip=outpath, mode="wt")
+    aw.write("replaced\n")
+    aw.close()
+
+    with zipfile.ZipFile(outpath) as zf:
+        assert zf.namelist() == ["sample/first.tsv", "sample/second.tsv"]
+        assert zf.read("sample/first.tsv") == b"one\n"
+        assert zf.read("sample/second.tsv") == b"replaced\n"
+
+
+@pytest.mark.parametrize(
+    "member",
+    ["sample/sub/../target.tsv", "/sample/target.tsv", "sample/target.tsv"],
+)
+def test_open_zip_write_twice_under_a_normalised_name(tmp_path, member):
+    """the name compared is the name the archive will store
+
+    ZipInfo.from_file collapses "..", drops a leading separator and a
+    drive, so a member path is not in general the name that comes back
+    from namelist(). Comparing the path instead appends a duplicate
+    under the stored name and the archive stops being readable.
+    """
+    outpath = tmp_path / "sample.zip"
+    for text in ("first\n", "second\n"):
+        aw = atomic_write(pathlib.Path(member), in_zip=outpath, mode="wt")
+        aw.write(text)
+        aw.close()
+
+    with zipfile.ZipFile(outpath) as zf:
+        assert len(zf.namelist()) == 1
+
+    with open_(outpath) as infile:
+        assert infile.read() == "second\n"
+
+
+def test_open_zip_write_into_a_zero_byte_file(tmp_path):
+    """a 0-byte archive file is written to, not refused
+
+    That file is what an interrupted earlier write leaves behind. A
+    read-only open of one raises BadZipFile, so testing for the member
+    that way would turn a recoverable state into a permanent one.
+    """
+    outpath = tmp_path / "sample.tsv.zip"
+    outpath.write_bytes(b"")
+
+    with open_(outpath, mode="wt") as outfile:
+        outfile.write("data\n")
+
+    with open_(outpath) as infile:
+        assert infile.read() == "data\n"
+
+
+def test_open_zip_write_keeps_member_compression_and_comments(tmp_path):
+    """a member copied across keeps how it was stored
+
+    Copying by name rather than through the ZipInfo would re-store
+    every other member with the default method and lose the comments.
+    """
+    outpath = tmp_path / "sample.zip"
+    with zipfile.ZipFile(outpath, "w") as zf:
+        info = zipfile.ZipInfo("sample/first.tsv")
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.comment = b"a member comment"
+        zf.writestr(info, "one\n" * 100)
+        zf.writestr("sample/second.tsv", "two\n")
+        zf.comment = b"an archive comment"
+
+    aw = atomic_write(pathlib.Path("sample/second.tsv"), in_zip=outpath, mode="wt")
+    aw.write("replaced\n")
+    aw.close()
+
+    with zipfile.ZipFile(outpath) as zf:
+        assert zf.comment == b"an archive comment"
+        kept = zf.getinfo("sample/first.tsv")
+        assert kept.compress_type == zipfile.ZIP_DEFLATED
+        assert kept.comment == b"a member comment"
+
+
+def test_open_zip_write_keeps_the_mode_of_the_archive(tmp_path):
+    """the rewritten archive is not widened to the umask default"""
+    outpath = tmp_path / "sample.tsv.zip"
+    with open_(outpath, mode="wt") as outfile:
+        outfile.write("first\n")
+
+    outpath.chmod(0o600)
+    with open_(outpath, mode="wt") as outfile:
+        outfile.write("second\n")
+
+    assert outpath.stat().st_mode & 0o777 == 0o600
+
+
+def test_open_zip_write_cleans_up_when_the_rewrite_fails(tmp_path, monkeypatch):
+    """a failed rewrite leaves the archive and the directory as they were"""
+    outpath = tmp_path / "sample.tsv.zip"
+    with open_(outpath, mode="wt") as outfile:
+        outfile.write("first\n")
+
+    before = outpath.read_bytes()
+
+    def boom(*args, **kwargs):
+        msg = "copy failed"
+        raise OSError(msg)
+
+    monkeypatch.setattr(scinexus.io_util.shutil, "copyfileobj", boom)
+
+    with pytest.raises(OSError, match="copy failed"):
+        with open_(outpath, mode="wt") as outfile:
+            outfile.write("second\n")
+
+    assert outpath.read_bytes() == before
+    assert [p.name for p in tmp_path.iterdir()] == ["sample.tsv.zip"]
+
+
+def test_open_zip_write_repairs_an_already_duplicated_member(tmp_path):
+    """an archive the old code wrecked is made readable again
+
+    Two entries under one name is what appending produced, so a write
+    to such an archive has to leave one member rather than three.
+    """
+    outpath = tmp_path / "sample.zip"
+    with zipfile.ZipFile(outpath, "w") as zf:
+        zf.writestr("sample/target.tsv", "first\n")
+    with zipfile.ZipFile(outpath, "a") as zf:
+        zf.writestr("sample/target.tsv", "second\n")
+
+    aw = atomic_write(pathlib.Path("sample/target.tsv"), in_zip=outpath, mode="wt")
+    aw.write("third\n")
+    aw.close()
+
+    with zipfile.ZipFile(outpath) as zf:
+        assert zf.namelist() == ["sample/target.tsv"]
+
+    with open_(outpath) as infile:
+        assert infile.read() == "third\n"
+
+
 def test_open_url_write_exceptions():
     """Test 'w' mode (should raise Exception)"""
     with pytest.raises(Exception):

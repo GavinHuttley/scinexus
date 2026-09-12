@@ -584,16 +584,92 @@ class atomic_write:
         shutil.rmtree(src.parent)
 
     def _close_rename_zip(self, src: Path) -> None:
-        from zipfile import ZipFile
+        from zipfile import ZipFile, ZipInfo
 
         if self._in_zip is None:
             msg = "in_zip path is unexpectedly None"
             raise RuntimeError(msg)
 
-        with ZipFile(self._in_zip, "a") as out:
-            out.write(str(src), arcname=self._path)
+        # ZipInfo.from_file is what turns a member path into the name an
+        # archive stores. It drops a drive, collapses "..", strips a
+        # leading separator and uses posix separators, so asking it is
+        # the only way to compare against namelist() in the same terms.
+        # A path of "arch/sub/../target.txt" is stored as
+        # "arch/target.txt", and comparing the two appends a duplicate
+        arcname = ZipInfo.from_file(src, self._path).filename
 
-        shutil.rmtree(src.parent)
+        try:
+            # append mode is used for the test as well as the write. It
+            # tolerates a missing file and the 0-byte residue of an
+            # interrupted write, where a read-only open of either raises
+            # BadZipFile, and it saves reading the central directory a
+            # second time. Closing without writing leaves the archive
+            # byte for byte as it was
+            with ZipFile(self._in_zip, "a") as out:
+                replacing = arcname in out.namelist()
+                if not replacing:
+                    out.write(str(src), arcname=arcname)
+
+            if replacing:
+                self._replace_zip_member(src, arcname, self._in_zip)
+        finally:
+            shutil.rmtree(src.parent)
+
+    def _replace_zip_member(self, src: Path, arcname: str, in_zip: Path) -> None:
+        """rewrites the archive with src in place of the member arcname
+
+        Parameters
+        ----------
+        src
+            path to the file holding the new content
+        arcname
+            name of the member it replaces
+        in_zip
+            path to the archive being rewritten
+
+        Notes
+        -----
+        A zip has no way to take a member out, so appending under a name
+        already in the archive leaves two entries under that name. The
+        one a reader finds then depends on whether it works from the
+        central directory or from the local headers, and open_ refuses
+        the archive outright for holding more than one record. The
+        archive is rewritten instead, and put in place with a rename so
+        that a failure part way through leaves the original untouched.
+
+        The rename gives the archive a new inode, so a hard link to it
+        goes stale. The mode is carried across, which the umask default
+        on the new file would otherwise widen, and a symlinked archive
+        is written through to its target rather than replaced by a
+        plain file.
+        """
+        from zipfile import ZipFile
+
+        rewritten = in_zip.parent / f"{uuid.uuid4()}.zip"
+        try:
+            with (
+                ZipFile(in_zip) as existing,
+                ZipFile(rewritten, "w") as out,
+            ):
+                out.comment = existing.comment
+                for info in existing.infolist():
+                    if info.filename == arcname:
+                        continue
+                    # the member is copied through its ZipInfo so that
+                    # its name, timestamp and compression survive. the
+                    # reader is opened first because opening the writer
+                    # zeroes the sizes on the ZipInfo it is handed
+                    with existing.open(info) as member, out.open(info, "w") as dest:
+                        shutil.copyfileobj(member, dest)
+
+                out.write(str(src), arcname=arcname)
+        except Exception:
+            rewritten.unlink(missing_ok=True)
+            raise
+
+        target = in_zip.resolve() if in_zip.is_symlink() else in_zip
+        shutil.copymode(target, rewritten)
+        rewritten.replace(target)
 
     def __exit__(
         self,
