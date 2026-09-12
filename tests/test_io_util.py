@@ -353,7 +353,7 @@ def test_open_binary_rejects_decoding_arguments(tmp_path, suffix, mode, kwargs):
     with open_(outpath, mode="wb") as outfile:
         outfile.write(b"data\n")
 
-    with pytest.raises(ValueError, match="not supported|doesn't take|does not take"):
+    with pytest.raises(ValueError, match=r"not supported|doesn't take|does not take"):
         open_(outpath, mode=mode, **kwargs)
 
 
@@ -391,8 +391,11 @@ def test_open_zip_write_does_not_take_atomic_write_parameters(tmp_path):
     keep.mkdir()
     (keep / "precious.txt").write_text("do not delete me")
 
-    with pytest.raises(TypeError):
-        handle = open_(tmp_path / "out.tsv.zip", mode="wt", tmpdir=keep)
+    handle = open_(tmp_path / "out.tsv.zip", mode="wt", tmpdir=keep)
+
+    # the file is not opened until the atomic_write is entered, so that
+    # is where an argument the open cannot take is found
+    with pytest.raises(TypeError, match="tmpdir"):
         handle.__enter__()
 
     assert (keep / "precious.txt").exists()
@@ -675,15 +678,17 @@ def test_open_zip_write_cleans_up_when_the_rewrite_fails(tmp_path, monkeypatch):
 
     before = outpath.read_bytes()
 
-    def boom(*args, **kwargs):
+    def boom(*_args, **_kwargs):
         msg = "copy failed"
         raise OSError(msg)
 
     monkeypatch.setattr(scinexus.io_util.shutil, "copyfileobj", boom)
 
-    with pytest.raises(OSError, match="copy failed"):
-        with open_(outpath, mode="wt") as outfile:
-            outfile.write("second\n")
+    with (
+        pytest.raises(OSError, match="copy failed"),
+        open_(outpath, mode="wt") as outfile,
+    ):
+        outfile.write("second\n")
 
     assert outpath.read_bytes() == before
     assert [p.name for p in tmp_path.iterdir()] == ["sample.tsv.zip"]
@@ -1166,6 +1171,200 @@ def test_iter_line_blocks_none_num_lines(tmp_path):
     got = list(iter_line_blocks(path, num_lines=None))
     expect = [value]
     assert got == expect
+
+
+class _RecordingReader:
+    """wraps a reader and records the bytes of the file each read took
+
+    A text read reports what the characters it returned cost in the
+    file, which is the budget chunk_size is meant to be setting.
+    """
+
+    def __init__(self, handle, taken):
+        self._handle = handle
+        self._taken = taken
+
+    def read(self, size=-1):
+        data = self._handle.read(size)
+        # a text handle reports its own encoding, which is what turns
+        # the characters it returned back into a count of file bytes
+        taken = (
+            len(data) if isinstance(data, bytes) else len(data.encode(self.encoding))
+        )
+        self._taken.append(taken)
+        return data
+
+    @property
+    def encoding(self):
+        return self._handle.encoding
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self._handle.close()
+
+
+@pytest.fixture
+def bytes_taken(monkeypatch):
+    """records the bytes of the file each read consumed"""
+    taken = []
+    real_open = scinexus.io_util.open_
+
+    def recording_open(filename, mode="rt", **kwargs):
+        return _RecordingReader(real_open(filename, mode, **kwargs), taken)
+
+    monkeypatch.setattr(scinexus.io_util, "open_", recording_open)
+    return taken
+
+
+# ascii mixed with CJK, at 1.8 bytes per character. Plain CJK would be
+# 3 bytes per character, but charset_normalizer reads the first 100
+# bytes of it as cp874, a single byte encoding, and then a read of n
+# characters costs n bytes and there is no overshoot left to measure
+MIXED_LINE = "id\t\N{CJK UNIFIED IDEOGRAPH-6F22}\N{CJK UNIFIED IDEOGRAPH-5B57}" * 30
+
+
+def test_iter_splitlines_chunk_size_is_bytes_in_text_mode(tmp_path, bytes_taken):
+    """a text read spends chunk_size on bytes, not on characters
+
+    read(n) on a text handle returns n characters, so a utf-8 file of
+    mixed ascii and CJK takes about 1.8 times chunk_size bytes of the
+    file per chunk, which is that much more memory than the caller
+    budgeted for. Plain CJK is 3 times.
+    """
+    path = tmp_path / "mixed.txt"
+    path.write_text("\n".join([MIXED_LINE] * 40), encoding="utf-8")
+
+    chunk_size = 3000
+    lines = list(iter_splitlines(path, chunk_size=chunk_size))
+
+    assert lines == [MIXED_LINE] * 40
+    assert max(bytes_taken) <= chunk_size
+
+
+def test_iter_splitlines_chunk_size_survives_compression(tmp_path, bytes_taken):
+    """a compressed file is still read in chunks
+
+    st_size of a compressed file is the compressed size, so comparing
+    it against chunk_size switched chunking off for anything that
+    compressed below the budget, however large it was uncompressed.
+    """
+    path = tmp_path / "repetitive.txt.gz"
+    with open_(path, mode="wt") as outfile:
+        outfile.write("\n".join(["x" * 99] * 20_000))
+
+    chunk_size = 100_000
+    assert path.stat().st_size < chunk_size
+    lines = list(iter_splitlines(path, chunk_size=chunk_size))
+
+    assert lines == ["x" * 99] * 20_000
+    assert max(bytes_taken) <= chunk_size
+
+
+def test_iter_record_chunks_chunk_size_survives_compression(tmp_path, bytes_taken):
+    """the same st_size shortcut is in iter_record_chunks"""
+    path = tmp_path / "repetitive.bin.gz"
+    with open_(path, mode="wb") as outfile:
+        outfile.write(b">record\n" + b"A" * 99 + b">record\n" + b"A" * 400_000)
+
+    chunk_size = 50_000
+    assert path.stat().st_size < chunk_size
+    got = list(iter_record_chunks(path=path, delimiter=b">", chunk_size=chunk_size))
+
+    assert got == [b"", b"record\n" + b"A" * 99, b"record\n" + b"A" * 400_000]
+    assert max(bytes_taken) <= chunk_size
+
+
+@pytest.mark.parametrize("chunk_size", [1, 2, 3, 4, 5, 7])
+def test_iter_splitlines_multi_byte_across_a_chunk_boundary(tmp_path, chunk_size):
+    """a character split by a chunk boundary is not lost or doubled
+
+    A chunk ending part way through a three-byte character decodes to
+    the empty string, which a reader must not take for the end of the
+    file.
+    """
+    path = tmp_path / "cjk.txt"
+    expect = ["\N{CJK UNIFIED IDEOGRAPH-6F22}\N{CJK UNIFIED IDEOGRAPH-5B57}", "ab"]
+    path.write_text("\n".join(expect), encoding="utf-8")
+
+    assert list(iter_splitlines(path, chunk_size=chunk_size)) == expect
+
+
+def test_iter_splitlines_strips_a_byte_order_mark(tmp_path):
+    """a BOM is consumed by the codec, not yielded as part of the line
+
+    charset_normalizer answers UTF-8-SIG for a file with one, and it is
+    that codec rather than plain utf-8 that takes the mark off.
+    """
+    path = tmp_path / "bom.txt"
+    path.write_text("first\nsecond", encoding="utf-8-sig")
+
+    assert list(iter_splitlines(path, chunk_size=4)) == ["first", "second"]
+
+
+def _outcome(read):
+    """what a read returned, or the name of what it raised"""
+    try:
+        return ("read", read())
+    except Exception as e:  # noqa: BLE001
+        return ("raised", type(e).__name__)
+
+
+def _agrees_with_open(path, **kwargs):
+    """whether iter_splitlines and open_ give the same lines or error"""
+
+    def via_open():
+        with open_(path) as infile:
+            return infile.read().splitlines()
+
+    return _outcome(lambda: list(iter_splitlines(path, **kwargs))) == _outcome(via_open)
+
+
+@pytest.mark.parametrize("suffix", ["bin", "gz", "bz2", "xz", "lzma", "zip"])
+def test_iter_splitlines_unsniffable_file_behaves_like_open(tmp_path, suffix):
+    """bytes no sniff can name are handled the way open_ handles them
+
+    charset_normalizer answers None for these, and a None handed to
+    codecs.getincrementaldecoder is a TypeError, where open_ passes it
+    on to the opener. Which fallback that means depends on the suffix:
+    every opener but one takes None as the locale default, and open_zip
+    substitutes latin-1, which decodes any byte. So a zip of these
+    bytes reads as text where the others raise, and this has to follow
+    it. The comparison is against open_ rather than a named exception
+    so the test does not depend on the locale.
+    """
+    path = tmp_path / f"raw.{suffix}"
+    with open_(path, mode="wb") as outfile:
+        outfile.write(b"\xff\xfe\x00\x80 raw \r\n bytes")
+
+    assert _agrees_with_open(path)
+
+
+@pytest.mark.parametrize("chunk_size", [8, 64, None])
+def test_iter_splitlines_truncated_character_behaves_like_open(tmp_path, chunk_size):
+    """a file ending part way through a character is not quietly cut
+
+    The decoder is told the last chunk is the last one, and it reports
+    the held-back bytes it can no longer complete. Without that it
+    would return what it had and the truncated tail would vanish, which
+    is a wrong answer rather than an error.
+    """
+    path = tmp_path / "truncated.txt"
+    body = "\n".join([MIXED_LINE] * 5).encode("utf-8")
+    path.write_bytes(body[:-1])
+
+    assert _agrees_with_open(path, chunk_size=chunk_size)
+
+
+@pytest.mark.parametrize("suffix", ["gz", "bz2", "xz", "lzma", "zip", "tsv"])
+def test_iter_splitlines_text_agrees_with_open_for_every_suffix(tmp_path, suffix):
+    """the lines are what reading the whole thing and splitting gives"""
+    path = tmp_path / f"sample.tsv.{suffix}"
+    with open_(path, mode="wt") as outfile:
+        outfile.write("\n".join([MIXED_LINE] * 20))
+
+    assert _agrees_with_open(path, chunk_size=64)
 
 
 @pytest.mark.parametrize("num_lines", [0, -1, 1.5])

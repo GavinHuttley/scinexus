@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import codecs
 import contextlib
 import functools
+import locale
 import re
 import shutil
 import uuid
@@ -104,6 +106,39 @@ def _get_compression_open(
     if compression is None and path is not None:
         _, compression = get_format_suffixes(path)
     return None if compression is None else _compression_handlers.get(compression)
+
+
+def _detect_encoding(path: PathType) -> str | None:
+    """returns the encoding a text read of path will decode with
+
+    Parameters
+    ----------
+    path
+        file path, decompressed first if it names a compression
+
+    Returns
+    -------
+    the name of the encoding, or None where the content identifies none
+    and the opener would take that as the locale default
+
+    Notes
+    -----
+    The name is sniffed from the first hundred bytes. Where that
+    identifies nothing the answer is whatever the opener for the path
+    would then do, which is the locale default for every suffix but
+    zip. open_zip substitutes latin-1, which decodes any byte, so a
+    caller reading the bytes itself has to substitute it too rather
+    than decode the same archive differently from open_.
+    """
+    op = _get_compression_open(path) or open
+    with op(path, mode="rb") as infile:
+        data = infile.read(100)
+
+    encoding = cast("str | None", detect(data)["encoding"])
+    if encoding is None and get_format_suffixes(path)[1] == "zip":
+        return "latin-1"
+
+    return encoding
 
 
 def _check_binary_mode_args(encoding: str | None, kwargs: dict[str, Any]) -> None:
@@ -314,11 +349,7 @@ def open_(filename: PathType, mode: str = "rt", **kwargs: Any) -> IO[Any]:
     # the value whether the caller named one
     need_encoding = mode.startswith("r") and "b" not in mode
     if need_encoding and encoding is None:
-        with op(filename, mode="rb") as infile:
-            data = infile.read(100)
-
-        encoding = detect(data)
-        encoding = encoding["encoding"]
+        encoding = _detect_encoding(filename)
 
     return op(filename, mode, encoding=encoding, **kwargs)
 
@@ -723,6 +754,100 @@ def path_exists(path: PathType) -> bool:
     return False
 
 
+class _DecodedReader:
+    """reads a byte stream in byte-sized chunks and decodes them
+
+    Notes
+    -----
+    read(n) on a text file object returns n characters, so under a
+    multi-byte encoding it takes several times n bytes of the file. A
+    reader working to a memory budget wants the budget spent on bytes,
+    so the bytes are read here and decoded on the way past.
+
+    Line endings are not translated, where a text file object would
+    turn "\\r\\n" into "\\n". It makes no difference to the lines that
+    come out, since str.splitlines() breaks on "\\r", "\\n" and "\\r\\n"
+    alike and drops the terminator either way.
+    """
+
+    def __init__(self, infile: IO[bytes], encoding: str | None) -> None:
+        """
+        Parameters
+        ----------
+        infile
+            open file object in a binary mode
+        encoding
+            name of the encoding, None meaning the locale default, as
+            it does for builtin open
+        """
+        self._infile = infile
+        # the test is against None rather than falsiness, so that an
+        # empty encoding reaches the codec lookup and is rejected there,
+        # as it is on the other paths through this module
+        if encoding is None:
+            encoding = locale.getpreferredencoding(do_setlocale=False)
+
+        self._decoder = codecs.getincrementaldecoder(encoding)()
+
+    def read(self, size: int = -1) -> str:
+        """returns the text decoded from the next size bytes
+
+        Parameters
+        ----------
+        size
+            number of bytes to read, a negative meaning read it all
+
+        Notes
+        -----
+        A chunk ending part way through a character decodes to the
+        empty string, with the bytes held by the decoder until the rest
+        of the character arrives. That is not the end of the file, so
+        reading continues until there is either text to return or
+        nothing left to read. Returning the empty string instead would
+        be read as the end of the file and would silently truncate.
+
+        A stateful encoding can hold far more than one character back.
+        A run of iso-2022-jp escape sequences decodes to nothing at
+        all, so a read of that run returns only once past it, having
+        taken more than size bytes to do so.
+        """
+        if size < 0:
+            return self._decoder.decode(self._infile.read(), final=True)
+
+        while True:
+            raw = self._infile.read(size)
+            text = self._decoder.decode(raw, final=not raw)
+            if text or not raw:
+                return text
+
+
+def _chunk_size_for(path: Path, chunk_size: int | None) -> int | None:
+    """returns None where path is small enough to read in one go
+
+    Parameters
+    ----------
+    path
+        file the chunk size is for
+    chunk_size
+        number of bytes to read in one go, None meaning read it all
+
+    Notes
+    -----
+    st_size of a compressed file is the compressed size, which says
+    nothing about how much comes out of it, so the shortcut is only
+    taken where the two are the same number. A file that compresses
+    below the budget can decompress to any size at all.
+    """
+    if chunk_size is None:
+        return None
+
+    _, compression = get_format_suffixes(path)
+    if compression is None and path.stat().st_size < chunk_size:
+        return None
+
+    return chunk_size
+
+
 def _check_chunk_size(chunk_size: int | None) -> None:
     """raises if chunk_size is not a usable number of bytes
 
@@ -772,9 +897,11 @@ def _splitlines(
 
     Notes
     -----
-    A file opened in text mode has its line endings translated to
-    newline by the reader, so a carriage return is only ever seen for a
-    file opened in binary mode.
+    No line ending translation is assumed of the reader. A carriage
+    return reaches here in either mode, so a "\\r\\n" split by a chunk
+    boundary has to be stitched back together rather than counted as
+    two line endings. A reader that does translate, such as a file
+    object opened in a text mode, simply never presents the case.
     """
     # fragments of a line that spans a chunk boundary, joined only
     # when the line is complete and about to be yielded
@@ -886,23 +1013,27 @@ def iter_splitlines(
     An empty last line is not yielded, so a file ending on a line
     terminator gives the same lines as one that does not.
 
+    chunk_size counts bytes read in one go, in both modes and whether
+    or not the file is compressed. Text is read as bytes and decoded on
+    the way past, rather than read through a text file object, whose
+    read(n) returns n characters and so takes several times n bytes of
+    a file in a multi-byte encoding. For a compressed file the count is
+    of the bytes coming out of the decompression, which is the memory
+    the read costs, rather than of the bytes on disk.
+
     The two modes do not always split a file into the same number of
-    lines. Text mode reads with universal newlines, so "\\r", "\\n" and
-    "\\r\\n" all become line breaks, and str.splitlines() breaks on a
+    lines. str.splitlines() breaks on "\\r", "\\n" and "\\r\\n" and on a
     further eight characters including vertical tab and form feed.
-    Binary mode does no translation and bytes.splitlines() breaks only
-    on "\\r", "\\n" and "\\r\\n".
+    bytes.splitlines() breaks only on "\\r", "\\n" and "\\r\\n".
     """
     _check_chunk_size(chunk_size)
 
-    if is_url(path):
+    url = is_url(path)
+    if url:
         chunk_size = None
     else:
         path = Path(path).expanduser()
-        if chunk_size is not None and path.stat().st_size < chunk_size:
-            # file is smaller than provided chunk_size, just
-            # load it all
-            chunk_size = None
+        chunk_size = _chunk_size_for(path, chunk_size)
 
     if as_bytes:
         with open_(path, mode="rb") as infile:
@@ -910,10 +1041,23 @@ def iter_splitlines(
             # type variable so a mismatched separator is a type error
             binary = cast("IO[bytes]", infile)
             yield from _splitlines(binary, chunk_size, _BINARY_SEPARATORS)
-    else:
+    elif url:
+        # a url is read whole, so there is no budget to keep to, and the
+        # charset from the response headers that open_url uses is better
+        # evidence than a sniff of the content
         with open_(path) as infile:
-            text = cast("IO[str]", infile)
-            yield from _splitlines(text, chunk_size, _TEXT_SEPARATORS)
+            yield from _splitlines(
+                cast("IO[str]", infile), chunk_size, _TEXT_SEPARATORS
+            )
+    else:
+        encoding = _detect_encoding(path)
+        with open_(path, mode="rb") as infile:
+            reader = _DecodedReader(cast("IO[bytes]", infile), encoding)
+            yield from _splitlines(
+                cast("IO[str]", reader),
+                chunk_size,
+                _TEXT_SEPARATORS,
+            )
 
 
 @overload
@@ -1018,8 +1162,11 @@ def iter_record_chunks(
     delimiter
         bytes delimiter on which records are split. Must be non-empty.
     chunk_size
-        bytes read per iteration. If ``None``, or if the on-disk file is
-        smaller than ``chunk_size``, the file is read in a single call.
+        bytes read per iteration. If ``None``, or if the file is
+        uncompressed and smaller than ``chunk_size``, it is read in a
+        single call. A compressed file is read in chunks whatever its
+        size on disk, since that size says nothing about how much comes
+        out of the decompression.
 
     Yields
     ------
@@ -1066,8 +1213,7 @@ def iter_record_chunks(
         chunk_size = None
     else:
         path = Path(path).expanduser()
-        if chunk_size is not None and path.stat().st_size < chunk_size:
-            chunk_size = None
+        chunk_size = _chunk_size_for(path, chunk_size)
 
     # We accommodate a chunked read falling within a delimiter
     # by extracting the overlap_len of the last (potentially partial)
