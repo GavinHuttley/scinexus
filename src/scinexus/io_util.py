@@ -168,6 +168,13 @@ def open_(filename: PathType, mode: str = "rt", **kwargs: Any) -> IO[Any]:
     Returns
     -------
     an object compatible with the file protocol
+
+    Notes
+    -----
+    A mode of "r" reads text, for a compressed file as much as for an
+    uncompressed one. A mode of "w" is not treated the same way: it
+    writes bytes for gz, bz2, xz and lzma, and text for zip and for
+    uncompressed files, so a text write to a compressed path needs "wt".
     """
     if not filename:
         msg = f"{filename} not a valid file name or url"
@@ -177,6 +184,11 @@ def open_(filename: PathType, mode: str = "rt", **kwargs: Any) -> IO[Any]:
         return open_url(filename, mode=mode, **kwargs)  # type: ignore[arg-type]
 
     mode = mode or "rt"
+    if mode == "r":
+        # gzip, bz2 and lzma read a bare "r" as binary, where builtin
+        # open and open_zip read it as text. Say which is meant, so the
+        # encoding worked out below is one the handler will accept
+        mode = "rt"
     filename = Path(filename).expanduser()
     op = _get_compression_open(filename) or open
 
