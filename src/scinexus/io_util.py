@@ -239,6 +239,33 @@ def open_(filename: PathType, mode: str = "rt", **kwargs: Any) -> IO[Any]:
     return op(filename, mode, encoding=encoding, **kwargs)
 
 
+def _decompressed(response: IO[Any], compression: str | None) -> IO[Any]:
+    """returns a reader for the content of a url response
+
+    Parameters
+    ----------
+    response
+        an open url response
+    compression
+        compression suffix of the url, None leaves the response alone
+
+    Notes
+    -----
+    The response itself is returned, not closed, so a caller that has to
+    abandon the result still has the object whose close releases the
+    connection.
+    """
+    if compression:
+        opener = _get_compression_open(compression=compression)
+        if opener is not None:
+            # the handlers disagree on what their default mode means,
+            # open_zip's "r" is text while the others are binary, so ask
+            # for bytes and leave the text decision to the caller
+            return cast("IO[Any]", opener(response, mode="rb"))
+
+    return response
+
+
 def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]:
     """open a url
 
@@ -248,10 +275,18 @@ def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]
         A url of file in http or https web address
     mode
         mode of reading file, 'rb', 'rt', 'r'
+    kwargs
+        encoding, errors and newline for a text mode, used to decode the
+        response. An encoding overrides the charset named by the
+        response headers
 
     Raises
     ------
-    Rasies IOError if mode is write or it's not a url.
+    Raises IOError if mode is write or it's not a url.
+
+    Raises ValueError if encoding, errors or newline is given with a
+    binary mode. An encoding of None counts as not given, as it does
+    for builtin open.
 
     Returns
     -------
@@ -270,19 +305,46 @@ def open_url(url: str | ParseResult, mode: str = "rt", **kwargs: Any) -> IO[Any]
         msg = f"URL scheme must be http, https or file, not {str(url)[:20]!r}"
         raise OSError(msg)
 
+    binary_mode = "b" in mode
+    encoding = kwargs.pop("encoding", None)
+    if binary_mode:
+        # builtin open rejects the text-only arguments under a binary
+        # mode rather than accepting ones it cannot use. an encoding of
+        # None is not an argument: open_ hands its kwargs on before it
+        # pops the encoding, so a None arrives here for any binary read
+        named = ["encoding"] if encoding is not None else []
+        named += sorted(kwargs.keys() & {"errors", "newline"})
+        if named:
+            msg = f"binary mode does not take {', '.join(named)}"
+            raise ValueError(msg)
+
+        if kwargs:
+            # a text mode gets this from TextIOWrapper, a binary mode has
+            # nothing to hand the argument to, so raise the same error
+            msg = f"open_url() got an unexpected keyword argument {min(kwargs)!r}"
+            raise TypeError(msg)
+
     url_parsed = url if isinstance(url, ParseResult) else urlparse(url)
 
     response = urlopen(url_parsed.geturl(), timeout=10)
-    encoding = response.headers.get_content_charset()
-    if compression:
-        opener = _get_compression_open(compression=compression)
-        if opener is not None:
-            # the handlers disagree on what their default mode means,
-            # open_zip's "r" is text while the others are binary, so ask
-            # for bytes and leave the text decision to the return below
-            response = opener(response, mode="rb")
+    try:
+        if binary_mode:
+            return _decompressed(response, compression)
 
-    return response if "b" in mode else TextIOWrapper(response, encoding=encoding)
+        if encoding is None:
+            encoding = response.headers.get_content_charset()
+
+        return TextIOWrapper(
+            _decompressed(response, compression),
+            encoding=encoding,
+            **kwargs,
+        )
+    except Exception:
+        # the wrapper rejects an unknown codec or an illegal newline
+        # after the request has been made, and the caller gets an
+        # exception rather than the object that would have closed it
+        response.close()
+        raise
 
 
 def _path_relative_to_zip_parent(zip_path: Path, member_path: Path) -> Path:

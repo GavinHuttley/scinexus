@@ -1,11 +1,14 @@
 import bz2
+import email.message
 import gzip
 import pathlib
+import urllib.response
 import zipfile
 from urllib.parse import urlparse
 
 import pytest
 
+import scinexus.io_util
 from scinexus.composable import NotCompleted
 from scinexus.io_util import (
     _path_relative_to_zip_parent,
@@ -301,6 +304,150 @@ def test_open_url_exceptions():
     """non-http(s) address for url (should raise Exception)"""
     with pytest.raises(Exception):
         open_url("ftp://example.com/test.txt")
+
+
+def test_open_url_uses_given_encoding(tmp_path):
+    """an encoding argument is used where the headers name no charset
+
+    A file:// response carries no charset, so without the argument the
+    text is decoded with the locale default. The euro sign is the byte
+    to test with: 0x80 is the euro in cp1252, a control character in
+    latin-1 and not valid utf-8, so no locale decodes it to the
+    expected string by accident.
+    """
+    path = tmp_path / "sample.txt"
+    text = "price 5\N{EURO SIGN}"
+    path.write_bytes(text.encode("cp1252"))
+
+    with open_url(path.as_uri(), encoding="cp1252") as infile:
+        assert infile.read() == text
+
+
+def test_open_url_encoding_beats_header_charset(tmp_path, monkeypatch):
+    """an encoding argument overrides the charset the headers name
+
+    A file:// response names no charset, so a response with one has to
+    be built here for the override to be exercised at all.
+    """
+    path = tmp_path / "sample.txt"
+    text = "price 5\N{EURO SIGN}"
+    path.write_bytes(text.encode("cp1252"))
+
+    headers = email.message.Message()
+    headers["Content-Type"] = "text/plain; charset=utf-8"
+
+    def fake_urlopen(url, timeout=None):  # noqa: ARG001
+        return urllib.response.addinfourl(path.open("rb"), headers, url)
+
+    monkeypatch.setattr(scinexus.io_util, "urlopen", fake_urlopen)
+
+    # utf-8 from the header would raise on the 0x80 byte
+    with open_url(path.as_uri(), encoding="cp1252") as infile:
+        assert infile.read() == text
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expect"),
+    [
+        ({"encoding": "not-a-real-codec"}, LookupError),
+        ({"newline": "X"}, ValueError),
+        ({"not_an_argument": 1}, TypeError),
+    ],
+)
+def test_open_url_closes_response_on_a_bad_argument(
+    tmp_path,
+    monkeypatch,
+    kwargs,
+    expect,
+):
+    """a rejected argument does not leave the connection open
+
+    The wrapper is built after the request has been made, so an unknown
+    codec or an illegal newline has to release the response rather than
+    hand the caller an exception and no handle to close with.
+    """
+    path = tmp_path / "sample.txt"
+    path.write_bytes(b"data")
+
+    responses = []
+
+    def fake_urlopen(url, timeout=None):  # noqa: ARG001
+        response = urllib.response.addinfourl(
+            path.open("rb"),
+            email.message.Message(),
+            url,
+        )
+        responses.append(response)
+        return response
+
+    monkeypatch.setattr(scinexus.io_util, "urlopen", fake_urlopen)
+
+    with pytest.raises(expect):
+        open_url(path.as_uri(), **kwargs)
+
+    assert [r.closed for r in responses] == [True]
+
+
+def test_open_url_uses_given_errors(tmp_path):
+    """an errors argument reaches the decoder"""
+    path = tmp_path / "sample.txt"
+    path.write_bytes(b"caf\xe9")
+
+    with open_url(path.as_uri(), encoding="utf-8", errors="replace") as infile:
+        assert infile.read() == "caf\N{REPLACEMENT CHARACTER}"
+
+
+def test_open_url_uses_given_newline(tmp_path):
+    """a newline argument turns off the translation of line endings"""
+    path = tmp_path / "sample.txt"
+    path.write_bytes(b"first\r\nsecond\r\n")
+
+    with open_url(path.as_uri(), newline="") as infile:
+        assert infile.read() == "first\r\nsecond\r\n"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"encoding": "utf-8"}, {"errors": "replace"}, {"newline": ""}],
+)
+def test_open_url_binary_rejects_text_arguments(tmp_path, kwargs):
+    """text-only arguments in a binary mode are a caller error
+
+    builtin open raises for the same combination, rather than accepting
+    an argument it will not use.
+    """
+    path = tmp_path / "sample.txt"
+    path.write_bytes(b"data")
+
+    with pytest.raises(ValueError, match="binary mode does not take"):
+        open_url(path.as_uri(), mode="rb", **kwargs)
+
+
+def test_open_url_binary_rejects_unknown_argument(tmp_path):
+    """an unknown argument is a TypeError in either mode
+
+    A text mode gets this from TextIOWrapper. A binary mode has nothing
+    to hand the argument to, so it has to raise the error itself rather
+    than report the name as a text-only argument or ignore it.
+    """
+    path = tmp_path / "sample.txt"
+    path.write_bytes(b"data")
+
+    with pytest.raises(TypeError, match="not_an_argument"):
+        open_url(path.as_uri(), mode="rb", not_an_argument=1)
+
+
+def test_open_url_binary_allows_encoding_none(tmp_path):
+    """an explicit encoding of None is not an argument, as for open
+
+    open_ hands its kwargs to open_url before it pops the encoding, so
+    a None reaching a binary mode this way must not be rejected.
+    """
+    path = tmp_path / "sample.txt"
+    path.write_bytes(b"data")
+
+    with open_url(path.as_uri(), mode="rb", encoding=None) as infile:
+        assert infile.read() == b"data"
 
 
 def test_iter_splitlines_one(tmp_path):
