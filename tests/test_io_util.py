@@ -659,6 +659,34 @@ def test_open_url_compressed_local(compressed_path, mode):
     assert got == expect
 
 
+@pytest.mark.parametrize("compressed_path", ["zip"], indirect=True)
+@pytest.mark.parametrize("mode", ["rb", "rt"])
+def test_open_compressed_url(compressed_path, mode):
+    """open_ hands a compressed url to open_url
+
+    Only zip is worth running here. open_ delegates any url whole, so
+    the suffix fan-out belongs to test_open_url_compressed_local and
+    repeating it would add cases that cannot fail.
+    """
+    with open_(compressed_path, mode=mode) as infile:
+        expect = infile.read()
+
+    with open_(compressed_path.as_uri(), mode=mode) as infile:
+        got = infile.read()
+
+    assert got == expect
+
+
+@pytest.mark.parametrize("compressed_path", ["zip"], indirect=True)
+@pytest.mark.parametrize("as_bytes", [False, True])
+def test_iter_splitlines_compressed_url(compressed_path, as_bytes):
+    """a consumer of open_ reaches compressed urls too"""
+    expect = list(iter_splitlines(compressed_path, as_bytes=as_bytes))
+    got = list(iter_splitlines(compressed_path.as_uri(), as_bytes=as_bytes))
+
+    assert got == expect
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "mode",
