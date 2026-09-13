@@ -10,7 +10,9 @@ import nox
 if sys.version_info >= (3, 12):
     os.environ["COVERAGE_CORE"] = "sysmon"
 
-_py_versions = range(11, 15)
+# "3.14t" is the free-threaded (no-GIL) build; uv can fetch it as
+# cpython-3.14.x+freethreaded. It is exploratory here, not yet a support claim.
+_py_versions = [f"3.{v}" for v in range(11, 15)] + ["3.14t"]
 
 nox.options.default_venv_backend = "uv"
 
@@ -28,19 +30,19 @@ def cogdocs(session: nox.Session) -> None:
     subprocess.run(cmnd, check=True, shell=True)  # noqa: S602
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+@nox.session(python=_py_versions)
 def type_check(session):
     session.install("-e", ".", "--group", "dev")
     session.run("mypy", "src/scinexus/")
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+@nox.session(python=_py_versions)
 def test_types(session):
     session.install("-e", ".")
     session.run("mypy", "src/scinexus/")
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+@nox.session(python=_py_versions)
 def test(session):
     session.install("-e", ".", "--group", "dev")
     session.run("uv", "pip", "list")
@@ -65,7 +67,7 @@ def test(session):
     )
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+@nox.session(python=_py_versions)
 def testmpi(session):
     session.install("-e", ".[mpi]", "--group", "dev")
     session.chdir("tests")
@@ -89,7 +91,7 @@ def testmpi(session):
     )
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+@nox.session(python=_py_versions)
 def testcov(session):
     session.install("-e", ".", "--group", "dev")
     cover_mpi = shutil.which("mpiexec") is not None
@@ -160,7 +162,7 @@ def testcov(session):
         i += 2
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+@nox.session(python=_py_versions)
 def test_docs(session):
     session.install("-e", ".", "--group", "dev")
     session.run("uv", "pip", "list")
