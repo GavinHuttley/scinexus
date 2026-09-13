@@ -66,7 +66,7 @@ jobs:
       - name: "test the docs code"
         run: |
           uv run --group dev nox -s cogdocs
-          uv run --group dev zensical build
+          uv run --group dev --group doc zensical build
 
   build:
     name: Build wheel and sdist
