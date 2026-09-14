@@ -92,6 +92,20 @@ When you specify a Sqlitedb data store as your output (by using `open_data_store
 
 One important issue to note is the process which creates a Sqlitedb "locks" the file. If that process exits unnaturally (e.g. the run that was producing it was interrupted) then the file may remain in a locked state. If the db is in this state, `scinexus` will not modify it unless you explicitly unlock it.
 
+### Closing a Sqlitedb data store
+
+The lock is released by `close()`, and only by `close()`. That is what gives a lock you find on a file its meaning: it says the session that took it did not finish. So call `close()` once you have finished with a writable store, after reading whatever you need from it.
+
+```python { notest }
+out_dstore = open_data_store("results.sqlitedb", mode="w")
+# ... write to it, then read your summaries from it ...
+out_dstore.close()
+```
+
+A store that is garbage collected without being closed warns you and names the file, because it has left a lock behind that the next run will refuse to write over. Closing ends a store: reading from one afterwards raises rather than returning stale answers.
+
+Directory data stores take no such lock and have no `close()`.
+
 This is represented in the display as shown below.
 
 <!-- [[[cog
@@ -118,6 +132,8 @@ To unlock, you execute the following:
 ```python { notest }
 dstore.unlock(force=True)
 ```
+
+`force=True` is needed when the lock was taken by another process, which is the usual case for a store left behind by an interrupted run. Overriding it is meant to be a deliberate act, because the records in such a store were never confirmed complete.
 
 ## Interrogating run logs
 

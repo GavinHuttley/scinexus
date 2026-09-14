@@ -30,6 +30,8 @@ out_dstore = app.apply_to(in_dstore)  # (4)!
 out_dstore.describe  # (5)!
 out_dstore.validate()  # (6)!
 out_dstore.summary_not_completed  # (7)!
+
+out_dstore.close()  # (8)!
 """
 exec_codeblock(src=src,
 admonition='???+ example "Translating DNA to amino acid"',
@@ -41,6 +43,7 @@ annotations=[
 "Summary showing counts of completed records, not-completed records, and log files.",
 "Verify the integrity of all records via MD5 checksums.",
 "Summary of why some records could not be processed — e.g. sequences not divisible by 3 or containing stop codons.",
+"Release the lock this run holds on the database. A SQLite store left unclosed stays locked, which is how an interrupted run is recognised, so close it once you have finished reading from it.",
 ])
 
 pathlib.Path("docs/translated.sqlitedb").unlink(missing_ok=True)
@@ -64,6 +67,8 @@ pathlib.Path("docs/translated.sqlitedb").unlink(missing_ok=True)
     out_dstore.describe  # (5)!
     out_dstore.validate()  # (6)!
     out_dstore.summary_not_completed  # (7)!
+
+    out_dstore.close()  # (8)!
     ```
 
     1. Open the zipped input data store, selecting `.fa` files as members.
@@ -73,6 +78,7 @@ pathlib.Path("docs/translated.sqlitedb").unlink(missing_ok=True)
     5. Summary showing counts of completed records, not-completed records, and log files.
     6. Verify the integrity of all records via MD5 checksums.
     7. Summary of why some records could not be processed — e.g. sequences not divisible by 3 or containing stop codons.
+    8. Release the lock this run holds on the database. A SQLite store left unclosed stays locked, which is how an interrupted run is recognised, so close it once you have finished reading from it.
 <!-- [[[end]]] -->
 
 !!! note
