@@ -568,8 +568,9 @@ class DataStoreDirectory(DataStoreABC):
         # the removals and the reset are one region, so a scan cannot run
         # against a half-emptied directory. it does NOT stop a caller that
         # already holds the list from watching it shrink: the properties
-        # return the live object, not a copy. nor is it atomic, an unlink
-        # that raises leaves the cache torn
+        # return the live object, not a copy. nor is it atomic -- the json
+        # unlink below, and the rmdir, can still raise and leave the cache
+        # torn
         with self._cache_lock:
             for m in list(self.not_completed):
                 if unique_id and not m.unique_id.endswith(unique_id):
@@ -577,8 +578,11 @@ class DataStoreDirectory(DataStoreABC):
 
                 file = nc_dir / Path(m.unique_id).name
                 file.unlink()
+                # a checksum is optional -- md5() returns None without one
+                # and _validate counts it under md5_missing -- so a record
+                # that has none is still droppable
                 md5_file = md5_dir / f"{file.stem}.txt"
-                md5_file.unlink()
+                md5_file.unlink(missing_ok=True)
                 self.not_completed.remove(m)
 
             if not unique_id:

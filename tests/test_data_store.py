@@ -332,6 +332,49 @@ def test_drop_not_completed(nc_dstore):
     assert num_md5 == num_completed
 
 
+@pytest.fixture
+def mixed_md5_dstore(tmp_dir):
+    """a store where only one of two not-completed records has a checksum"""
+    # a checksum is optional -- md5() returns None without one and
+    # _validate counts it under md5_missing -- so a store assembled by hand
+    # or by an earlier writer can hold both kinds, and a drop meets both
+    source = tmp_dir / "mixed_md5"
+    (source / NOT_COMPLETED_TABLE).mkdir(parents=True)
+    (source / MD5_TABLE).mkdir(parents=True)
+    for i in range(2):
+        nc = NotCompleted(
+            NotCompletedType.ERROR,
+            "location",
+            "message",
+            source=f"id_{i}",
+        )
+        data = nc.to_json()
+        (source / NOT_COMPLETED_TABLE / f"id_{i}.json").write_text(data)
+        if i == 0:
+            (source / MD5_TABLE / f"id_{i}.txt").write_text(get_text_hexdigest(data))
+    return DataStoreDirectory(source, suffix="fasta", mode=OVERWRITE)
+
+
+def test_drop_not_completed_without_md5_file(mixed_md5_dstore):
+    """a record with no checksum file is dropped like any other"""
+    source = mixed_md5_dstore.source
+    assert len(mixed_md5_dstore.not_completed) == 2
+
+    # id_1 is the one without a checksum. dropping by identifier leaves the
+    # cache in place, unlike a full drop, so the assertion below observes
+    # the list itself rather than a rebuild of it
+    mixed_md5_dstore.drop_not_completed(unique_id="id_1")
+
+    expect = [str(Path(NOT_COMPLETED_TABLE) / "id_0.json")]
+    assert [m.unique_id for m in mixed_md5_dstore.not_completed] == expect
+    assert not (source / NOT_COMPLETED_TABLE / "id_1.json").exists()
+
+    mixed_md5_dstore.drop_not_completed()
+
+    assert not (source / NOT_COMPLETED_TABLE).exists()
+    assert list((source / MD5_TABLE).glob("*.txt")) == []
+
+
 def test_write_read_only_datastore(ro_dstore):
     with pytest.raises(IOError):
         ro_dstore.write(unique_id="brca1.fasta", data="test data")
