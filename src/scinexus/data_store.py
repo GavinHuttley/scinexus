@@ -569,8 +569,7 @@ class DataStoreDirectory(DataStoreABC):
         # against a half-emptied directory. it does NOT stop a caller that
         # already holds the list from watching it shrink: the members are
         # removed from that list rather than it being rebound. nor is it
-        # atomic -- an unlink, and the rmdir, can still raise and leave it
-        # torn
+        # atomic -- an unlink can still raise and leave it torn
         with self._cache_lock:
             for m in list(self.not_completed):
                 # exact: an endswith test also matches a record whose name
@@ -587,11 +586,10 @@ class DataStoreDirectory(DataStoreABC):
                 md5_file.unlink(missing_ok=True)
                 self.not_completed.remove(m)
 
-            # limit makes not_completed a view, so a full drop empties the
-            # view and leaves on disk whatever it was not showing
-            if not target and not any(nc_dir.iterdir()):
-                nc_dir.rmdir()
-                # reset _not_completed to force not_completed to rebuild it
+            if not target:
+                # reset _not_completed to force not_completed to rebuild it.
+                # limit makes it a view, so the rebuild may show records
+                # this pass was not asked about
                 self._not_completed: list[DataMemberABC] = []
 
     @property
@@ -757,6 +755,7 @@ class DataStoreDirectory(DataStoreABC):
             suffix="json",
             data=data,
         )
+        # never None for this subdir, but _write is typed to allow it
         if member is not None:
             with self._cache_lock:
                 self._append_once(self._not_completed, member)

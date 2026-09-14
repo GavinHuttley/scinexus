@@ -358,7 +358,7 @@ def test_write_not_completed_twice_caches_one_member(w_dstore):
 
     w_dstore.drop_not_completed()
 
-    assert not nc_dir.exists()
+    assert list(nc_dir.glob("*.json")) == []
 
 
 def test_append_mode_refuses_to_rewrite_a_not_completed_record(w_dstore):
@@ -475,7 +475,7 @@ def test_drop_not_completed_without_md5_file(mixed_md5_dstore):
 
     mixed_md5_dstore.drop_not_completed()
 
-    assert not (source / NOT_COMPLETED_TABLE).exists()
+    assert list((source / NOT_COMPLETED_TABLE).glob("*.json")) == []
     assert list((source / MD5_TABLE).glob("*.txt")) == []
 
 
@@ -581,14 +581,13 @@ def test_no_not_completed_subdir(nc_dstore):
     expect = f"{len(nc_dstore.completed) + len(nc_dstore.not_completed)}x member"
     assert str(nc_dstore).startswith(expect)
     nc_dstore.drop_not_completed()
-    assert not Path(nc_dstore.source / NOT_COMPLETED_TABLE).exists()
+    not_dir = nc_dstore.source / NOT_COMPLETED_TABLE
+    assert list(not_dir.glob("*.json")) == []
     expect = f"{len(nc_dstore.completed)}x member"
     assert str(nc_dstore).startswith(expect)
     expect = f"{len(nc_dstore)}x member"
     assert str(nc_dstore).startswith(expect)
     assert len(nc_dstore) == len(nc_dstore.completed)
-    not_dir = nc_dstore.source / NOT_COMPLETED_TABLE
-    not_dir.mkdir(exist_ok=True)
 
 
 def test_limit_datastore(nc_dstore):
@@ -1567,6 +1566,56 @@ def test_concurrent_write_is_recorded_once(write_dir):
         reader.result(timeout=_SYNC_TIMEOUT)
 
     assert [m.unique_id for m in dstore.completed] == ["brand_new.fasta"]
+
+
+class _PausingNotCompletedStore(DataStoreDirectory):
+    """holds a not-completed write between the mkdir and the file landing
+
+    ``write_not_completed`` makes the directory and ``_write`` then opens the
+    file in it. Pausing between the two makes the window a test can drive
+    rather than one it has to race for.
+    """
+
+    def _write(self, **kwargs):
+        self.writer_paused.set()
+        self.release_writer.wait(timeout=_SYNC_TIMEOUT)
+        return super()._write(**kwargs)
+
+
+def test_drop_during_a_not_completed_write_leaves_it_somewhere_to_write(write_dir):
+    """a drop running mid-write leaves the directory the write is opening in"""
+    dstore = _PausingNotCompletedStore(write_dir, suffix="fasta", mode=OVERWRITE)
+    dstore.writer_paused = threading.Event()
+    dstore.release_writer = threading.Event()
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        writer = executor.submit(
+            dstore.write_not_completed,
+            unique_id="nc1",
+            data=record.to_json(),
+        )
+        try:
+            assert dstore.writer_paused.wait(timeout=_SYNC_TIMEOUT)
+            # the whole drop runs in the window between the writer making
+            # the directory and opening its file in it
+            dstore.drop_not_completed()
+        finally:
+            dstore.release_writer.set()
+
+        member = writer.result(timeout=_SYNC_TIMEOUT)
+
+    assert member.unique_id == str(Path(NOT_COMPLETED_TABLE) / "nc1.json")
+    assert (write_dir / NOT_COMPLETED_TABLE / "nc1.json").exists()
+
+
+def test_drop_not_completed_twice(nc_dstore):
+    """dropping an already emptied store is not an error"""
+    nc_dstore.drop_not_completed()
+
+    nc_dstore.drop_not_completed()
+
+    assert nc_dstore.not_completed == []
 
 
 def _scan_completed(dstore, barrier, _):
