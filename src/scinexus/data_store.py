@@ -206,28 +206,22 @@ class DataStoreABC(LockMixin, ABC):
     @staticmethod
     def _append_once(
         current: list[DataMemberABC],
-        cached: list[DataMemberABC],
         member: DataMemberABC,
     ) -> None:
         """record a just-written member in the cache, at most once
-
-        The file lands on disk outside the lock, so a scan running in that
-        gap can find it and publish a list that already holds ``member``.
-        Publishing always binds a new list, so an unchanged list object
-        cannot contain it and the O(n) membership test is only needed when
-        ``current`` and ``cached`` differ -- which keeps the common
-        sequential write off a quadratic path.
 
         Parameters
         ----------
         current
             the cached list as it stands now
-        cached
-            the same attribute read before the record was written
         member
             the member to record
         """
-        if current is cached or member not in current:
+        # current already holds an equal member when a scan in the gap
+        # between the file landing on disk and this call published one, and
+        # when the record is being written a second time. only the first
+        # rebinds the list, so identity cannot stand in for the O(n) test
+        if member not in current:
             current.append(member)
 
     def _check_writable(self, unique_id: str) -> None:
@@ -701,7 +695,6 @@ class DataStoreDirectory(DataStoreABC):
         -----
         Drops any not-completed member corresponding to this identifier
         """
-        cached = self._completed
         member = self._write(
             subdir="",
             unique_id=unique_id,
@@ -711,7 +704,7 @@ class DataStoreDirectory(DataStoreABC):
         self.drop_not_completed(unique_id=unique_id)
         if member is not None:
             with self._cache_lock:
-                self._append_once(self._completed, cached, member)
+                self._append_once(self._completed, member)
         return member  # type: ignore[return-value]
 
     def write_not_completed(self, *, unique_id: str, data: str) -> DataMember:  # type: ignore[override]
@@ -729,7 +722,6 @@ class DataStoreDirectory(DataStoreABC):
         a member for this record
         """
         (self.source / NOT_COMPLETED_TABLE).mkdir(parents=True, exist_ok=True)
-        cached = self._not_completed
         member = self._write(
             subdir=NOT_COMPLETED_TABLE,
             unique_id=unique_id,
@@ -738,7 +730,7 @@ class DataStoreDirectory(DataStoreABC):
         )
         if member is not None:
             with self._cache_lock:
-                self._append_once(self._not_completed, cached, member)
+                self._append_once(self._not_completed, member)
         return member  # type: ignore[return-value]
 
     def write_log(self, *, unique_id: str, data: str) -> None:  # type: ignore[override]

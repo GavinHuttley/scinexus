@@ -332,6 +332,49 @@ def test_drop_not_completed(nc_dstore):
     assert num_md5 == num_completed
 
 
+def test_write_not_completed_twice_caches_one_member(w_dstore):
+    """re-writing a not-completed record leaves one cached member, not two"""
+    data = NotCompleted(
+        NotCompletedType.ERROR,
+        "location",
+        "message",
+        source="nc1",
+    ).to_json()
+    expect = [str(Path(NOT_COMPLETED_TABLE) / "nc1.json")]
+
+    w_dstore.write_not_completed(unique_id="nc1", data=data)
+
+    # the attribute, not the property: the property rebuilds itself from
+    # disk when empty, so it reports a member even if nothing recorded one
+    assert [m.unique_id for m in w_dstore._not_completed] == expect
+
+    # the second write rescans nothing, so the cached list is the same
+    # object as before it and identity alone cannot tell the two apart
+    w_dstore.write_not_completed(unique_id="nc1", data=data)
+
+    nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
+    assert len(list(nc_dir.glob("*.json"))) == 1
+    assert [m.unique_id for m in w_dstore._not_completed] == expect
+
+    # a duplicate member means this unlinks the same file twice, and the
+    # second unlink raises before the rmdir that ends the pass
+    w_dstore.drop_not_completed()
+
+    assert not nc_dir.exists()
+
+
+def test_write_twice_caches_one_member_for_log_suffix(write_dir):
+    """a store whose own suffix is log records a re-written member once"""
+    # log is the one suffix _write exempts from its duplicate guard, so
+    # this is the store where a repeat write reaches the cache at all
+    dstore = DataStoreDirectory(write_dir, suffix="log", mode=OVERWRITE)
+    dstore.write(unique_id="c1.log", data="first")
+    dstore.write(unique_id="c1.log", data="second")
+
+    assert [m.unique_id for m in dstore._completed] == ["c1.log"]
+    assert len(dstore) == 1
+
+
 @pytest.fixture
 def mixed_md5_dstore(tmp_dir):
     """a store where only one of two not-completed records has a checksum"""
