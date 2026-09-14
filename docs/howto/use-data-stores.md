@@ -127,13 +127,14 @@ exec_codeblock(src=src, use_wrap=False, display_src=False)
 <!-- [[[end]]] -->
 
 
-To unlock, you execute the following:
+To unlock, open the store in a writable mode and execute the following:
 
 ```python { notest }
+dstore = open_data_store("data/demo-locked.sqlitedb", mode="a")
 dstore.unlock(force=True)
 ```
 
-`force=True` is needed when the lock was taken by another process, which is the usual case for a store left behind by an interrupted run. Overriding it is meant to be a deliberate act, because the records in such a store were never confirmed complete.
+The store has to be writable, since unlocking writes to it, and a read only store ignores the call. `force=True` is needed when the lock was taken by another process, which is the usual case for a store left behind by an interrupted run. Overriding it is meant to be a deliberate act, because the records in such a store were never confirmed complete.
 
 ## Interrogating run logs
 

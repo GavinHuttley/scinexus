@@ -197,18 +197,31 @@ class DataStoreSqlite(DataStoreABC):
             msg = f"data store {str(self.source)!r} is closed"
             raise OSError(msg)
 
-    @property
-    def db(self) -> sqlite3.Connection:
+    def _connection(self) -> sqlite3.Connection:
+        """the connection, opened if it is not already, taking no lock
+
+        Reading who holds the lock, and releasing one, both have to work on
+        a store this session may not write to.
+        """
         self._check_open()
         if self._db is None:
             db_func = open_sqlite_db_ro if self.mode is READONLY else open_sqlite_db_rw
             self._db = db_func(self.source)
-            self.lock()
 
         if self._db is None:
             msg = "database connection is unexpectedly None"
             raise ValueError(msg)
         return self._db
+
+    @property
+    def db(self) -> sqlite3.Connection:
+        db = self._connection()
+        # taking the lock is a separate step from opening, and is retried
+        # until it succeeds. a refusal that left a connection behind would
+        # be taken as proof of a lock by every access after it
+        if not self._holds_lock:
+            self.lock()
+        return db
 
     def _init_log(self) -> None:
         timestamp = datetime.datetime.now(tz=datetime.UTC)
@@ -373,7 +386,7 @@ class DataStoreSqlite(DataStoreABC):
     @property
     def _lock_id(self) -> int | None:
         """returns lock_pid"""
-        result = self.db.execute("SELECT lock_pid FROM state").fetchone()
+        result = self._connection().execute("SELECT lock_pid FROM state").fetchone()
         return result[0] if result else result
 
     @property
@@ -408,10 +421,15 @@ class DataStoreSqlite(DataStoreABC):
             raise RuntimeError(msg)
         result = self._db.execute("SELECT state_id,lock_pid FROM state").fetchall()
         locked = result[0]["lock_pid"] if result else None
-        if locked and self.mode is OVERWRITE:
+        # a lock marks a store whose session did not end through close(), so
+        # its records were never confirmed complete. no mode that writes may
+        # build on that without being told to
+        # is not None rather than truthy: a lock recorded as 0 is a lock
+        if locked is not None:
             msg = (
-                f"You are trying to OVERWRITE {str(self.source)!r} which is "
-                "locked. Use APPEND mode or unlock."
+                f"You are trying to open {str(self.source)!r} for writing but "
+                f"it is locked by {locked}. Call unlock(force=True) on a "
+                "writable store to release it."
             )
             raise OSError(
                 msg,
@@ -440,12 +458,13 @@ class DataStoreSqlite(DataStoreABC):
         if self.mode is READONLY:
             return
 
+        db = self._connection()
         lock_id = self._lock_id
         if lock_id is None:
             return
 
         if lock_id == os.getpid() or force:
-            self.db.execute("UPDATE state SET lock_pid=NULL WHERE state_id=1")
+            db.execute("UPDATE state SET lock_pid=NULL WHERE state_id=1")
             self._holds_lock = False
 
         return
