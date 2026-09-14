@@ -507,6 +507,25 @@ def test_drop_not_completed_by_id_keeps_what_limit_hides(nc_dstore):
     assert hidden.exists()
 
 
+@pytest.mark.parametrize(
+    "unique_id",
+    ["nc1", "nc1.fasta", "nc1.json", "nc1.txt", "nc1.fasta.gz", "a.b.fasta"],
+)
+def test_write_drops_the_twin_however_the_id_is_spelled(w_dstore, unique_id):
+    """the record a write supersedes is found whatever extension the id carries"""
+    # nc1.json.gz is absent from the shapes above because it is stored
+    # under that name, which the *.json scan behind not_completed does not
+    # match, so the first assertion rather than the drop would fail
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    w_dstore.write_not_completed(unique_id=unique_id, data=record.to_json())
+    nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
+    assert len(list(nc_dir.glob("*.json"))) == 1
+
+    w_dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+    assert list(nc_dir.glob("*.json")) == []
+
+
 def test_write_leaves_unrelated_not_completed_records(w_dstore):
     """superseding one record does not touch another whose name ends the same"""
     # write("c1.fasta") looks for not_completed/c1.json, and nc1.json and

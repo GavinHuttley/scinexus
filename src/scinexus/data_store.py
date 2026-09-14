@@ -557,8 +557,9 @@ class DataStoreDirectory(DataStoreABC):
             if provided, only drop the record with this identifier,
             otherwise drop all not-completed records
         """
-        target = (unique_id or "").replace(f".{self.suffix}", "")
-        target = f"{target}.json" if target else target
+        # named by the rule that stored it, given the suffix
+        # write_not_completed passes to _write
+        target = self._record_name(unique_id, "json")[0] if unique_id else ""
         # members carry the subdirectory, so the comparison below needs the
         # same form. built once: write() drops a twin on every call
         wanted = str(Path(NOT_COMPLETED_TABLE) / target) if target else ""
@@ -641,6 +642,32 @@ class DataStoreDirectory(DataStoreABC):
                 self._not_completed = found
             return self._not_completed
 
+    def _record_name(self, unique_id: str, suffix: str) -> tuple[str, str | None]:
+        """the file name a record with this identifier is stored under
+
+        Parameters
+        ----------
+        unique_id
+            identifier as given by the caller
+        suffix
+            format suffix the record is stored with
+
+        Returns
+        -------
+        the file name, and the compression suffix it carries if any
+        """
+        sfx, cmp = get_format_suffixes(unique_id)
+        if sfx != suffix:
+            unique_id = f"{Path(unique_id).stem}.{suffix}"
+            sfx, cmp = get_format_suffixes(unique_id)
+
+        name = (
+            unique_id.replace(self.suffix, suffix)
+            if self.suffix and self.suffix != suffix
+            else unique_id
+        )
+        return name, cmp
+
     def _write(
         self,
         *,
@@ -649,17 +676,7 @@ class DataStoreDirectory(DataStoreABC):
         suffix: str,
         data: str,
     ) -> DataMember | None:
-        # check suffix compatible with this datastore
-        sfx, cmp = get_format_suffixes(unique_id)
-        if sfx != suffix:
-            unique_id = f"{Path(unique_id).stem}.{suffix}"
-            sfx, cmp = get_format_suffixes(unique_id)
-
-        unique_id = (
-            unique_id.replace(self.suffix, suffix)
-            if self.suffix and self.suffix != suffix
-            else unique_id
-        )
+        unique_id, cmp = self._record_name(unique_id, suffix)
         member_id = str(Path(subdir) / unique_id)
         super().write(unique_id=member_id, data=data)
         # unique_id names a completed record whatever subdir holds, so this
