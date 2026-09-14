@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import contextlib
 import datetime
 import os
 import re
 import sqlite3
-import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -145,9 +143,8 @@ class DataStoreSqlite(DataStoreABC):
         self._limit = limit
         self._verbose = verbose
         self._db: sqlite3.Connection | None = None
-        self._open = False
+        self._closed = False
         self._log_id: int | None = None
-        weakref.finalize(self, self.close)
 
     def __getstate__(self) -> dict[str, object]:
         return {**self._init_vals}
@@ -158,8 +155,13 @@ class DataStoreSqlite(DataStoreABC):
         self.__dict__.update(obj.__dict__)
 
     def __del__(self) -> None:
-        """close the db connection when the object is deleted"""
-        self.close()
+        """drop the connection, leaving the lock to mark an unclosed store"""
+        # no SQL: this runs during collection and at interpreter exit, where
+        # a statement can block on another connection's write lock or find
+        # the machinery it needs already torn down
+        db: sqlite3.Connection | None = getattr(self, "_db", None)
+        if db is not None:
+            db.close()
 
     @property
     def source(self) -> str | Path:
@@ -175,12 +177,18 @@ class DataStoreSqlite(DataStoreABC):
     def limit(self) -> int | None:
         return self._limit
 
+    def _check_open(self) -> None:
+        """raise if the store has been closed"""
+        if self._closed:
+            msg = f"data store {str(self.source)!r} is closed"
+            raise OSError(msg)
+
     @property
     def db(self) -> sqlite3.Connection:
+        self._check_open()
         if self._db is None:
             db_func = open_sqlite_db_ro if self.mode is READONLY else open_sqlite_db_rw
             self._db = db_func(self.source)
-            self._open = True
             self.lock()
 
         if self._db is None:
@@ -197,13 +205,25 @@ class DataStoreSqlite(DataStoreABC):
         ).fetchone()["log_id"]
 
     def close(self) -> None:
-        """close the database connection"""
+        """release the lock and the connection, ending the store's life"""
         db: sqlite3.Connection | None = getattr(self, "_db", None)
         if db is None:
+            self._closed = True
             return
-        with contextlib.suppress(sqlite3.ProgrammingError):
+        try:
+            # an explicit close is the only thing that releases the lock, so
+            # one still set marks a store whose session ended another way
+            self.unlock()
+        finally:
+            # in a finally so a store whose lock could not be released is
+            # still shut, rather than left usable by the failure
+            self._db = None
+            self._closed = True
+            # all three describe the connection that is going
+            self._log_id = None
+            self._completed = []
+            self._not_completed = []
             db.close()
-        self._open = False
 
     def read(self, unique_id: str) -> str | bytes:
         """
@@ -366,6 +386,7 @@ class DataStoreSqlite(DataStoreABC):
         same owner and both believe they hold it. Guarding a store against
         concurrent threads needs a different mechanism.
         """
+        self._check_open()
         if self.mode is READONLY:
             return
         if self._db is None:
@@ -400,6 +421,7 @@ class DataStoreSqlite(DataStoreABC):
         The pid test is a tautology within a process, since threads share a
         pid, so any thread can release a lock taken by another one.
         """
+        self._check_open()
         if self.mode is READONLY:
             return
 

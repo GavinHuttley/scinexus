@@ -1,3 +1,4 @@
+import gc
 import os
 import sqlite3
 from pathlib import Path
@@ -339,6 +340,104 @@ def test_new_write_id_includes_table(table_name):
     m = dstore.write(unique_id=identifier, data=data)
     got = dstore.read(m.unique_id)
     assert got == data
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda d: d.read("r1"),
+        lambda d: d.completed,
+        lambda d: d.not_completed,
+        lambda d: d.logs,
+        lambda d: len(d),
+        lambda d: d.write(unique_id="r2", data="d2"),
+    ],
+)
+def test_use_after_close_raises(tmp_dir, operation):
+    """a closed store refuses to act rather than half working"""
+    # the path is kept clear of the word the match looks for: the lock
+    # error quotes the path, so a store called closed.sqlitedb would let
+    # "which is locked" satisfy an assertion meant for "is closed"
+    path = tmp_dir / "shut.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    dstore.close()
+
+    with pytest.raises(OSError, match="is closed"):
+        operation(dstore)
+
+
+def test_closing_twice(tmp_dir):
+    """a second close is not an error"""
+    path = tmp_dir / "twice.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+
+    dstore.close()
+    dstore.close()
+
+    assert dstore._db is None
+
+
+def test_close_before_the_database_is_opened(tmp_dir):
+    """closing a store that never opened its database still ends it"""
+    # the connection is made on first use, so this is the ordinary shape of
+    # a store that is built and then abandoned
+    path = tmp_dir / "untouched.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+
+    dstore.close()
+
+    with pytest.raises(OSError, match="is closed"):
+        dstore.write(unique_id="r1", data="d1")
+
+
+@pytest.mark.parametrize("operation", [lambda d: d.lock(), lambda d: d.unlock()])
+def test_lock_operations_on_a_closed_store(tmp_dir, operation):
+    """taking or releasing the lock of a closed store is refused"""
+    path = tmp_dir / "shutlock.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    dstore.close()
+
+    with pytest.raises(OSError, match="is closed"):
+        operation(dstore)
+
+
+def test_collection_without_close_keeps_the_lock(tmp_dir):
+    """a store dropped without being closed leaves its lock behind"""
+    # the lock marks a session that did not end through close(), so the
+    # finaliser must not release it. it also issues no SQL, which at
+    # interpreter exit could block on another connection or find the
+    # machinery it needs gone
+    path = tmp_dir / "dropped.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    del dstore
+    gc.collect()
+
+    db = sqlite3.connect(path)
+    try:
+        held = db.execute("SELECT lock_pid FROM state").fetchone()[0]
+    finally:
+        db.close()
+    assert held == os.getpid()
+
+
+def test_close_hands_the_database_on(tmp_dir):
+    """a closed store leaves the database open to a new one"""
+    # the lock names the process, so without releasing it here the store
+    # that follows cannot take the database in a writable mode
+    path = tmp_dir / "handover.sqlitedb"
+    first = DataStoreSqlite(path, mode=OVERWRITE)
+    first.write(unique_id="r1", data="d1")
+    first.close()
+
+    second = DataStoreSqlite(path, mode=OVERWRITE)
+
+    assert second.read("r1") == "d1"
+    assert second._lock_id == os.getpid()
+    second.close()
 
 
 def test_is_locked(tmp_dir):
@@ -754,7 +853,6 @@ def test_write_citations_no_table(tmp_dir, sample_citations):
         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
     )
     dstore._db.row_factory = sqlite3.Row
-    dstore._open = True
     assert not dstore._has_citations_table()
     dstore.write_citations(data=sample_citations)
     assert dstore._has_citations_table()
