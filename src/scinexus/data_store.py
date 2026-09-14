@@ -557,19 +557,24 @@ class DataStoreDirectory(DataStoreABC):
             if provided, only drop the record with this identifier,
             otherwise drop all not-completed records
         """
-        unique_id = (unique_id or "").replace(f".{self.suffix}", "")
-        unique_id = f"{unique_id}.json" if unique_id else unique_id
+        target = (unique_id or "").replace(f".{self.suffix}", "")
+        target = f"{target}.json" if target else target
+        # members carry the subdirectory, so the comparison below needs the
+        # same form. built once: write() drops a twin on every call
+        wanted = str(Path(NOT_COMPLETED_TABLE) / target) if target else ""
         nc_dir = self.source / NOT_COMPLETED_TABLE
         md5_dir = self.source / MD5_TABLE
         # the removals and the reset are one region, so a scan cannot run
         # against a half-emptied directory. it does NOT stop a caller that
-        # already holds the list from watching it shrink: the properties
-        # return the live object, not a copy. nor is it atomic -- the json
-        # unlink below, and the rmdir, can still raise and leave the cache
+        # already holds the list from watching it shrink: the members are
+        # removed from that list rather than it being rebound. nor is it
+        # atomic -- an unlink, and the rmdir, can still raise and leave it
         # torn
         with self._cache_lock:
             for m in list(self.not_completed):
-                if unique_id and not m.unique_id.endswith(unique_id):
+                # exact: an endswith test also matches a record whose name
+                # merely ends with this one, such as abc1.json for c1.json
+                if wanted and m.unique_id != wanted:
                     continue
 
                 file = nc_dir / Path(m.unique_id).name
@@ -581,7 +586,7 @@ class DataStoreDirectory(DataStoreABC):
                 md5_file.unlink(missing_ok=True)
                 self.not_completed.remove(m)
 
-            if not unique_id:
+            if not target:
                 Path(self.source / NOT_COMPLETED_TABLE).rmdir()
                 # reset _not_completed to force not_completed to rebuild it
                 self._not_completed: list[DataMemberABC] = []

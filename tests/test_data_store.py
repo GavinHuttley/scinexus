@@ -356,8 +356,6 @@ def test_write_not_completed_twice_caches_one_member(w_dstore):
     assert len(list(nc_dir.glob("*.json"))) == 1
     assert [m.unique_id for m in w_dstore._not_completed] == expect
 
-    # a duplicate member means this unlinks the same file twice, and the
-    # second unlink raises before the rmdir that ends the pass
     w_dstore.drop_not_completed()
 
     assert not nc_dir.exists()
@@ -479,6 +477,20 @@ def test_drop_not_completed_without_md5_file(mixed_md5_dstore):
 
     assert not (source / NOT_COMPLETED_TABLE).exists()
     assert list((source / MD5_TABLE).glob("*.txt")) == []
+
+
+def test_write_leaves_unrelated_not_completed_records(w_dstore):
+    """superseding one record does not touch another whose name ends the same"""
+    # write("c1.fasta") looks for not_completed/c1.json, and nc1.json and
+    # abc1.json both end with that name
+    for uid in ("nc1", "abc1", "c1"):
+        record = NotCompleted(NotCompletedType.ERROR, "location", "message", source=uid)
+        w_dstore.write_not_completed(unique_id=uid, data=record.to_json())
+
+    w_dstore.write(unique_id="c1.fasta", data=">s\nACGT\n")
+
+    nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
+    assert sorted(p.name for p in nc_dir.glob("*.json")) == ["abc1.json", "nc1.json"]
 
 
 def test_write_read_only_datastore(ro_dstore):
