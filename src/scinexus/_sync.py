@@ -1,8 +1,6 @@
 """synchronisation helpers
 
-The package is currently free of threading primitives -- every parallel
-backend in :mod:`scinexus.parallel` is process based. These helpers exist
-to facilitate usage in free-threaded CPython.
+Helpers to facilitate usage in free-threaded CPython.
 """
 
 import threading
