@@ -586,8 +586,10 @@ class DataStoreDirectory(DataStoreABC):
                 md5_file.unlink(missing_ok=True)
                 self.not_completed.remove(m)
 
-            if not target:
-                Path(self.source / NOT_COMPLETED_TABLE).rmdir()
+            # limit makes not_completed a view, so a full drop empties the
+            # view and leaves on disk whatever it was not showing
+            if not target and not any(nc_dir.iterdir()):
+                nc_dir.rmdir()
                 # reset _not_completed to force not_completed to rebuild it
                 self._not_completed: list[DataMemberABC] = []
 

@@ -479,6 +479,34 @@ def test_drop_not_completed_without_md5_file(mixed_md5_dstore):
     assert list((source / MD5_TABLE).glob("*.txt")) == []
 
 
+def test_drop_not_completed_keeps_what_limit_hides(nc_dstore):
+    """a full drop empties the limited view and keeps the rest"""
+    nc_dstore._limit = 1
+    nc_dstore._not_completed = []
+    nc_dir = nc_dstore.source / NOT_COMPLETED_TABLE
+    assert len(nc_dstore.not_completed) == 1
+    assert len(list(nc_dir.glob("*.json"))) == 3
+
+    nc_dstore.drop_not_completed()
+
+    # records remain, so the directory is still in use
+    assert nc_dir.exists()
+    assert len(list(nc_dir.glob("*.json"))) == 2
+
+
+def test_drop_not_completed_by_id_keeps_what_limit_hides(nc_dstore):
+    """a record the limited view omits is not dropped by identifier"""
+    nc_dstore._limit = 1
+    nc_dstore._not_completed = []
+    nc_dir = nc_dstore.source / NOT_COMPLETED_TABLE
+    shown = {Path(m.unique_id).name for m in nc_dstore.not_completed}
+    hidden = next(p for p in nc_dir.glob("*.json") if p.name not in shown)
+
+    nc_dstore.drop_not_completed(unique_id=hidden.stem)
+
+    assert hidden.exists()
+
+
 def test_write_leaves_unrelated_not_completed_records(w_dstore):
     """superseding one record does not touch another whose name ends the same"""
     # write("c1.fasta") looks for not_completed/c1.json, and nc1.json and
