@@ -181,9 +181,10 @@ class DataStoreABC(LockMixin, ABC):
         return f"{name}({construction})"
 
     def __str__(self) -> str:
-        num = len(self.members)
+        members = self.members
+        num = len(members)
         name = self.__class__.__name__
-        sample = f"{list(self[:2])}..." if num > 2 else list(self)
+        sample = f"{members[:2]}..." if num > 2 else members
         return f"{num}x member {name}(source='{self.source}', members={sample})"
 
     @overload
@@ -246,7 +247,12 @@ class DataStoreABC(LockMixin, ABC):
 
     @property
     def members(self) -> list[DataMemberABC]:
-        return self.completed + self.not_completed
+        # one acquisition spanning both, so the halves describe the same
+        # moment. write() takes a record out of not_completed and then puts
+        # it into completed, so halves read either side of that pair of
+        # steps account for it in neither
+        with self._cache_lock:
+            return self.completed + self.not_completed
 
     def __iter__(self) -> Iterator[DataMemberABC]:
         yield from self.members
@@ -315,9 +321,10 @@ class DataStoreABC(LockMixin, ABC):
     def drop_not_completed(self, *, unique_id: str | None = None) -> None: ...
 
     def _validate(self) -> dict[str, object]:
-        correct_md5 = len(self.members)
+        members = self.members
+        correct_md5 = len(members)
         missing_md5 = 0
-        for m in self.members:
+        for m in members:
             data = m.read()
             md5 = self.md5(m.unique_id)
             if md5 is None:
@@ -326,7 +333,7 @@ class DataStoreABC(LockMixin, ABC):
             elif md5 != get_text_hexdigest(data):
                 correct_md5 -= 1
 
-        incorrect_md5 = len(self.members) - correct_md5 - missing_md5
+        incorrect_md5 = len(members) - correct_md5 - missing_md5
 
         return {
             "md5_correct": correct_md5,
@@ -728,9 +735,11 @@ class DataStoreDirectory(DataStoreABC):
             suffix=self.suffix,
             data=data,
         )
-        self.drop_not_completed(unique_id=unique_id)
-        if member is not None:
-            with self._cache_lock:
+        # one region: the record leaves not_completed and enters completed
+        # together, so no reader finds it in neither
+        with self._cache_lock:
+            self.drop_not_completed(unique_id=unique_id)
+            if member is not None:
                 self._append_once(self._completed, member)
         return member  # type: ignore[return-value]
 

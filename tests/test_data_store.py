@@ -577,6 +577,34 @@ def test_append(w_dstore):
     assert got == data
 
 
+class _CountingMembersStore(DataStoreDirectory):
+    """counts how often the member list gets built"""
+
+    members_built = 0
+
+    @property
+    def members(self):
+        self.members_built += 1
+        return super().members
+
+
+@pytest.mark.parametrize("summary", [lambda d: d.validate(), str])
+def test_summaries_build_the_member_list_once(write_dir, summary):
+    """a summary works from one member list rather than rebuilding it"""
+    # each build is a fresh concatenation of the two cached halves, so two
+    # of them taken either side of a write disagree about what is held
+    dstore = _CountingMembersStore(write_dir, suffix="fasta", mode=OVERWRITE)
+    for i in range(3):
+        dstore.write(unique_id=f"c{i}.fasta", data=f">s{i}\nACGT\n")
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    dstore.write_not_completed(unique_id="nc1", data=record.to_json())
+
+    dstore.members_built = 0
+    summary(dstore)
+
+    assert dstore.members_built == 1
+
+
 def test_no_not_completed_subdir(nc_dstore):
     expect = f"{len(nc_dstore.completed) + len(nc_dstore.not_completed)}x member"
     assert str(nc_dstore).startswith(expect)
@@ -1461,6 +1489,7 @@ _CONCURRENT_MEMBERS = 300
 _CONCURRENT_READERS = 8
 _CONCURRENT_ROUNDS = 20
 _WRITE_ROUNDS = 40
+_MOVED_RECORDS = 40
 # generous: it only has to exceed a scan, and a hang here should fail not stall
 _SYNC_TIMEOUT = 30
 
@@ -1616,6 +1645,47 @@ def test_drop_not_completed_twice(nc_dstore):
     nc_dstore.drop_not_completed()
 
     assert nc_dstore.not_completed == []
+
+
+def test_a_write_never_hides_the_record_it_moves(write_dir):
+    """a record moving from not_completed to completed stays countable"""
+    dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
+    for i in range(_MOVED_RECORDS):
+        record = NotCompleted(
+            NotCompletedType.ERROR,
+            "location",
+            "message",
+            source=f"r{i}",
+        )
+        dstore.write_not_completed(unique_id=f"r{i}", data=record.to_json())
+
+    observed = set()
+    stop = threading.Event()
+
+    def count_members():
+        while not stop.is_set():
+            observed.add(len(dstore))
+
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        with ThreadPoolExecutor(max_workers=_CONCURRENT_READERS + 1) as executor:
+            readers = [
+                executor.submit(count_members) for _ in range(_CONCURRENT_READERS)
+            ]
+            for i in range(_MOVED_RECORDS):
+                dstore.write(unique_id=f"r{i}.fasta", data=f">s{i}\nACGT\n")
+            stop.set()
+            for reader in readers:
+                reader.result(timeout=_SYNC_TIMEOUT)
+    finally:
+        sys.setswitchinterval(old_interval)
+
+    # each write moves one record between the halves, so the count is
+    # invariant. only the low side is asserted: a count above it comes from
+    # the completed file landing before the not-completed record is
+    # removed, which is a state the directory itself passes through
+    assert min(observed) == _MOVED_RECORDS
 
 
 def _scan_completed(dstore, barrier, _):
