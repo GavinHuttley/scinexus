@@ -363,6 +363,69 @@ def test_write_not_completed_twice_caches_one_member(w_dstore):
     assert not nc_dir.exists()
 
 
+def test_append_mode_refuses_to_rewrite_a_not_completed_record(w_dstore):
+    """APPEND refuses a second not-completed record, as it does a completed one"""
+    data = NotCompleted(
+        NotCompletedType.ERROR,
+        "location",
+        "message",
+        source="nc1",
+    ).to_json()
+    w_dstore.write_not_completed(unique_id="nc1", data=data)
+    path = w_dstore.source / NOT_COMPLETED_TABLE / "nc1.json"
+
+    w_dstore._mode = APPEND
+
+    with pytest.raises(OSError):
+        w_dstore.write_not_completed(unique_id="nc1", data='{"replaced": true}')
+
+    assert path.read_text() == data
+
+
+def test_append_mode_refuses_to_rewrite_a_compressed_not_completed(w_dstore):
+    """the APPEND refusal covers a not-completed record written compressed"""
+    # a compressed id ends in neither of the suffixes __contains__ treats
+    # as complete, so it is the case where suffix completion can corrupt it
+    data = NotCompleted(
+        NotCompletedType.ERROR,
+        "location",
+        "message",
+        source="nc1",
+    ).to_json()
+    w_dstore.write_not_completed(unique_id="nc1.json.gz", data=data)
+    assert f"{NOT_COMPLETED_TABLE}/nc1.json.gz" in w_dstore
+
+    w_dstore._mode = APPEND
+
+    with pytest.raises(OSError):
+        w_dstore.write_not_completed(unique_id="nc1.json.gz", data="{}")
+
+
+def test_write_not_completed_beside_a_colliding_completed_record(write_dir):
+    """a completed record of the same name does not suppress the write"""
+    # a store whose own suffix is json is where the completed id nc1.json
+    # and the not-completed one collide once the bare nc1 is completed
+    dstore = DataStoreDirectory(write_dir, suffix="json", mode=OVERWRITE)
+    dstore.write(unique_id="nc1.json", data='{"completed": true}')
+    dstore._mode = APPEND
+
+    member = dstore.write_not_completed(unique_id="nc1", data='{"failed": true}')
+
+    assert member is not None
+    assert (write_dir / NOT_COMPLETED_TABLE / "nc1.json").exists()
+
+
+def test_append_mode_refuses_a_rename_onto_an_existing_record(w_dstore):
+    """APPEND refuses a write whose identifier is renamed onto one in the store"""
+    # c1.txt carries the wrong suffix for this store and becomes c1.fasta
+    # before anything is written, so only the renamed id can be checked
+    w_dstore.write(unique_id="c1.fasta", data=">first\nAAAA\n")
+    w_dstore._mode = APPEND
+
+    with pytest.raises(OSError):
+        w_dstore.write(unique_id="c1.txt", data=">second\nTTTT\n")
+
+
 def test_write_twice_caches_one_member_for_log_suffix(write_dir):
     """a store whose own suffix is log records a re-written member once"""
     # log is the one suffix _write exempts from its duplicate guard, so

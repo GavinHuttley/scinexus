@@ -505,7 +505,9 @@ class DataStoreDirectory(DataStoreABC):
     def __contains__(self, item: object) -> bool:
         if not isinstance(item, str):
             return False
-        if not _special_suffixes.search(item):
+        # an item naming a subdirectory is a member id, exact as given. the
+        # completion below is for bare caller input such as "brca1"
+        if not Path(item).parent.name and not _special_suffixes.search(item):
             item = f"{item}.{self.suffix}" if self.suffix not in item else item
         return super().__contains__(item)
 
@@ -640,7 +642,6 @@ class DataStoreDirectory(DataStoreABC):
         suffix: str,
         data: str,
     ) -> DataMember | None:
-        super().write(unique_id=unique_id, data=data)
         # check suffix compatible with this datastore
         sfx, cmp = get_format_suffixes(unique_id)
         if sfx != suffix:
@@ -652,7 +653,11 @@ class DataStoreDirectory(DataStoreABC):
             if self.suffix and self.suffix != suffix
             else unique_id
         )
-        if suffix != "log" and unique_id in self:
+        member_id = str(Path(subdir) / unique_id)
+        super().write(unique_id=member_id, data=data)
+        # unique_id names a completed record whatever subdir holds, so this
+        # can only speak for completed ones
+        if not subdir and suffix != "log" and unique_id in self:
             return None
         newline = None if cmp else "\n"
         mode = "wt" if cmp else "w"
