@@ -7,6 +7,7 @@ import io
 import pathlib
 import typing
 import urllib.response
+import warnings
 import zipfile
 from urllib.parse import urlparse
 
@@ -754,8 +755,12 @@ def test_open_zip_write_repairs_an_already_duplicated_member(tmp_path):
     outpath = tmp_path / "sample.zip"
     with zipfile.ZipFile(outpath, "w") as zf:
         zf.writestr("sample/target.tsv", "first\n")
-    with zipfile.ZipFile(outpath, "a") as zf:
-        zf.writestr("sample/target.tsv", "second\n")
+    with warnings.catch_warnings():
+        # zipfile warns on the duplicate name, which is the corruption this
+        # test creates on purpose so it can check atomic_write repairs it
+        warnings.simplefilter("ignore", UserWarning)
+        with zipfile.ZipFile(outpath, "a") as zf:
+            zf.writestr("sample/target.tsv", "second\n")
 
     aw = atomic_write(pathlib.Path("sample/target.tsv"), in_zip=outpath, mode="wt")
     aw.write("third\n")

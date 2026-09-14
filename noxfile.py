@@ -10,7 +10,9 @@ import nox
 if sys.version_info >= (3, 12):
     os.environ["COVERAGE_CORE"] = "sysmon"
 
-_py_versions = range(11, 15)
+# "3.14t" is the free-threaded (no-GIL) build; uv can fetch it as
+# cpython-3.14.x+freethreaded. It is exploratory here, not yet a support claim.
+_py_versions = [f"3.{v}" for v in range(11, 15)] + ["3.14t"]
 
 nox.options.default_venv_backend = "uv"
 
@@ -24,23 +26,36 @@ def fmt(session: nox.Session) -> None:
 @nox.session(python="3.14")
 def cogdocs(session: nox.Session) -> None:
     session.install("-e", ".", "--group", "dev")
-    cmnd = 'find docs -name "*.md" | xargs uv run --group dev cog -r -I docs/scripts'
+    cmnd = (
+        'find docs -name "*.md" | xargs '
+        "uv run --group dev --group doc cog -r -I docs/scripts"
+    )
     subprocess.run(cmnd, check=True, shell=True)  # noqa: S602
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+def _mypy(session: nox.Session) -> None:
+    # each session gets its own cache: they install different packages, and a
+    # cache shared with a session where an optional extra was present hides
+    # the import errors the other session exists to catch
+    session.run("mypy", f"--cache-dir=.mypy_cache/{session.name}", "src/scinexus/")
+
+
+@nox.session(python=_py_versions)
 def type_check(session):
     session.install("-e", ".", "--group", "dev")
-    session.run("mypy", "src/scinexus/")
+    _mypy(session)
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+@nox.session(python=_py_versions)
 def test_types(session):
-    session.install("-e", ".")
-    session.run("mypy", "src/scinexus/")
+    # mypy is installed explicitly rather than via the dev group: this session
+    # deliberately type checks against runtime dependencies only. Without it
+    # nox falls back to whatever mypy is on PATH, on the wrong interpreter.
+    session.install("-e", ".", "mypy")
+    _mypy(session)
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+@nox.session(python=_py_versions)
 def test(session):
     session.install("-e", ".", "--group", "dev")
     session.run("uv", "pip", "list")
@@ -65,7 +80,7 @@ def test(session):
     )
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+@nox.session(python=_py_versions)
 def testmpi(session):
     session.install("-e", ".[mpi]", "--group", "dev")
     session.chdir("tests")
@@ -89,7 +104,7 @@ def testmpi(session):
     )
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+@nox.session(python=_py_versions)
 def testcov(session):
     session.install("-e", ".", "--group", "dev")
     cover_mpi = shutil.which("mpiexec") is not None
@@ -160,9 +175,9 @@ def testcov(session):
         i += 2
 
 
-@nox.session(python=[f"3.{v}" for v in _py_versions])
+@nox.session(python=_py_versions)
 def test_docs(session):
-    session.install("-e", ".", "--group", "dev")
+    session.install("-e", ".", "--group", "dev", "--group", "doc")
     session.run("uv", "pip", "list")
     # doctest modules within scinexus
     session.chdir("docs")

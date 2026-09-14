@@ -7,9 +7,12 @@ jobs:
     name: "Test on Python ${{ matrix.python-version }} (${{ matrix.os }})"
     runs-on: ${{ matrix.os }}
     strategy:
+      # without this a failure on the exploratory 3.14t build cancels the
+      # supported cells, hiding whether they would have passed
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.11", "3.12", "3.13", "3.14", "3.14t"]
     steps:
       - uses: "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" # v7.0.1
         with:
@@ -19,6 +22,14 @@ jobs:
       - uses: "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97" # v7.0.0
         with:
             python-version: "${{ matrix.python-version }}"
+
+      # nox is invoked with --force-python python, so it takes whatever is on
+      # PATH. A GIL-enabled build there would pass silently as a duplicate of
+      # the 3.14 cell rather than testing anything new.
+      - name: "Confirm the interpreter is free-threaded"
+        if: endsWith(matrix.python-version, 't')
+        shell: bash
+        run: python -c "import sys; print(sys.version); assert not sys._is_gil_enabled()"
 
       - name: Install MPI (Ubuntu)
         if: startsWith(matrix.os, 'ubuntu')
@@ -37,6 +48,13 @@ jobs:
         run: |
           uv run --group dev nox -db uv --force-python python -s test
           uv run --group dev nox -db uv --force-python python -s test_types
+
+      # the doc group pins cogent3[extra], which pulls kaleido and so orjson,
+      # and orjson publishes no free-threaded wheels
+      - name: "Run doc tests for ${{ matrix.python-version }}"
+        if: matrix.python-version != '3.14t'
+        shell: bash
+        run: |
           uv run --group dev nox -db uv --force-python python -s test_docs
 
       - name: "Run MPI tests"
@@ -66,7 +84,7 @@ jobs:
       - name: "test the docs code"
         run: |
           uv run --group dev nox -s cogdocs
-          uv run --group dev zensical build
+          uv run --group dev --group doc zensical build
 
   build:
     name: Build wheel and sdist

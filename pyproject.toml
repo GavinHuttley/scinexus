@@ -39,21 +39,24 @@ rich = ["rich"]
 
 [dependency-groups]
 dev = [
-    "pymdown-extensions>=10.21.2",
-    "zensical>=0.0.59",
-    "cogent3[extra]>=2026.4.20a0",
+    "cogent3>=2026.4.20a0",
     "pytest",
     "pytest-cov",
-    "pytest-markdown-docs",
     "pytest-xdist",
     "mypy",
     "nox",
     "numpy",
     "rich",
     "ruff",
+]
+doc = [
+    "cogent3[extra]>=2026.4.20a0",
+    "pymdown-extensions>=10.21.2",
+    "zensical>=0.0.59",
+    "mkdocstrings-python>=2.0.3",
     "cogapp>=3.6.0",
     "click>=8.3.2",
-    "mkdocstrings-python>=2.0.3",
+    "pytest-markdown-docs",
 ]
 
 [build-system]

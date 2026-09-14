@@ -2887,20 +2887,23 @@ rich = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "cogent3" },
+    { name = "mypy" },
+    { name = "nox" },
+    { name = "numpy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-xdist" },
+    { name = "rich" },
+    { name = "ruff" },
+]
+doc = [
     { name = "click" },
     { name = "cogapp" },
     { name = "cogent3", extra = ["extra"] },
     { name = "mkdocstrings-python" },
-    { name = "mypy" },
-    { name = "nox" },
-    { name = "numpy" },
     { name = "pymdown-extensions" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
     { name = "pytest-markdown-docs" },
-    { name = "pytest-xdist" },
-    { name = "rich" },
-    { name = "ruff" },
     { name = "zensical" },
 ]
 
@@ -2919,20 +2922,23 @@ provides-extras = ["loky", "mpi", "rich"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "cogent3", specifier = ">=2026.4.20a0" },
+    { name = "mypy" },
+    { name = "nox" },
+    { name = "numpy" },
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-xdist" },
+    { name = "rich" },
+    { name = "ruff" },
+]
+doc = [
     { name = "click", specifier = ">=8.3.2" },
     { name = "cogapp", specifier = ">=3.6.0" },
     { name = "cogent3", extras = ["extra"], specifier = ">=2026.4.20a0" },
     { name = "mkdocstrings-python", specifier = ">=2.0.3" },
-    { name = "mypy" },
-    { name = "nox" },
-    { name = "numpy" },
     { name = "pymdown-extensions", specifier = ">=10.21.2" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
     { name = "pytest-markdown-docs" },
-    { name = "pytest-xdist" },
-    { name = "rich" },
-    { name = "ruff" },
     { name = "zensical", specifier = ">=0.0.59" },
 ]
 
