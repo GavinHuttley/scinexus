@@ -1,6 +1,10 @@
+import functools
 import json
 import pathlib
 import shutil
+import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from itertools import product
 from pathlib import Path
 from pickle import dumps, loads
@@ -1229,3 +1233,153 @@ def test_get_data_source_seqcoll(klass):
     )
     got = get_data_source(obj)
     assert got == "path.txt"
+
+
+_CONCURRENT_MEMBERS = 300
+_CONCURRENT_READERS = 8
+_CONCURRENT_ROUNDS = 20
+_WRITE_ROUNDS = 40
+# generous: it only has to exceed a scan, and a hang here should fail not stall
+_SYNC_TIMEOUT = 30
+
+
+@pytest.fixture
+def many_member_dir(tmp_dir):
+    """a store directory holding enough members to widen the scan window"""
+    source = Path(tmp_dir) / "many_members"
+    (source / NOT_COMPLETED_TABLE).mkdir(parents=True, exist_ok=True)
+    for i in range(_CONCURRENT_MEMBERS):
+        (source / f"id_{i}.fasta").write_text(f">seq_{i}\nACGT\n")
+        nc = NotCompleted(
+            NotCompletedType.ERROR, "location", "message", source=f"id_{i}"
+        )
+        (source / NOT_COMPLETED_TABLE / f"id_{i}.json").write_text(nc.to_json())
+    yield source
+    shutil.rmtree(source, ignore_errors=True)
+
+
+@pytest.fixture(params=["directory", "zipped"])
+def many_member_store(request, many_member_dir):
+    """the same members as a directory store and as a zipped store"""
+    if request.param == "directory":
+        return DataStoreDirectory(many_member_dir, suffix="fasta", mode=READONLY)
+
+    path = shutil.make_archive(
+        base_name=str(many_member_dir.parent / many_member_dir.name),
+        format="zip",
+        base_dir=many_member_dir.name,
+        root_dir=many_member_dir.parent,
+    )
+    return ReadOnlyDataStoreZipped(pathlib.Path(path), suffix="fasta")
+
+
+def _count_members(dstore, attr, barrier, _):
+    barrier.wait(timeout=_SYNC_TIMEOUT)
+    return len(getattr(dstore, attr))
+
+
+@pytest.mark.parametrize("attr", ["completed", "not_completed"])
+def test_member_list_is_whole_for_concurrent_readers(many_member_store, attr):
+    """concurrent readers each see every member, never a partial scan
+
+    The scan must not publish its backing list until the list is complete.
+    Filling the list in place instead makes it truthy from the first append
+    onwards, so a second thread arriving mid-scan fails the emptiness guard,
+    takes the early return, and is handed the list while it is still being
+    filled. It then sees a short count and nothing raises.
+    """
+    private = f"_{attr}"
+    observed = set()
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for _ in range(_CONCURRENT_ROUNDS):
+            setattr(many_member_store, private, [])
+            barrier = threading.Barrier(_CONCURRENT_READERS, timeout=_SYNC_TIMEOUT)
+            read = functools.partial(_count_members, many_member_store, attr, barrier)
+            with ThreadPoolExecutor(max_workers=_CONCURRENT_READERS) as executor:
+                observed.update(executor.map(read, range(_CONCURRENT_READERS)))
+    finally:
+        sys.setswitchinterval(old_interval)
+
+    assert observed == {_CONCURRENT_MEMBERS}
+
+
+class _PausingWriteStore(DataStoreDirectory):
+    """holds a writer between the file landing on disk and the cache append
+
+    ``_write`` puts the file on disk and ``write`` records the member in the
+    cached list afterwards. Pausing in that gap makes the window a test can
+    drive deterministically rather than one it has to race for.
+    """
+
+    def _write(self, **kwargs):
+        member = super()._write(**kwargs)
+        self.file_on_disk.set()
+        self.reader_published.wait(timeout=_SYNC_TIMEOUT)
+        return member
+
+
+def test_concurrent_write_is_recorded_once(write_dir):
+    """a member written while a reader scans is recorded exactly once
+
+    A fresh store's first write is the exposed case: the scan legitimately
+    finds nothing, so the emptiness guard stays open. A reader entering
+    after the file lands on disk but before the cache append therefore
+    scans, finds the new file, and publishes it -- and the append then
+    records the same member a second time.
+    """
+    dstore = _PausingWriteStore(write_dir, suffix="fasta", mode=OVERWRITE)
+    dstore.file_on_disk = threading.Event()
+    dstore.reader_published = threading.Event()
+
+    def read_once():
+        assert dstore.file_on_disk.wait(timeout=_SYNC_TIMEOUT)
+        len(dstore.completed)
+        dstore.reader_published.set()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        reader = executor.submit(read_once)
+        dstore.write(unique_id="brand_new.fasta", data=">new\nACGT\n")
+        reader.result(timeout=_SYNC_TIMEOUT)
+
+    assert [m.unique_id for m in dstore.completed] == ["brand_new.fasta"]
+
+
+def _scan_completed(dstore, barrier, _):
+    barrier.wait(timeout=_SYNC_TIMEOUT)
+    return len(dstore.completed)
+
+
+def test_concurrent_write_is_not_lost_from_the_cache(many_member_dir):
+    """a member written while readers scan stays in the cached list
+
+    A reader that begins its scan before the write lands builds a list from
+    the old directory contents. Publishing that list after the writer has
+    appended its member drops the member from the cache while leaving it on
+    disk, so ``unique_id in self`` then reports False for a record that
+    exists -- which is what stops ``_check_writable`` raising in APPEND mode.
+    """
+    dstore = DataStoreDirectory(many_member_dir, suffix="fasta", mode=OVERWRITE)
+    missing = []
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for i in range(_WRITE_ROUNDS):
+            unique_id = f"written_{i}.fasta"
+            dstore._completed = []
+            barrier = threading.Barrier(_CONCURRENT_READERS + 1, timeout=_SYNC_TIMEOUT)
+            scan = functools.partial(_scan_completed, dstore, barrier)
+            with ThreadPoolExecutor(max_workers=_CONCURRENT_READERS + 1) as executor:
+                readers = [executor.submit(scan, n) for n in range(_CONCURRENT_READERS)]
+                barrier.wait(timeout=_SYNC_TIMEOUT)
+                dstore.write(unique_id=unique_id, data=">new\nACGT\n")
+                for reader in readers:
+                    reader.result(timeout=_SYNC_TIMEOUT)
+
+            if unique_id not in {m.unique_id for m in dstore.completed}:
+                missing.append(unique_id)
+    finally:
+        sys.setswitchinterval(old_interval)
+
+    assert missing == []
