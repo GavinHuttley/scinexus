@@ -33,16 +33,26 @@ def cogdocs(session: nox.Session) -> None:
     subprocess.run(cmnd, check=True, shell=True)  # noqa: S602
 
 
+def _mypy(session: nox.Session) -> None:
+    # each session gets its own cache: they install different packages, and a
+    # cache shared with a session where an optional extra was present hides
+    # the import errors the other session exists to catch
+    session.run("mypy", f"--cache-dir=.mypy_cache/{session.name}", "src/scinexus/")
+
+
 @nox.session(python=_py_versions)
 def type_check(session):
     session.install("-e", ".", "--group", "dev")
-    session.run("mypy", "src/scinexus/")
+    _mypy(session)
 
 
 @nox.session(python=_py_versions)
 def test_types(session):
-    session.install("-e", ".")
-    session.run("mypy", "src/scinexus/")
+    # mypy is installed explicitly rather than via the dev group: this session
+    # deliberately type checks against runtime dependencies only. Without it
+    # nox falls back to whatever mypy is on PATH, on the wrong interpreter.
+    session.install("-e", ".", "mypy")
+    _mypy(session)
 
 
 @nox.session(python=_py_versions)

@@ -139,7 +139,7 @@ class LokyBackend(Parallel):
         max_workers: int | None = None,
         **kwargs: Any,
     ) -> Generator[R]:
-        import loky  # type: ignore[import-untyped]
+        import loky  # type: ignore[import-untyped,import-not-found]
 
         max_workers = _resolve_max_workers_local(max_workers)
         chunksize = _resolve_chunksize(s, max_workers, kwargs.get("chunksize"))
@@ -153,7 +153,7 @@ class LokyBackend(Parallel):
         max_workers: int | None = None,
         **kwargs: Any,
     ) -> Generator[R]:
-        import loky  # type: ignore[import-untyped]
+        import loky  # type: ignore[import-untyped,import-not-found]
 
         max_workers = _clamp_max_workers_local(max_workers)
         with loky.get_reusable_executor(max_workers=max_workers) as executor:
@@ -162,7 +162,7 @@ class LokyBackend(Parallel):
                 yield result.result()
 
     def is_master_process(self) -> bool:
-        import loky  # type: ignore[import-untyped]
+        import loky  # type: ignore[import-untyped,import-not-found]
 
         ctxt = loky.backend.get_context()
         return ctxt.parent_process() is None
@@ -352,7 +352,7 @@ def _make_backend(backend: BackendType) -> Parallel:
     """create a backend instance from a backend type string"""
     if backend == "loky":
         try:
-            import loky  # noqa: F401
+            import loky  # type: ignore[import-untyped,import-not-found]  # noqa: F401
         except ImportError:
             msg = 'loky is not installed, use pip install "scinexus[loky]"'
             raise ImportError(msg) from None

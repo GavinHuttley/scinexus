@@ -543,7 +543,7 @@ def set_progress_backend(
         _default_progress = TqdmProgress(**kwargs)
     elif progress == "rich":
         try:
-            import rich  # noqa: F401
+            import rich  # type: ignore[import-not-found]  # noqa: F401
         except ImportError:
             msg = 'rich is not installed, use pip install "scinexus[rich]"'
             raise ImportError(msg) from None
