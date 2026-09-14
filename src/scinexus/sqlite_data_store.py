@@ -4,6 +4,7 @@ import datetime
 import os
 import re
 import sqlite3
+import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -142,6 +143,7 @@ class DataStoreSqlite(DataStoreABC):
             )
         self._limit = limit
         self._verbose = verbose
+        self._holds_lock = False
         self._db: sqlite3.Connection | None = None
         self._closed = False
         self._log_id: int | None = None
@@ -160,8 +162,20 @@ class DataStoreSqlite(DataStoreABC):
         # a statement can block on another connection's write lock or find
         # the machinery it needs already torn down
         db: sqlite3.Connection | None = getattr(self, "_db", None)
-        if db is not None:
-            db.close()
+        if db is None:
+            return
+        db.close()
+        # the warning is about a lock left on disk for the next opener to
+        # trip over, so it is worth making only by a store that took one and
+        # wrote it somewhere that outlives the process. closing first means
+        # a warning turned into an error cannot strand the connection
+        if getattr(self, "_holds_lock", False) and self._source != _MEMORY:
+            warnings.warn(
+                f"data store {str(self.source)!r} was not closed, so it still "
+                "holds the lock. call close() to release it",
+                UserWarning,
+                stacklevel=1,
+            )
 
     @property
     def source(self) -> str | Path:
@@ -412,6 +426,7 @@ class DataStoreSqlite(DataStoreABC):
             cmnd = "INSERT INTO state(lock_pid) VALUES (?)"
             vals = [os.getpid()]
         self._db.execute(cmnd, tuple(vals))
+        self._holds_lock = True
 
     def unlock(self, force: bool = False) -> None:
         """remove a lock if pid matches. If force, ignores pid. ignored if mode is READONLY
@@ -431,6 +446,7 @@ class DataStoreSqlite(DataStoreABC):
 
         if lock_id == os.getpid() or force:
             self.db.execute("UPDATE state SET lock_pid=NULL WHERE state_id=1")
+            self._holds_lock = False
 
         return
 

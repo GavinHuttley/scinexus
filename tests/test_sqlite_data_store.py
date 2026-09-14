@@ -413,8 +413,9 @@ def test_collection_without_close_keeps_the_lock(tmp_dir):
     path = tmp_dir / "dropped.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
     dstore.write(unique_id="r1", data="d1")
-    del dstore
-    gc.collect()
+    with pytest.warns(UserWarning, match="was not closed"):
+        del dstore
+        gc.collect()
 
     db = sqlite3.connect(path)
     try:
@@ -422,6 +423,59 @@ def test_collection_without_close_keeps_the_lock(tmp_dir):
     finally:
         db.close()
     assert held == os.getpid()
+
+
+def test_collection_of_a_store_refused_the_lock_stays_quiet(tmp_dir, recwarn):
+    """a store that never got the lock does not claim to be holding it"""
+    # its open was refused, so it has a connection but no lock, and the
+    # advice to close it would not release one taken by anybody else
+    path = tmp_dir / "taken.sqlitedb"
+    first = DataStoreSqlite(path, mode=OVERWRITE)
+    first.write(unique_id="r1", data="d1")
+    first._db.execute("UPDATE state SET lock_pid=?", (os.getpid() + 1,))
+    first._db.close()
+    first._db = None
+    first._closed = True
+
+    second = DataStoreSqlite(path, mode=OVERWRITE)
+    with pytest.raises(OSError, match="locked"):
+        second.read("r1")
+    assert second._db is not None
+
+    del second
+    gc.collect()
+
+    assert [w for w in recwarn if issubclass(w.category, UserWarning)] == []
+
+
+@pytest.mark.parametrize(
+    ("source", "mode"),
+    [
+        (_MEMORY, OVERWRITE),
+        ("readonly", READONLY),
+        ("never_used", OVERWRITE),
+    ],
+)
+def test_collection_without_close_stays_quiet(tmp_dir, source, mode, recwarn):
+    """only a store that can strand a lock on disk is worth warning about"""
+    # an in-memory store leaves nothing behind, a read only one never takes
+    # the lock, and one that never opened its database holds nothing
+    if source is not _MEMORY:
+        populate = tmp_dir / f"{source}.sqlitedb"
+        seed = DataStoreSqlite(populate, mode=OVERWRITE)
+        seed.write(unique_id="r1", data="d1")
+        seed.close()
+        dstore = DataStoreSqlite(populate, mode=mode)
+        if source == "readonly":
+            dstore.read("r1")
+    else:
+        dstore = DataStoreSqlite(source, mode=mode)
+        dstore.write(unique_id="r1", data="d1")
+
+    del dstore
+    gc.collect()
+
+    assert [w for w in recwarn if issubclass(w.category, UserWarning)] == []
 
 
 def test_close_hands_the_database_on(tmp_dir):
@@ -672,6 +726,9 @@ def test_lock_overwrite_on_locked_db(tmp_dir):
     dstore2._db = dstore._db
     with pytest.raises(OSError, match="locked"):
         dstore2.lock()
+    # the shared connection is a fiction of this test, so hand it back
+    # before dstore2 is collected and reports a store it never opened
+    dstore2._db = None
     dstore.close()
 
 
