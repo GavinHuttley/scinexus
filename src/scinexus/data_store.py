@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, overload
 
 from scitrack import get_text_hexdigest  # type: ignore[import-untyped]
 
+from scinexus._sync import LockMixin
 from scinexus.deserialise import deserialise_object
 from scinexus.io_util import get_format_suffixes, open_
 from scinexus.parallel import is_master_process
@@ -134,7 +135,7 @@ class DataMemberABC(ABC):
         return self.data_store.md5(self.unique_id)
 
 
-class DataStoreABC(ABC):
+class DataStoreABC(LockMixin, ABC):
     """Abstract base class for DataStore"""
 
     _init_vals: dict[str, Any]
@@ -153,6 +154,9 @@ class DataStoreABC(ABC):
         obj._init_vals = init_vals
         obj._completed = []
         obj._not_completed = []
+        # here rather than __init__ so instances built by __new__ alone,
+        # including those pickle reconstructs, still get one
+        obj._cache_lock = cls.new_lock()
         return obj
 
     @property
@@ -198,6 +202,33 @@ class DataStoreABC(ABC):
 
     @abstractmethod
     def read(self, unique_id: str) -> str | bytes: ...
+
+    @staticmethod
+    def _append_once(
+        current: list[DataMemberABC],
+        cached: list[DataMemberABC],
+        member: DataMemberABC,
+    ) -> None:
+        """record a just-written member in the cache, at most once
+
+        The file lands on disk outside the lock, so a scan running in that
+        gap can find it and publish a list that already holds ``member``.
+        Publishing always binds a new list, so an unchanged list object
+        cannot contain it and the O(n) membership test is only needed when
+        ``current`` and ``cached`` differ -- which keeps the common
+        sequential write off a quadratic path.
+
+        Parameters
+        ----------
+        current
+            the cached list as it stands now
+        cached
+            the same attribute read before the record was written
+        member
+            the member to record
+        """
+        if current is cached or member not in current:
+            current.append(member)
 
     def _check_writable(self, unique_id: str) -> None:
         if self.mode is READONLY:
@@ -534,20 +565,26 @@ class DataStoreDirectory(DataStoreABC):
         unique_id = f"{unique_id}.json" if unique_id else unique_id
         nc_dir = self.source / NOT_COMPLETED_TABLE
         md5_dir = self.source / MD5_TABLE
-        for m in list(self.not_completed):
-            if unique_id and not m.unique_id.endswith(unique_id):
-                continue
+        # the removals and the reset are one region, so a scan cannot run
+        # against a half-emptied directory. it does NOT stop a caller that
+        # already holds the list from watching it shrink: the properties
+        # return the live object, not a copy. nor is it atomic, an unlink
+        # that raises leaves the cache torn
+        with self._cache_lock:
+            for m in list(self.not_completed):
+                if unique_id and not m.unique_id.endswith(unique_id):
+                    continue
 
-            file = nc_dir / Path(m.unique_id).name
-            file.unlink()
-            md5_file = md5_dir / f"{file.stem}.txt"
-            md5_file.unlink()
-            self.not_completed.remove(m)
+                file = nc_dir / Path(m.unique_id).name
+                file.unlink()
+                md5_file = md5_dir / f"{file.stem}.txt"
+                md5_file.unlink()
+                self.not_completed.remove(m)
 
-        if not unique_id:
-            Path(self.source / NOT_COMPLETED_TABLE).rmdir()
-            # reset _not_completed list to force not_completed function to make it again
-            self._not_completed: list[DataMemberABC] = []
+            if not unique_id:
+                Path(self.source / NOT_COMPLETED_TABLE).rmdir()
+                # reset _not_completed to force not_completed to rebuild it
+                self._not_completed: list[DataMemberABC] = []
 
     @property
     def logs(self) -> list[DataMemberABC]:
@@ -563,29 +600,39 @@ class DataStoreDirectory(DataStoreABC):
 
     @property
     def completed(self) -> list[DataMemberABC]:
-        if not self._completed:
-            self._completed = []
-            suffix = f"*.{self.suffix}"
-            for i, m in enumerate(self.source.glob(suffix)):
-                if self.limit and i == self.limit:
-                    break
-                self._completed.append(DataMember(data_store=self, unique_id=m.name))
-        return self._completed
+        # the lock spans check, scan and publish: a writer appending between
+        # the scan and the publish would otherwise be discarded by it
+        with self._cache_lock:
+            if not self._completed:
+                # built locally and assigned once: appending to
+                # self._completed would publish a partly scanned list
+                found: list[DataMemberABC] = []
+                suffix = f"*.{self.suffix}"
+                for i, m in enumerate(self.source.glob(suffix)):
+                    if self.limit and i == self.limit:
+                        break
+                    found.append(DataMember(data_store=self, unique_id=m.name))
+                self._completed = found
+            return self._completed
 
     @property
     def not_completed(self) -> list[DataMemberABC]:
-        if not self._not_completed:
-            self._not_completed = []
-            for i, m in enumerate((self.source / NOT_COMPLETED_TABLE).glob("*.json")):
-                if self.limit and i == self.limit:
-                    break
-                self._not_completed.append(
-                    DataMember(
-                        data_store=self,
-                        unique_id=str(Path(NOT_COMPLETED_TABLE) / m.name),
-                    ),
-                )
-        return self._not_completed
+        with self._cache_lock:
+            if not self._not_completed:
+                found: list[DataMemberABC] = []
+                for i, m in enumerate(
+                    (self.source / NOT_COMPLETED_TABLE).glob("*.json"),
+                ):
+                    if self.limit and i == self.limit:
+                        break
+                    found.append(
+                        DataMember(
+                            data_store=self,
+                            unique_id=str(Path(NOT_COMPLETED_TABLE) / m.name),
+                        ),
+                    )
+                self._not_completed = found
+            return self._not_completed
 
     def _write(
         self,
@@ -650,6 +697,7 @@ class DataStoreDirectory(DataStoreABC):
         -----
         Drops any not-completed member corresponding to this identifier
         """
+        cached = self._completed
         member = self._write(
             subdir="",
             unique_id=unique_id,
@@ -658,7 +706,8 @@ class DataStoreDirectory(DataStoreABC):
         )
         self.drop_not_completed(unique_id=unique_id)
         if member is not None:
-            self._completed.append(member)
+            with self._cache_lock:
+                self._append_once(self._completed, cached, member)
         return member  # type: ignore[return-value]
 
     def write_not_completed(self, *, unique_id: str, data: str) -> DataMember:  # type: ignore[override]
@@ -676,6 +725,7 @@ class DataStoreDirectory(DataStoreABC):
         a member for this record
         """
         (self.source / NOT_COMPLETED_TABLE).mkdir(parents=True, exist_ok=True)
+        cached = self._not_completed
         member = self._write(
             subdir=NOT_COMPLETED_TABLE,
             unique_id=unique_id,
@@ -683,7 +733,8 @@ class DataStoreDirectory(DataStoreABC):
             data=data,
         )
         if member is not None:
-            self._not_completed.append(member)
+            with self._cache_lock:
+                self._append_once(self._not_completed, cached, member)
         return member  # type: ignore[return-value]
 
     def write_log(self, *, unique_id: str, data: str) -> None:  # type: ignore[override]
@@ -786,37 +837,47 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
 
     @property
     def completed(self) -> list[DataMemberABC]:
-        if not self._completed:
-            pattern = f"*.{self.suffix}"
-            self._completed = []
-            num_matches = 0
-            for name in self._iter_matches("", pattern):
-                num_matches += 1
-                member = DataMember(data_store=self, unique_id=name.name)
-                self._completed.append(member)
+        # this store is read only, so publishing once is already enough for
+        # correctness. the lock collapses N concurrent readers re-parsing the
+        # zip central directory into one scan, and keeps the four member
+        # properties uniform
+        with self._cache_lock:
+            if not self._completed:
+                pattern = f"*.{self.suffix}"
+                found: list[DataMemberABC] = []
+                num_matches = 0
+                for name in self._iter_matches("", pattern):
+                    num_matches += 1
+                    member = DataMember(data_store=self, unique_id=name.name)
+                    found.append(member)
 
-                if self.limit and num_matches >= self.limit:
-                    break
+                    if self.limit and num_matches >= self.limit:
+                        break
 
-        return self._completed
+                self._completed = found
+
+            return self._completed
 
     @property
     def not_completed(self) -> list[DataMemberABC]:
-        if not self._not_completed:
-            self._not_completed = []
-            num_matches = 0
-            nc_dir_path = Path(NOT_COMPLETED_TABLE)
-            for name in self._iter_matches(NOT_COMPLETED_TABLE, "*.json"):
-                num_matches += 1
-                member = DataMember(
-                    data_store=self,
-                    unique_id=str(nc_dir_path / name.name),
-                )
-                self._not_completed.append(member)
-                if self.limit and num_matches >= self.limit:
-                    break
+        with self._cache_lock:
+            if not self._not_completed:
+                found: list[DataMemberABC] = []
+                num_matches = 0
+                nc_dir_path = Path(NOT_COMPLETED_TABLE)
+                for name in self._iter_matches(NOT_COMPLETED_TABLE, "*.json"):
+                    num_matches += 1
+                    member = DataMember(
+                        data_store=self,
+                        unique_id=str(nc_dir_path / name.name),
+                    )
+                    found.append(member)
+                    if self.limit and num_matches >= self.limit:
+                        break
 
-        return self._not_completed
+                self._not_completed = found
+
+            return self._not_completed
 
     @property
     def logs(self) -> list[DataMemberABC]:

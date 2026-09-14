@@ -1,3 +1,4 @@
+import copy
 import functools
 import json
 import pathlib
@@ -269,6 +270,20 @@ def test_pickleable_roundtrip(ro_dstore):
     re_dstore = loads(dumps(ro_dstore))
     assert str(ro_dstore) == str(re_dstore)
     assert ro_dstore[0].read() == re_dstore[0].read()
+
+
+def test_deepcopy_roundtrip(ro_dstore):
+    """apps deepcopy their arguments on every call, so a store must survive it
+
+    The member cache is guarded by a lock, and a lock cannot be pickled.
+    deepcopy goes through the same reduce protocol as pickle, so a store
+    passed to an app as an argument would otherwise raise on every call
+    rather than only when someone pickled it.
+    """
+    copied = copy.deepcopy(ro_dstore)
+    assert str(copied) == str(ro_dstore)
+    assert copied[0].read() == ro_dstore[0].read()
+    assert len(copied.completed) == len(ro_dstore.completed)
 
 
 def test_pickleable_member_roundtrip(ro_dstore):

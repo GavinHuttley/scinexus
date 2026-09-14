@@ -344,11 +344,28 @@ class DataStoreSqlite(DataStoreABC):
 
     @property
     def locked(self) -> bool:
-        """returns if lock_pid is NULL or doesn't exist."""
+        """returns if lock_pid is NULL or doesn't exist.
+
+        Notes
+        -----
+        This reports whether *some* process holds the lock, not whether the
+        caller does. See ``lock()`` on why that distinction is not available
+        between threads.
+        """
         return self._lock_id is not None
 
     def lock(self) -> None:
-        """if writable, and not locked, locks the database to this pid"""
+        """if writable, and not locked, locks the database to this pid
+
+        Notes
+        -----
+        The lock is scoped to the *process*, not the thread. Ownership is
+        recorded as ``os.getpid()``, which every thread of a process shares,
+        so this gives no exclusion at all between threads of one process:
+        two threads writing through separate instances will both record the
+        same owner and both believe they hold it. Guarding a store against
+        concurrent threads needs a different mechanism.
+        """
         if self.mode is READONLY:
             return
         if self._db is None:
@@ -376,7 +393,13 @@ class DataStoreSqlite(DataStoreABC):
         self._db.execute(cmnd, tuple(vals))
 
     def unlock(self, force: bool = False) -> None:
-        """remove a lock if pid matches. If force, ignores pid. ignored if mode is READONLY"""
+        """remove a lock if pid matches. If force, ignores pid. ignored if mode is READONLY
+
+        Notes
+        -----
+        The pid test is a tautology within a process, since threads share a
+        pid, so any thread can release a lock taken by another one.
+        """
         if self.mode is READONLY:
             return
 
