@@ -22,7 +22,7 @@ except ImportError:
     c3 = None
     UnionDict = None
 
-from scinexus import open_data_store
+from scinexus import data_store, io_util, open_data_store
 from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import (
     APPEND,
@@ -638,6 +638,45 @@ def test_a_compound_suffix_store_writes_compressed(tmp_dir):
     assert (
         gzip.decompress((dstore.source / "id_0.fasta.gz").read_bytes()) == data.encode()
     )
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    ["fasta", "fasta.gz", "fasta.bz2", "fasta.xz", "fasta.zip"],
+)
+def test_a_record_is_written_with_a_line_feed_whatever_the_suffix(
+    tmp_dir,
+    monkeypatch,
+    suffix,
+):
+    """a record has the same bytes on disk on every platform"""
+    # newline=None is the universal default of TextIOWrapper, which on a
+    # write turns every \n into os.linesep, so a record left on it holds
+    # \r\n on windows and \n elsewhere. the choice is made inside
+    # TextIOWrapper from the platform it was built for, so the argument
+    # open_ is called with is the only part of it visible from here.
+    # both bindings are patched because a zip lands its bytes in the file
+    # atomic_write opens through io_util's own name, not this one
+    seen = []
+
+    def record_writes(module):
+        real_open = module.open_
+
+        def recording_open(filename, mode="rt", **kwargs):
+            if mode.startswith("w"):
+                seen.append((Path(filename).name, kwargs.get("newline")))
+            return real_open(filename, mode=mode, **kwargs)
+
+        monkeypatch.setattr(module, "open_", recording_open)
+
+    record_writes(data_store)
+    record_writes(io_util)
+
+    dstore = DataStoreDirectory(tmp_dir / "store", suffix=suffix, mode=OVERWRITE)
+    dstore.write(unique_id="id_0", data=">s\nACGT\n")
+
+    assert seen
+    assert all(newline == "\n" for _, newline in seen), seen
 
 
 @pytest.mark.parametrize(

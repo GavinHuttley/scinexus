@@ -849,7 +849,7 @@ class DataStoreDirectory(DataStoreABC):
         data: str,
     ) -> DataMember | None:
         given = unique_id
-        unique_id, cmp = self._record_name(unique_id, suffix)
+        unique_id = self._record_name(unique_id, suffix)[0]
         member_id = str(Path(subdir) / unique_id)
         # super().write refuses a read only store and an APPEND overwrite,
         # and both are more fundamental than a complaint about the name,
@@ -861,9 +861,12 @@ class DataStoreDirectory(DataStoreABC):
         # can only speak for completed ones
         if not subdir and suffix != "log" and unique_id in self:
             return None
-        newline = None if cmp else "\n"
-        mode = "wt" if cmp else "w"
-        with open_(self.source / subdir / unique_id, mode=mode, newline=newline) as out:
+        # the newline is named for every suffix, not just the plain one.
+        # the default of None is universal newlines, which on a write turns
+        # each \n into os.linesep, so a compressed record left on it holds
+        # \r\n on windows. reads undo that, which is why it stayed hidden,
+        # but the file itself then differs from the one written elsewhere
+        with open_(self.source / subdir / unique_id, mode="w", newline="\n") as out:
             out.write(data)
 
         if subdir == LOG_TABLE:
@@ -882,7 +885,7 @@ class DataStoreDirectory(DataStoreABC):
         # they still share one with a compressed record of that name, since
         # the stem drops the compression suffix
         checksum = _checksum_name(unique_id, completed=not subdir)
-        with open_(self.source / MD5_TABLE / checksum, mode="w") as out:
+        with open_(self.source / MD5_TABLE / checksum, mode="w", newline="\n") as out:
             out.write(md5)
 
         return member
