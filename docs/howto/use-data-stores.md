@@ -86,11 +86,49 @@ m.read()[:20]  # (5)!
 
 The creation of a writeable data store is specified with `mode="w"`, or (to append) `mode="a"`. In the former case, any existing records are overwritten. In the latter case, existing records are ignored.
 
+In a directory store, the `suffix` you open with names every *completed* record it writes. The identifier you pass to `write()` supplies the stem only, so `"brca1"`, `"brca1.fa"` and `"brca1.genbank"` all become `brca1.fasta` in a store opened with `suffix="fasta"`. Not-completed records, logs and checksums are kept in their own subdirectories under their own extensions, and the store's suffix does not apply to them.
+
+!!! warning "A compression suffix is refused, not replaced"
+    Compression is the one part of the name that says how to read the record back, so a directory store will not quietly swap it. If the identifier names a compression the store does not write, `write()` raises `ValueError` rather than storing the record under a different name.
+
+    This part is specific to directory stores, since a SQLite store has no suffix to contradict. The rule that an identifier must name a record — a non-blank, non-hidden stem — applies to both.
+
+    ```python { notest }
+    dstore = open_data_store("results", suffix="fasta", mode="w")
+    dstore.write(unique_id="brca1.fasta.gz", data=seqs)
+    # ValueError: identifier 'brca1.fasta.gz' names .gz, but a record
+    # stored as .fasta carries no compression
+    ```
+
+    Open the store with the compression in its suffix instead, and its completed records are gzipped:
+
+    ```python { notest }
+    dstore = open_data_store("results", suffix="fasta.gz", mode="w")
+    dstore.write(unique_id="brca1", data=seqs)  # brca1.fasta.gz, gzipped
+    ```
+
+    Not-completed records are always plain `.json`, whatever the store's own suffix is, so a compressed identifier is refused there too — including in a `suffix="fasta.gz"` store, where `write()` accepts `"brca1.fasta.gz"` and `write_not_completed()` does not.
+
 ## `DataStoreSqlite` stores serialised data
 
 When you specify a Sqlitedb data store as your output (by using `open_data_store()`) you write multiple records into a single file making distribution easier.
 
-One important issue to note is the process which creates a Sqlitedb "locks" the file. If that process exits unnaturally (e.g. the run that was producing it was interrupted) then the file may remain in a locked state. If the db is in this state, `scinexus` will not modify it unless you explicitly unlock it.
+!!! warning
+    The process which creates a Sqlitedb "locks" the file. If that process exits unnaturally (e.g. the run that was producing it was interrupted) then the file may remain in a locked state. If the db is in this state, `scinexus` will not modify it unless you explicitly unlock it.
+
+### Closing a Sqlitedb data store
+
+The lock is released by `close()`, and only by `close()`. That is what gives a lock you find on a file its meaning: it says the session that took it did not finish. So call `close()` once you have finished with a writable store, after reading whatever you need from it.
+
+```python { notest }
+out_dstore = open_data_store("results.sqlitedb", mode="w")
+# ... write to it, then read your summaries from it ...
+out_dstore.close()
+```
+
+A store that is garbage collected without being closed warns you and names the file, because it has left a lock behind that the next run will refuse to write over. Closing a data store ends access to it – trying to read from one afterwards raises an exception rather than returning stale answers.
+
+Directory and zip data stores take no such lock, and closing one does nothing. `close()` is defined on every data store so that code holding whatever `open_data_store()` returned can close it without first asking which kind it got.
 
 This is represented in the display as shown below.
 
@@ -113,11 +151,14 @@ exec_codeblock(src=src, use_wrap=False, display_src=False)
 <!-- [[[end]]] -->
 
 
-To unlock, you execute the following:
+To unlock, open the store in a writable mode and execute the following:
 
 ```python { notest }
+dstore = open_data_store("data/demo-locked.sqlitedb", mode="a")
 dstore.unlock(force=True)
 ```
+
+The store has to be writable, since unlocking writes to it (a read only store ignores the call). `force=True` is needed when the lock was taken by another process, which is the usual case for a store left behind by an interrupted run. Overriding it is meant to be a deliberate act, because the records in such a store were never confirmed complete.
 
 ## Interrogating run logs
 

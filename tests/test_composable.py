@@ -2361,6 +2361,7 @@ def test_apply_to_strings(DATA_DIR, tmp_dir, klass, cast):
     # create paths as strings
     _ = process.apply_to(dstore, show_progress=False)
     assert len(process.data_store.logs) == 1
+    process.data_store.close()
 
 
 @pytest.mark.parametrize("klass", [DataStoreDirectory, DataStoreSqlite])
@@ -2383,6 +2384,7 @@ def test_as_completed_strings(DATA_DIR, tmp_dir, klass, cast):
     # create paths as strings
     got = list(process.as_completed(dstore, show_progress=False))
     assert len(got) > orig_length
+    process.data_store.close()
 
 
 def test_apply_to_non_unique_identifiers(tmp_dir):
@@ -2414,6 +2416,7 @@ def test_apply_to_logging(DATA_DIR, tmp_dir):
     process.apply_to(dstore, show_progress=False)
     # always creates a log
     assert len(process.data_store.logs) == 1
+    out_dstore.close()
 
 
 def test_apply_to_logger(DATA_DIR, tmp_dir):
@@ -2427,6 +2430,7 @@ def test_apply_to_logger(DATA_DIR, tmp_dir):
     process = reader + min_length + writer
     process.apply_to(dstore, show_progress=False, logger=LOGGER)
     assert len(process.data_store.logs) == 1
+    out_dstore.close()
 
 
 def test_apply_to_no_logger(DATA_DIR, tmp_dir):
@@ -2440,6 +2444,7 @@ def test_apply_to_no_logger(DATA_DIR, tmp_dir):
     process.apply_to(dstore, show_progress=False, logger=False)
     assert len(process.data_store.logs) == 0
     assert process.logger is None
+    out_dstore.close()
 
 
 @pytest.mark.parametrize("logger_val", ["somepath.log"])
@@ -2453,6 +2458,7 @@ def test_apply_to_invalid_logger(DATA_DIR, tmp_dir, logger_val):
     process = reader + min_length + writer
     with pytest.raises(TypeError):
         process.apply_to(dstore, show_progress=False, logger=logger_val)
+    out_dstore.close()
 
 
 @pytest.fixture
@@ -2529,6 +2535,7 @@ def test_apply_to_input_only_not_completed(DATA_DIR, nc_dstore, tmp_dir):
     )
     process.apply_to(dstore, show_progress=False)
     assert len(out_dstore.not_completed) == len(nc_dstore)
+    out_dstore.close()
 
 
 def test_apply_to_makes_not_completed(DATA_DIR, tmp_dir):
@@ -2542,6 +2549,7 @@ def test_apply_to_makes_not_completed(DATA_DIR, tmp_dir):
     process = reader + min_length + writer
     process.apply_to(dstore, show_progress=False)
     assert len(out_dstore.not_completed) == 3
+    out_dstore.close()
 
 
 def test_apply_to_not_partially_done(DATA_DIR, tmp_dir):
@@ -2561,6 +2569,7 @@ def test_apply_to_not_partially_done(DATA_DIR, tmp_dir):
     process = reader + writer
     _ = process.apply_to(dstore, show_progress=False)
     assert len(out_dstore) == num_records
+    out_dstore.close()
 
 
 @pytest.fixture
@@ -2697,6 +2706,7 @@ def test_cogent3_serialisable_compatible_with_serialisabletype(tmp_path):
     result = app("(A:0.1,B:0.2);")  # pylint: disable=not-callable
     got = loader(result)
     assert not isinstance(got, NotCompleted)
+    out.close()
 
 
 @pytest.mark.parametrize("klass", [DataStoreDirectory, DataStoreSqlite])
@@ -2727,6 +2737,7 @@ def test_apply_to_writes_citations(DATA_DIR, tmp_dir, klass):
     assert len(loaded) >= 1
     titles = [c.title for c in loaded]
     assert "Test Citation" in titles
+    out_dstore.close()
 
 
 @pytest.fixture

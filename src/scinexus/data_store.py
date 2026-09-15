@@ -8,10 +8,11 @@ import reprlib
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from enum import Enum
+from fnmatch import fnmatchcase
 from functools import singledispatch
 from io import TextIOWrapper
 from pathlib import Path
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, TypedDict, overload
 
 from scitrack import get_text_hexdigest  # type: ignore[import-untyped]
 
@@ -34,6 +35,120 @@ MD5_TABLE = "md5"
 _special_suffixes = re.compile(r"\.(log|json)$")
 
 CITATIONS_FILE = "bibliography.citations"
+
+# a checksum file is named for the record it belongs to and for which of the
+# two kinds that record is. LEGACY is what both kinds shared before, so a
+# file still carrying it belongs to a record this store cannot identify
+COMPLETED_CHECKSUM = "cmplt"
+NOT_COMPLETED_CHECKSUM = "ncmplt"
+LEGACY_CHECKSUM = "txt"
+
+
+class ChecksumMigration(TypedDict):
+    """what :meth:`DataStoreDirectory.migrate_checksums` did, and did not
+
+    ``ambiguous`` is a stem both kinds of record carry, so the file cannot
+    be attributed. ``orphaned`` is one no record carries. ``superseded`` is
+    one whose record already has a checksum under the current name.
+    """
+
+    migrated: int
+    ambiguous: list[str]
+    orphaned: list[str]
+    superseded: list[str]
+
+
+def _record_stem(unique_id: str) -> str:
+    """the identifier with its format and compression suffixes removed"""
+    stem = Path(unique_id).name
+    sfx, cmp = get_format_suffixes(stem)
+    for part in (cmp, sfx):
+        if part:
+            stem = stem.removesuffix(f".{part}")
+    return stem
+
+
+def _is_record(name: str, suffix: str) -> bool:
+    """whether a file of this name is a record stored under this suffix
+
+    Notes
+    -----
+    A hidden file is not a record. The suffix may carry a trailing
+    wildcard, so the rest is a pattern match, and fnmatchcase because
+    Path.glob and fnmatch both fold case on Windows.
+    """
+    return not name.startswith(".") and fnmatchcase(name, f"*.{suffix}")
+
+
+def _check_identifier(unique_id: str) -> None:
+    """raise if the identifier has nothing to name a record by
+
+    Parameters
+    ----------
+    unique_id
+        identifier as given by the caller
+
+    Raises
+    ------
+    ValueError
+        if the stem is blank, or names a hidden file
+
+    Notes
+    -----
+    A record is named by its stem. Every data store asks this, so the
+    same identifier is a record in all of them or in none.
+    """
+    stem = _record_stem(unique_id)
+    if stem.strip() and not stem.startswith("."):
+        return
+
+    why = "names a hidden file" if stem.strip() else "is blank"
+    msg = f"identifier {unique_id!r} names no record: its stem {why}"
+    raise ValueError(msg)
+
+
+def _check_compression(unique_id: str, suffix: str) -> None:
+    """raise if the identifier names a compression this suffix does not write
+
+    Parameters
+    ----------
+    unique_id
+        identifier as given by the caller
+    suffix
+        format suffix the record is about to be stored with
+
+    Raises
+    ------
+    ValueError
+        if the two name different compressions, or the identifier names
+        one and the suffix does not
+    """
+    asked = get_format_suffixes(Path(unique_id).name)[1]
+    stored = get_format_suffixes(f"x.{suffix}")[1]
+    # naming none is never a conflict: the suffix supplies whatever
+    # compression there is, and the identifier is only asked not to
+    # contradict it
+    if asked is None or asked == stored:
+        return
+
+    carries = f".{stored}" if stored else "no compression"
+    msg = (
+        f"identifier {unique_id!r} names .{asked}, but a record stored "
+        f"as .{suffix} carries {carries}"
+    )
+    raise ValueError(msg)
+
+
+def _checksum_name(unique_id: str, *, completed: bool) -> str:
+    """the file a record's checksum is kept in"""
+    suffix = COMPLETED_CHECKSUM if completed else NOT_COMPLETED_CHECKSUM
+    return f"{_record_stem(unique_id)}.{suffix}"
+
+
+def _legacy_checksum_name(unique_id: str) -> str:
+    """the file a record's checksum was kept in before the kinds were named"""
+    return f"{_record_stem(unique_id)}.{LEGACY_CHECKSUM}"
+
 
 NoneType = type(None)
 
@@ -181,9 +296,10 @@ class DataStoreABC(LockMixin, ABC):
         return f"{name}({construction})"
 
     def __str__(self) -> str:
-        num = len(self.members)
+        members = self.members
+        num = len(members)
         name = self.__class__.__name__
-        sample = f"{list(self[:2])}..." if num > 2 else list(self)
+        sample = f"{members[:2]}..." if num > 2 else members
         return f"{num}x member {name}(source='{self.source}', members={sample})"
 
     @overload
@@ -197,37 +313,54 @@ class DataStoreABC(LockMixin, ABC):
         return len(self.members)
 
     def __contains__(self, identifier: object) -> bool:
-        """whether relative identifier has been stored"""
-        return any(m.unique_id == identifier for m in self)
+        """whether relative identifier has been stored
+
+        Notes
+        -----
+        Compared on Path.parts, so a member id composed with either
+        separator names the same record. Not Path equality, which is
+        case insensitive on Windows and would make ID_0.fasta and
+        id_0.fasta one record there and two here.
+        """
+        if not isinstance(identifier, str):
+            return False
+
+        wanted = Path(identifier).parts
+        return any(Path(m.unique_id).parts == wanted for m in self)
 
     @abstractmethod
     def read(self, unique_id: str) -> str | bytes: ...
 
+    def close(self) -> None:
+        """release whatever the store holds open
+
+        Notes
+        -----
+        Does nothing for a store that holds nothing, which is every one but
+        :class:`DataStoreSqlite`. It is defined here so a caller can close
+        what :func:`open_data_store` returned without knowing which backend
+        it got.
+        """
+
     @staticmethod
     def _append_once(
         current: list[DataMemberABC],
-        cached: list[DataMemberABC],
         member: DataMemberABC,
     ) -> None:
         """record a just-written member in the cache, at most once
-
-        The file lands on disk outside the lock, so a scan running in that
-        gap can find it and publish a list that already holds ``member``.
-        Publishing always binds a new list, so an unchanged list object
-        cannot contain it and the O(n) membership test is only needed when
-        ``current`` and ``cached`` differ -- which keeps the common
-        sequential write off a quadratic path.
 
         Parameters
         ----------
         current
             the cached list as it stands now
-        cached
-            the same attribute read before the record was written
         member
             the member to record
         """
-        if current is cached or member not in current:
+        # current already holds an equal member when a scan in the gap
+        # between the file landing on disk and this call published one, and
+        # when the record is being written a second time. only the first
+        # rebinds the list, so identity cannot stand in for the O(n) test
+        if member not in current:
             current.append(member)
 
     def _check_writable(self, unique_id: str) -> None:
@@ -252,7 +385,12 @@ class DataStoreABC(LockMixin, ABC):
 
     @property
     def members(self) -> list[DataMemberABC]:
-        return self.completed + self.not_completed
+        # one acquisition spanning both, so the halves describe the same
+        # moment. write() takes a record out of not_completed and then puts
+        # it into completed, so halves read either side of that pair of
+        # steps account for it in neither
+        with self._cache_lock:
+            return self.completed + self.not_completed
 
     def __iter__(self) -> Iterator[DataMemberABC]:
         yield from self.members
@@ -321,9 +459,10 @@ class DataStoreABC(LockMixin, ABC):
     def drop_not_completed(self, *, unique_id: str | None = None) -> None: ...
 
     def _validate(self) -> dict[str, object]:
-        correct_md5 = len(self.members)
+        members = self.members
+        correct_md5 = len(members)
         missing_md5 = 0
-        for m in self.members:
+        for m in members:
             data = m.read()
             md5 = self.md5(m.unique_id)
             if md5 is None:
@@ -332,14 +471,24 @@ class DataStoreABC(LockMixin, ABC):
             elif md5 != get_text_hexdigest(data):
                 correct_md5 -= 1
 
-        incorrect_md5 = len(self.members) - correct_md5 - missing_md5
+        incorrect_md5 = len(members) - correct_md5 - missing_md5
 
         return {
             "md5_correct": correct_md5,
             "md5_incorrect": incorrect_md5,
             "md5_missing": missing_md5,
+            "md5_legacy": self._count_legacy_checksums(),
             "has_log": len(self.logs) > 0,
         }
+
+    def _count_legacy_checksums(self) -> int:
+        """how many checksum files are still under the name both kinds shared
+
+        Notes
+        -----
+        Zero for a store that keeps no checksum files of its own.
+        """
+        return 0
 
     def validate(self) -> dict[str, object]:
         return _apply_summary_display(self._validate(), name="validate")
@@ -511,7 +660,9 @@ class DataStoreDirectory(DataStoreABC):
     def __contains__(self, item: object) -> bool:
         if not isinstance(item, str):
             return False
-        if not _special_suffixes.search(item):
+        # an item naming a subdirectory is a member id, exact as given. the
+        # completion below is for bare caller input such as "brca1"
+        if not Path(item).parent.name and not _special_suffixes.search(item):
             item = f"{item}.{self.suffix}" if self.suffix not in item else item
         return super().__contains__(item)
 
@@ -561,29 +712,54 @@ class DataStoreDirectory(DataStoreABC):
             if provided, only drop the record with this identifier,
             otherwise drop all not-completed records
         """
-        unique_id = (unique_id or "").replace(f".{self.suffix}", "")
-        unique_id = f"{unique_id}.json" if unique_id else unique_id
+        # named by the rule that stored it, given the suffix
+        # write_not_completed passes to _write
+        target = self._record_name(unique_id, "json")[0] if unique_id else ""
+        # members carry the subdirectory, so the comparison below needs the
+        # same form. built once: write() drops a twin on every call
+        wanted = str(Path(NOT_COMPLETED_TABLE) / target) if target else ""
         nc_dir = self.source / NOT_COMPLETED_TABLE
         md5_dir = self.source / MD5_TABLE
         # the removals and the reset are one region, so a scan cannot run
         # against a half-emptied directory. it does NOT stop a caller that
-        # already holds the list from watching it shrink: the properties
-        # return the live object, not a copy. nor is it atomic, an unlink
-        # that raises leaves the cache torn
+        # already holds the list from watching it shrink: the members are
+        # removed from that list rather than it being rebound. nor is it
+        # atomic -- an unlink can still raise and leave it torn
         with self._cache_lock:
+            # built only if a file under the shared name turns up, which
+            # takes a scan and is worth nothing in a store without one
+            completed_stems: set[str] | None = None
             for m in list(self.not_completed):
-                if unique_id and not m.unique_id.endswith(unique_id):
+                # exact: an endswith test also matches a record whose name
+                # merely ends with this one, such as abc1.json for c1.json
+                if wanted and m.unique_id != wanted:
                     continue
 
                 file = nc_dir / Path(m.unique_id).name
                 file.unlink()
-                md5_file = md5_dir / f"{file.stem}.txt"
-                md5_file.unlink()
+                # a checksum is optional -- md5() returns None without one
+                # and _validate counts it under md5_missing -- so a record
+                # that has none is still droppable
+                md5_file = md5_dir / _checksum_name(m.unique_id, completed=False)
+                md5_file.unlink(missing_ok=True)
+                # a file under the name both kinds shared is this record's
+                # only when no completed record carries the stem. with one
+                # there it cannot be attributed, and leaving it would have
+                # it answer for that record once this one is gone
+                legacy = md5_dir / _legacy_checksum_name(m.unique_id)
+                if legacy.exists():
+                    if completed_stems is None:
+                        completed_stems = {
+                            _record_stem(c.unique_id) for c in self.completed
+                        }
+                    if _record_stem(m.unique_id) not in completed_stems:
+                        legacy.unlink()
                 self.not_completed.remove(m)
 
-            if not unique_id:
-                Path(self.source / NOT_COMPLETED_TABLE).rmdir()
-                # reset _not_completed to force not_completed to rebuild it
+            if not target:
+                # reset _not_completed to force not_completed to rebuild it.
+                # limit makes it a view, so the rebuild may show records
+                # this pass was not asked about
                 self._not_completed: list[DataMemberABC] = []
 
     @property
@@ -607,11 +783,15 @@ class DataStoreDirectory(DataStoreABC):
                 # built locally and assigned once: appending to
                 # self._completed would publish a partly scanned list
                 found: list[DataMemberABC] = []
-                suffix = f"*.{self.suffix}"
-                for i, m in enumerate(self.source.glob(suffix)):
-                    if self.limit and i == self.limit:
-                        break
+                # counts what it keeps, not what it looked at: the scan
+                # now sees every entry in the directory, and limit
+                # truncates the members
+                for m in self.source.glob("*"):
+                    if not _is_record(m.name, self.suffix):
+                        continue
                     found.append(DataMember(data_store=self, unique_id=m.name))
+                    if self.limit and len(found) == self.limit:
+                        break
                 self._completed = found
             return self._completed
 
@@ -620,19 +800,45 @@ class DataStoreDirectory(DataStoreABC):
         with self._cache_lock:
             if not self._not_completed:
                 found: list[DataMemberABC] = []
-                for i, m in enumerate(
-                    (self.source / NOT_COMPLETED_TABLE).glob("*.json"),
-                ):
-                    if self.limit and i == self.limit:
-                        break
+                for m in (self.source / NOT_COMPLETED_TABLE).glob("*"):
+                    if not _is_record(m.name, "json"):
+                        continue
                     found.append(
                         DataMember(
                             data_store=self,
                             unique_id=str(Path(NOT_COMPLETED_TABLE) / m.name),
                         ),
                     )
+                    if self.limit and len(found) == self.limit:
+                        break
                 self._not_completed = found
             return self._not_completed
+
+    def _record_name(self, unique_id: str, suffix: str) -> tuple[str, str | None]:
+        """the file name a record with this identifier is stored under
+
+        Parameters
+        ----------
+        unique_id
+            identifier as given by the caller
+        suffix
+            format suffix the record is stored with
+
+        Returns
+        -------
+        the file name, and the compression suffix it carries if any
+
+        Notes
+        -----
+        The suffix names the file and the identifier supplies the stem,
+        so the completed records of a ``.fasta.gz`` store are all
+        ``.fasta.gz``. The stem is the identifier with a trailing format
+        or compression suffix taken off, recognised as written: in a
+        ``.fasta`` store ``id_0.FASTA`` keeps its extension and becomes
+        ``id_0.FASTA.fasta``.
+        """
+        name = f"{_record_stem(unique_id)}.{suffix}"
+        return name, get_format_suffixes(name)[1]
 
     def _write(
         self,
@@ -642,23 +848,25 @@ class DataStoreDirectory(DataStoreABC):
         suffix: str,
         data: str,
     ) -> DataMember | None:
-        super().write(unique_id=unique_id, data=data)
-        # check suffix compatible with this datastore
-        sfx, cmp = get_format_suffixes(unique_id)
-        if sfx != suffix:
-            unique_id = f"{Path(unique_id).stem}.{suffix}"
-            sfx, cmp = get_format_suffixes(unique_id)
-
-        unique_id = (
-            unique_id.replace(self.suffix, suffix)
-            if self.suffix and self.suffix != suffix
-            else unique_id
-        )
-        if suffix != "log" and unique_id in self:
+        given = unique_id
+        unique_id = self._record_name(unique_id, suffix)[0]
+        member_id = str(Path(subdir) / unique_id)
+        # super().write refuses a read only store and an APPEND overwrite,
+        # and both are more fundamental than a complaint about the name,
+        # so they answer first
+        super().write(unique_id=member_id, data=data)
+        _check_identifier(given)
+        _check_compression(given, suffix)
+        # unique_id names a completed record whatever subdir holds, so this
+        # can only speak for completed ones
+        if not subdir and suffix != "log" and unique_id in self:
             return None
-        newline = None if cmp else "\n"
-        mode = "wt" if cmp else "w"
-        with open_(self.source / subdir / unique_id, mode=mode, newline=newline) as out:
+        # the newline is named for every suffix, not just the plain one.
+        # the default of None is universal newlines, which on a write turns
+        # each \n into os.linesep, so a compressed record left on it holds
+        # \r\n on windows. reads undo that, which is why it stayed hidden,
+        # but the file itself then differs from the one written elsewhere
+        with open_(self.source / subdir / unique_id, mode="w", newline="\n") as out:
             out.write(data)
 
         if subdir == LOG_TABLE:
@@ -672,9 +880,12 @@ class DataStoreDirectory(DataStoreABC):
             member = DataMember(data_store=self, unique_id=unique_id)
 
         md5 = get_text_hexdigest(data)
-        unique_id = unique_id.replace(suffix, "txt")
-        unique_id = unique_id if cmp is None else unique_id.replace(f".{cmp}", "")
-        with open_(self.source / MD5_TABLE / unique_id, mode="w") as out:
+        # named for the kind as well as the record, so a completed record
+        # and a not-completed one of the same name no longer share a file.
+        # they still share one with a compressed record of that name, since
+        # the stem drops the compression suffix
+        checksum = _checksum_name(unique_id, completed=not subdir)
+        with open_(self.source / MD5_TABLE / checksum, mode="w", newline="\n") as out:
             out.write(md5)
 
         return member
@@ -693,21 +904,32 @@ class DataStoreDirectory(DataStoreABC):
         -------
         a member for this record
 
+        Raises
+        ------
+        ValueError
+            if unique_id does not name a record, or names a compression
+            this store does not write
+
         Notes
         -----
         Drops any not-completed member corresponding to this identifier
+
+        The store's suffix names the file, so any format suffix on
+        unique_id is replaced by it. A compression suffix says how to
+        read the record back, so it is refused rather than replaced.
         """
-        cached = self._completed
         member = self._write(
             subdir="",
             unique_id=unique_id,
             suffix=self.suffix,
             data=data,
         )
-        self.drop_not_completed(unique_id=unique_id)
-        if member is not None:
-            with self._cache_lock:
-                self._append_once(self._completed, cached, member)
+        # one region: the record leaves not_completed and enters completed
+        # together, so no reader finds it in neither
+        with self._cache_lock:
+            self.drop_not_completed(unique_id=unique_id)
+            if member is not None:
+                self._append_once(self._completed, member)
         return member  # type: ignore[return-value]
 
     def write_not_completed(self, *, unique_id: str, data: str) -> DataMember:  # type: ignore[override]
@@ -723,21 +945,42 @@ class DataStoreDirectory(DataStoreABC):
         Returns
         -------
         a member for this record
+
+        Raises
+        ------
+        ValueError
+            if unique_id does not name a record, or names a compression.
+            These are written as plain json whatever the store's suffix is
         """
         (self.source / NOT_COMPLETED_TABLE).mkdir(parents=True, exist_ok=True)
-        cached = self._not_completed
         member = self._write(
             subdir=NOT_COMPLETED_TABLE,
             unique_id=unique_id,
             suffix="json",
             data=data,
         )
+        # never None for this subdir, but _write is typed to allow it
         if member is not None:
             with self._cache_lock:
-                self._append_once(self._not_completed, cached, member)
+                self._append_once(self._not_completed, member)
         return member  # type: ignore[return-value]
 
     def write_log(self, *, unique_id: str, data: str) -> None:  # type: ignore[override]
+        """writes a log file
+
+        Parameters
+        ----------
+        unique_id
+            unique identifier
+        data
+            text data to be written
+
+        Raises
+        ------
+        ValueError
+            if unique_id does not name a record, or names a compression.
+            Logs are written as plain .log whatever the store's suffix is
+        """
         (self.source / LOG_TABLE).mkdir(parents=True, exist_ok=True)
         _ = self._write(subdir=LOG_TABLE, unique_id=unique_id, suffix="log", data=data)
 
@@ -752,11 +995,94 @@ class DataStoreDirectory(DataStoreABC):
         -------
         md5 checksum for the member, if available, None otherwise
         """
-        uid_name = Path(unique_id).name
-        md5_name = re.sub(rf"[.]({self.suffix}|json)$", ".txt", uid_name)
-        path = self.source / MD5_TABLE / md5_name
+        completed = Path(unique_id).parent.name != NOT_COMPLETED_TABLE
+        path = self.source / MD5_TABLE / _checksum_name(unique_id, completed=completed)
+        if path.exists():
+            return path.read_text()
 
-        return path.read_text() if path.exists() else None
+        # a store written before the kinds were named keeps both under one
+        # name, so nothing has to be rewritten for it to be readable
+        legacy = self.source / MD5_TABLE / _legacy_checksum_name(unique_id)
+        return legacy.read_text() if legacy.exists() else None
+
+    def _count_legacy_checksums(self) -> int:
+        md5_dir = self.source / MD5_TABLE
+        return sum(_is_record(p.name, LEGACY_CHECKSUM) for p in md5_dir.glob("*"))
+
+    def migrate_checksums(self) -> ChecksumMigration:
+        """rename checksum files that predate the two kinds being named
+
+        Returns
+        -------
+        how many were renamed, and the stems of those that were not
+
+        Notes
+        -----
+        A file under the shared name holds whichever of the two records
+        wrote last, which was never recorded, so one can be attributed only
+        when a single record carries its stem. The rest are reported and
+        left alone rather than guessed at.
+
+        Requires ``mode="w"``. Read-only cannot rewrite anything, and
+        append undertakes not to touch what is already in the store, which
+        is what renaming these does.
+        """
+        if self.mode is not OVERWRITE:
+            msg = (
+                "migrating checksums rewrites files already in the store, "
+                'which needs mode="w"'
+            )
+            raise OSError(msg)
+
+        md5_dir = self.source / MD5_TABLE
+        # read from the directories rather than the member properties,
+        # which limit truncates and which answer from a cache another
+        # writer cannot have updated. attributing a file to a record that
+        # is merely out of view is the guess this exists to avoid
+        completed = {
+            _record_stem(p.name)
+            for p in self.source.glob("*")
+            if _is_record(p.name, self.suffix)
+        }
+        not_completed = {
+            _record_stem(p.name)
+            for p in (self.source / NOT_COMPLETED_TABLE).glob("*")
+            if _is_record(p.name, "json")
+        }
+
+        migrated = 0
+        ambiguous: list[str] = []
+        orphaned: list[str] = []
+        superseded: list[str] = []
+        legacies = (p for p in md5_dir.glob("*") if _is_record(p.name, LEGACY_CHECKSUM))
+        for legacy in sorted(legacies):
+            stem = legacy.name.removesuffix(f".{LEGACY_CHECKSUM}")
+            kinds = (stem in completed, stem in not_completed)
+            if all(kinds):
+                ambiguous.append(stem)
+                continue
+            if not any(kinds):
+                orphaned.append(stem)
+                continue
+
+            suffix = COMPLETED_CHECKSUM if kinds[0] else NOT_COMPLETED_CHECKSUM
+            target = md5_dir / f"{stem}.{suffix}"
+            # a file already under the current name was written for that
+            # record by this version, so it is the authority. renaming over
+            # it replaces a checksum known to be right with one that may
+            # belong to a record since dropped
+            if target.exists():
+                superseded.append(stem)
+                continue
+            legacy.rename(target)
+            migrated += 1
+
+        return {
+            "migrated": migrated,
+            "ambiguous": ambiguous,
+            "orphaned": orphaned,
+            "superseded": superseded,
+        }
 
     def write_citations(self, *, data: tuple[CitationBase, ...]) -> None:
         if not data:
@@ -823,7 +1149,25 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
             wrapped = TextIOWrapper(raw, encoding="latin-1")
             return wrapped.read()
 
-    def _iter_matches(self, subdir: str, pattern: str) -> Iterator[Path]:
+    def _iter_matches(self, subdir: str, suffix: str | None) -> Iterator[Path]:
+        """archive entries under subdir, stored with this suffix
+
+        Parameters
+        ----------
+        subdir
+            directory the entry sits in. An empty string means no check
+            at all, so entries at every depth are considered, which is
+            why a zipped store's completed can pick up a .json out of
+            not_completed and report it twice
+        suffix
+            suffix the entry is stored under, None for any
+
+        Notes
+        -----
+        A suffix rather than a glob pattern, because Path.match folds
+        case on Windows and an archive has the same membership wherever
+        it is opened.
+        """
         import zipfile
 
         with zipfile.ZipFile(self._source) as archive:
@@ -832,7 +1176,9 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
                 p = Path(name)
                 if subdir and p.parent.name != subdir:
                     continue
-                if p.match(pattern) and not p.name.startswith("."):
+                if p.name.startswith("."):
+                    continue
+                if suffix is None or _is_record(p.name, suffix):
                     yield p
 
     @property
@@ -843,10 +1189,9 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         # properties uniform
         with self._cache_lock:
             if not self._completed:
-                pattern = f"*.{self.suffix}"
                 found: list[DataMemberABC] = []
                 num_matches = 0
-                for name in self._iter_matches("", pattern):
+                for name in self._iter_matches("", self.suffix):
                     num_matches += 1
                     member = DataMember(data_store=self, unique_id=name.name)
                     found.append(member)
@@ -865,7 +1210,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
                 found: list[DataMemberABC] = []
                 num_matches = 0
                 nc_dir_path = Path(NOT_COMPLETED_TABLE)
-                for name in self._iter_matches(NOT_COMPLETED_TABLE, "*.json"):
+                for name in self._iter_matches(NOT_COMPLETED_TABLE, "json"):
                     num_matches += 1
                     member = DataMember(
                         data_store=self,
@@ -883,7 +1228,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
     def logs(self) -> list[DataMemberABC]:
         log_dir = Path(LOG_TABLE)
         logs: list[DataMemberABC] = []
-        for name in self._iter_matches(LOG_TABLE, "*"):
+        for name in self._iter_matches(LOG_TABLE, None):
             m = DataMember(data_store=self, unique_id=str(log_dir / name.name))
             logs.append(m)
         return logs
@@ -899,14 +1244,32 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         -------
         md5 checksum for the member, if available, None otherwise
         """
-        uid_name = Path(unique_id).name
-        md5_name = re.sub(rf"[.]({self.suffix}|json)$", ".txt", uid_name)
+        completed = Path(unique_id).parent.name != NOT_COMPLETED_TABLE
         md5_dir = Path(MD5_TABLE)
-        for name in self._iter_matches(MD5_TABLE, md5_name):
-            m = DataMember(data_store=self, unique_id=str(md5_dir / name.name))
+        # the legacy name second: an archive cannot be rewritten, so a
+        # store zipped before the kinds were named falls back forever
+        candidates = (
+            _checksum_name(unique_id, completed=completed),
+            _legacy_checksum_name(unique_id),
+        )
+        # one pass: _iter_matches opens the archive and reads its central
+        # directory each time it is called, so asking it per candidate
+        # would open the file twice to answer one question
+        found = {
+            name.name: name
+            for name in self._iter_matches(MD5_TABLE, None)
+            if name.name in candidates
+        }
+        for md5_name in candidates:
+            if md5_name not in found:
+                continue
+            m = DataMember(data_store=self, unique_id=str(md5_dir / md5_name))
             result = m.read()
             return result if isinstance(result, str) else result.decode()
         return None
+
+    def _count_legacy_checksums(self) -> int:
+        return len(list(self._iter_matches(MD5_TABLE, LEGACY_CHECKSUM)))
 
     def drop_not_completed(self, *, unique_id: str | None = None) -> None:
         """not supported on read-only zip data stores"""

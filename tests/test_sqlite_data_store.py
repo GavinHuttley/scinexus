@@ -1,5 +1,9 @@
+import contextlib
+import gc
 import os
 import sqlite3
+import sys
+import threading
 from pathlib import Path
 from pickle import dumps, loads
 
@@ -8,12 +12,19 @@ from citeable import Software
 from scitrack import get_text_hexdigest
 
 from scinexus.composable import NotCompleted, NotCompletedType
-from scinexus.data_store import OVERWRITE, READONLY, DataMemberABC, DataStoreDirectory
+from scinexus.data_store import (
+    APPEND,
+    OVERWRITE,
+    READONLY,
+    DataMemberABC,
+    DataStoreDirectory,
+)
 from scinexus.sqlite_data_store import (
     _MEMORY,
     LOG_TABLE,
     RESULT_TABLE,
     DataStoreSqlite,
+    _owner_token,
     has_valid_schema,
     open_sqlite_db_ro,
     open_sqlite_db_rw,
@@ -341,6 +352,525 @@ def test_new_write_id_includes_table(table_name):
     assert got == data
 
 
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda d: d.read("r1"),
+        lambda d: d.completed,
+        lambda d: d.not_completed,
+        lambda d: d.logs,
+        lambda d: len(d),
+        lambda d: d.write(unique_id="r2", data="d2"),
+    ],
+)
+def test_use_after_close_raises(tmp_dir, operation):
+    """a closed store refuses to act rather than half working"""
+    # the path is kept clear of the word the match looks for, since other
+    # errors from this store quote the path and a file called
+    # closed.sqlitedb would satisfy an assertion meant for "is closed"
+    path = tmp_dir / "shut.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    dstore.close()
+
+    with pytest.raises(OSError, match="is closed"):
+        operation(dstore)
+
+
+def test_closing_twice(tmp_dir):
+    """a second close is not an error"""
+    path = tmp_dir / "twice.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+
+    dstore.close()
+    dstore.close()
+
+    assert dstore._db is None
+
+
+def test_close_before_the_database_is_opened(tmp_dir):
+    """closing a store that never opened its database still ends it"""
+    # the connection is made on first use, so this is the ordinary shape of
+    # a store that is built and then abandoned
+    path = tmp_dir / "untouched.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+
+    dstore.close()
+
+    with pytest.raises(OSError, match="is closed"):
+        dstore.write(unique_id="r1", data="d1")
+
+
+@pytest.mark.parametrize("operation", [lambda d: d.lock(), lambda d: d.unlock()])
+def test_lock_operations_on_a_closed_store(tmp_dir, operation):
+    """taking or releasing the lock of a closed store is refused"""
+    path = tmp_dir / "shutlock.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    dstore.close()
+
+    with pytest.raises(OSError, match="is closed"):
+        operation(dstore)
+
+
+def test_collection_without_close_keeps_the_lock(tmp_dir):
+    """a store dropped without being closed leaves its lock behind"""
+    # the lock marks a session that did not end through close(), so the
+    # finaliser must not release it. it also issues no SQL, which at
+    # interpreter exit could block on another connection or find the
+    # machinery it needs gone
+    path = tmp_dir / "dropped.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    with pytest.warns(UserWarning, match="was not closed"):
+        del dstore
+        gc.collect()
+
+    db = sqlite3.connect(path)
+    try:
+        held = db.execute("SELECT lock_pid FROM state").fetchone()[0]
+    finally:
+        db.close()
+    assert held == f"{os.getpid()}:{threading.get_native_id()}"
+
+
+def test_collection_of_a_store_refused_the_lock_stays_quiet(tmp_dir, recwarn):
+    """a store that never got the lock does not claim to be holding it"""
+    # its open was refused, so it has a connection but no lock, and the
+    # advice to close it would not release one taken by anybody else
+    path = tmp_dir / "taken.sqlitedb"
+    first = DataStoreSqlite(path, mode=OVERWRITE)
+    first.write(unique_id="r1", data="d1")
+    first._db.execute("UPDATE state SET lock_pid=?", (os.getpid() + 1,))
+    first._db.close()
+    first._db = None
+    first._closed = True
+
+    second = DataStoreSqlite(path, mode=OVERWRITE)
+    with pytest.raises(OSError, match="locked"):
+        second.read("r1")
+    assert second._db is not None
+
+    del second
+    gc.collect()
+
+    assert [w for w in recwarn if issubclass(w.category, UserWarning)] == []
+
+
+@pytest.mark.parametrize(
+    ("source", "mode"),
+    [
+        (_MEMORY, OVERWRITE),
+        ("readonly", READONLY),
+        ("never_used", OVERWRITE),
+    ],
+)
+def test_collection_without_close_stays_quiet(tmp_dir, source, mode, recwarn):
+    """only a store that can strand a lock on disk is worth warning about"""
+    # an in-memory store leaves nothing behind, a read only one never takes
+    # the lock, and one that never opened its database holds nothing
+    if source is not _MEMORY:
+        populate = tmp_dir / f"{source}.sqlitedb"
+        seed = DataStoreSqlite(populate, mode=OVERWRITE)
+        seed.write(unique_id="r1", data="d1")
+        seed.close()
+        dstore = DataStoreSqlite(populate, mode=mode)
+        if source == "readonly":
+            dstore.read("r1")
+    else:
+        dstore = DataStoreSqlite(source, mode=mode)
+        dstore.write(unique_id="r1", data="d1")
+
+    del dstore
+    gc.collect()
+
+    assert [w for w in recwarn if issubclass(w.category, UserWarning)] == []
+
+
+def test_close_hands_the_database_on(tmp_dir):
+    """a closed store leaves the database open to a new one"""
+    # the lock names the process, so without releasing it here the store
+    # that follows cannot take the database in a writable mode
+    path = tmp_dir / "handover.sqlitedb"
+    first = DataStoreSqlite(path, mode=OVERWRITE)
+    first.write(unique_id="r1", data="d1")
+    first.close()
+
+    second = DataStoreSqlite(path, mode=OVERWRITE)
+
+    assert second.read("r1") == "d1"
+    assert second._lock_id == f"{os.getpid()}:{threading.get_native_id()}"
+    second.close()
+
+
+@pytest.mark.parametrize("mode", [OVERWRITE, APPEND])
+def test_a_held_lock_refuses_a_writable_store(tmp_dir, mode):
+    """a lock left by another session refuses any mode that would write"""
+    # the lock marks a store whose session did not end through close(), so
+    # its records were never confirmed. neither mode may write over that
+    # without the deliberate unlock
+    path = tmp_dir / "held.sqlitedb"
+    abandoned = DataStoreSqlite(path, mode=OVERWRITE)
+    abandoned.write(unique_id="r1", data="d1")
+    abandoned._db.execute("UPDATE state SET lock_pid=?", (os.getpid() + 1,))
+    abandoned._db.close()
+    abandoned._db = None
+    abandoned._closed = True
+
+    dstore = DataStoreSqlite(path, mode=mode)
+
+    with pytest.raises(OSError, match="locked"):
+        dstore.read("r1")
+
+
+@pytest.mark.parametrize("mode", [OVERWRITE, APPEND])
+def test_a_held_lock_refuses_every_time(tmp_dir, mode):
+    """the refusal is not spent by being raised once"""
+    # the connection is opened before the lock is sought, so a refusal
+    # leaves one behind. taken as proof of a lock, it lets the next access
+    # straight through
+    path = tmp_dir / "sticky.sqlitedb"
+    abandoned = DataStoreSqlite(path, mode=OVERWRITE)
+    abandoned.write(unique_id="r1", data="d1")
+    abandoned._db.execute("UPDATE state SET lock_pid=?", (os.getpid() + 1,))
+    abandoned._db.close()
+    abandoned._db = None
+    abandoned._closed = True
+
+    dstore = DataStoreSqlite(path, mode=mode)
+    with pytest.raises(OSError, match="locked"):
+        dstore.read("r1")
+
+    with pytest.raises(OSError, match="locked"):
+        dstore.read("r1")
+    with pytest.raises(OSError, match="locked"):
+        dstore.write(unique_id="r2", data="d2")
+
+
+@pytest.mark.parametrize("mode", [OVERWRITE, APPEND])
+def test_unlock_reaches_a_lock_held_by_another_session(tmp_dir, mode):
+    """the deliberate override works on the store it exists for"""
+    # unlock has to open the database without seeking the lock, or the
+    # refusal it is meant to clear is what stops it running
+    path = tmp_dir / "override.sqlitedb"
+    abandoned = DataStoreSqlite(path, mode=OVERWRITE)
+    abandoned.write(unique_id="r1", data="d1")
+    abandoned._db.execute("UPDATE state SET lock_pid=?", (os.getpid() + 1,))
+    abandoned._db.close()
+    abandoned._db = None
+    abandoned._closed = True
+
+    dstore = DataStoreSqlite(path, mode=mode)
+    dstore.unlock(force=True)
+
+    # read from the connection unlock opened, before anything else takes
+    # the lock the store is now free to take
+    assert dstore._db.execute("SELECT lock_pid FROM state").fetchone()[0] is None
+    assert dstore.read("r1") == "d1"
+    assert dstore._lock_id == f"{os.getpid()}:{threading.get_native_id()}"
+    dstore.close()
+
+
+def test_a_lock_recorded_as_zero_still_locks(tmp_dir):
+    """an owner recorded as 0 is an owner"""
+    path = tmp_dir / "zero.sqlitedb"
+    abandoned = DataStoreSqlite(path, mode=OVERWRITE)
+    abandoned.write(unique_id="r1", data="d1")
+    abandoned._db.execute("UPDATE state SET lock_pid=0")
+    abandoned._db.close()
+    abandoned._db = None
+    abandoned._closed = True
+
+    dstore = DataStoreSqlite(path, mode=APPEND)
+
+    assert dstore.locked
+    with pytest.raises(OSError, match="locked"):
+        dstore.write(unique_id="r2", data="d2")
+
+
+def test_a_held_lock_allows_a_readonly_store(tmp_dir):
+    """a locked store can still be read, only not written"""
+    path = tmp_dir / "readable.sqlitedb"
+    abandoned = DataStoreSqlite(path, mode=OVERWRITE)
+    abandoned.write(unique_id="r1", data="d1")
+    abandoned._db.execute("UPDATE state SET lock_pid=?", (os.getpid() + 1,))
+    abandoned._db.close()
+    abandoned._db = None
+    abandoned._closed = True
+
+    dstore = DataStoreSqlite(path, mode=READONLY)
+
+    assert dstore.read("r1") == "d1"
+    dstore.close()
+
+
+def _abandon_with_a_lock_in_a_later_row(path, lock_pid):
+    """leaves the state table as the racy implementation could have
+
+    Row 1 free, because the session that held it called unlock(), and row 2
+    still holding the lock of a session that never closed.
+    """
+    abandoned = DataStoreSqlite(path, mode=OVERWRITE)
+    abandoned.write(unique_id="r1", data="d1")
+    abandoned.record_type = str
+    # the racy lock() inserted rather than updated, so a second session got
+    # its own row. seed it the same way to get row 2 for the right reason
+    abandoned._db.execute("INSERT INTO state(lock_pid) VALUES (?)", (lock_pid,))
+    # that version's unlock() cleared state_id 1 alone, which is how a
+    # database ends up free in its first row and locked below it
+    abandoned._db.execute("UPDATE state SET lock_pid=NULL WHERE state_id=1")
+    abandoned._db.close()
+    abandoned._db = None
+    abandoned._closed = True
+
+
+@pytest.mark.parametrize("mode", [OVERWRITE, APPEND])
+def test_a_lock_in_a_later_state_row_refuses_a_writable_store(tmp_dir, mode):
+    """a lock is a lock whichever state row records it"""
+    # the racy lock() left rows past the first, and unlock() cleared only
+    # row 1. read from row 1 alone, a lock below it is invisible, so the
+    # store it marks as never confirmed opens for writing
+    path = tmp_dir / "laterrow.sqlitedb"
+    _abandon_with_a_lock_in_a_later_row(path, f"{os.getpid() + 1}:1")
+
+    dstore = DataStoreSqlite(path, mode=mode)
+
+    assert dstore.locked
+    with pytest.raises(OSError, match="locked"):
+        dstore.read("r1")
+
+
+def test_a_lock_in_a_later_state_row_shows_on_a_readonly_store(tmp_dir):
+    """a read-only store reports the lock it cannot take"""
+    # READONLY returns from lock() before any claim, so nothing on that path
+    # can put a later row right: the reader itself has to see it
+    path = tmp_dir / "laterrow_ro.sqlitedb"
+    _abandon_with_a_lock_in_a_later_row(path, f"{os.getpid() + 1}:1")
+
+    dstore = DataStoreSqlite(path, mode=READONLY)
+
+    assert dstore.locked
+    assert dstore.read("r1") == "d1"
+    dstore.close()
+
+
+@pytest.mark.parametrize("mode", [OVERWRITE, APPEND])
+def test_unlock_reaches_a_lock_in_a_later_state_row(tmp_dir, mode):
+    """the deliberate override clears every lock recorded, not merely row 1"""
+    # clearing one row per call leaves the store refusing after the user has
+    # forced it open, and unlock() reads the lock before clearing it, so a
+    # row it cannot see is a row it never clears
+    from scinexus.misc import get_object_provenance
+
+    path = tmp_dir / "laterrow_unlock.sqlitedb"
+    _abandon_with_a_lock_in_a_later_row(path, f"{os.getpid() + 1}:1")
+
+    dstore = DataStoreSqlite(path, mode=mode)
+    dstore.unlock(force=True)
+
+    assert dstore.read("r1") == "d1"
+    assert dstore._lock_id == _owner_token()
+    # claiming the store collapses the rows the racy version left behind,
+    # keeping row 1 and the record_type it carries
+    rows = dstore._db.execute("SELECT state_id FROM state").fetchall()
+    assert [r["state_id"] for r in rows] == [1]
+    assert dstore.record_type == get_object_provenance(str)
+    dstore.close()
+
+
+def test_the_owner_token_tells_threads_apart():
+    """two threads of one process do not produce the same owner"""
+    # the main thread's native id equals the pid on Linux, so a token built
+    # from the pid twice is indistinguishable from a real one when it is
+    # only ever read from the main thread
+    tokens = []
+
+    def record():
+        tokens.append(_owner_token())
+
+    record()
+    other = threading.Thread(target=record)
+    other.start()
+    other.join()
+
+    assert tokens[0] != tokens[1]
+    assert all(t.startswith(f"{os.getpid()}:") for t in tokens)
+
+
+def test_the_lock_names_the_thread_as_well_as_the_process(tmp_dir):
+    """ownership identifies one store, not merely one process"""
+    path = tmp_dir / "owner.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+
+    assert dstore._lock_id == f"{os.getpid()}:{threading.get_native_id()}"
+    dstore.close()
+
+
+def test_unlock_declines_a_lock_taken_by_another_thread(tmp_dir):
+    """a lock this thread did not take is not this thread's to release"""
+    # threads share a pid, so an owner recorded as one gave every thread of
+    # a process the run of every lock any of them held
+    path = tmp_dir / "otherthread.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    foreign = f"{os.getpid()}:{threading.get_native_id() + 1}"
+    dstore._db.execute("UPDATE state SET lock_pid=?", (foreign,))
+
+    dstore.unlock()
+
+    assert dstore._lock_id == foreign
+    dstore.unlock(force=True)
+    assert dstore._lock_id is None
+    dstore.close()
+
+
+def test_unlock_declines_a_lock_in_the_older_format(tmp_dir):
+    """a bare pid names a session this one cannot identify itself with"""
+    path = tmp_dir / "legacy.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    dstore._db.execute("UPDATE state SET lock_pid=?", (os.getpid(),))
+
+    dstore.unlock()
+
+    assert dstore._lock_id == os.getpid()
+    dstore.unlock(force=True)
+    assert dstore._lock_id is None
+    dstore.close()
+
+
+_LOCK_RACERS = 8
+_LOCK_ROUNDS = 5
+_LOCK_TIMEOUT = 30
+
+
+def _race_for_the_lock(path):
+    """let several sessions reach for the lock of a fresh store at once
+
+    Returns the rows left in the state table.
+    """
+    open_sqlite_db_rw(path).close()
+    barrier = threading.Barrier(_LOCK_RACERS, timeout=_LOCK_TIMEOUT)
+
+    def claim():
+        store = DataStoreSqlite(path, mode=OVERWRITE)
+        barrier.wait(timeout=_LOCK_TIMEOUT)
+        with contextlib.suppress(OSError, sqlite3.OperationalError):
+            _ = store.db
+        # closed in the thread that opened the connection, which is the
+        # only one sqlite3 will let touch it
+        with contextlib.suppress(sqlite3.Error):
+            store.close()
+
+    threads = [threading.Thread(target=claim) for _ in range(_LOCK_RACERS)]
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=_LOCK_TIMEOUT)
+    finally:
+        sys.setswitchinterval(old_interval)
+
+    raw = sqlite3.connect(path)
+    try:
+        return raw.execute("SELECT state_id FROM state").fetchall()
+    finally:
+        raw.close()
+
+
+@pytest.mark.parametrize("attempt", list(range(_LOCK_ROUNDS)))
+def test_only_one_session_takes_the_lock(tmp_dir, attempt):
+    """sessions racing for a free store leave one state row between them"""
+    # reading the state table and claiming it are one transaction, so a
+    # racer either finds the store free and takes it or finds it taken.
+    # as two statements each racer found it free and inserted its own row,
+    # and since unlock() clears state_id 1 the rest were held for good.
+    # one round in two showed it, so a red case here reruns green: it is
+    # the parametrised set that carries the test, not any single attempt
+    rows = _race_for_the_lock(tmp_dir / f"race{attempt}.sqlitedb")
+
+    assert rows == [(1,)]
+
+
+def test_a_failed_claim_leaves_the_connection_usable(tmp_dir, monkeypatch):
+    """a claim that raises ends its transaction rather than stranding it"""
+    path = tmp_dir / "failclaim.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    dstore.unlock()
+
+    def explode():
+        msg = "no token"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("scinexus.sqlite_data_store._owner_token", explode)
+    with pytest.raises(RuntimeError):
+        dstore.lock()
+    assert not dstore._db.in_transaction
+
+    monkeypatch.undo()
+    dstore.lock()
+
+    assert dstore._lock_id == _owner_token()
+    dstore.close()
+
+
+def test_a_claim_refused_at_the_commit_leaves_the_store_usable(tmp_dir):
+    """a commit that cannot complete does not strand the connection"""
+    path = tmp_dir / "busycommit.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    dstore.unlock()
+    dstore._db.execute("PRAGMA busy_timeout=100")
+
+    # a reader inside a read transaction blocks the exclusive lock a commit
+    # needs without blocking the reserved one the claim opens with, so the
+    # claim fails at the last statement of the three
+    reader = sqlite3.connect(path, isolation_level=None, timeout=1)
+    reader.execute("BEGIN")
+    reader.execute("SELECT * FROM state").fetchall()
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            dstore.lock()
+        assert not dstore._db.in_transaction
+    finally:
+        reader.close()
+
+    dstore.lock()
+
+    assert dstore._lock_id == _owner_token()
+    dstore.close()
+
+
+def test_a_locked_store_is_refused_without_waiting_for_the_write_lock(tmp_dir):
+    """the refusal reads the owner, which does not need the write lock"""
+    path = tmp_dir / "refuse.sqlitedb"
+    abandoned = DataStoreSqlite(path, mode=OVERWRITE)
+    abandoned.write(unique_id="r1", data="d1")
+    abandoned._db.execute("UPDATE state SET lock_pid=?", ("999999:999999",))
+    abandoned._db.close()
+    abandoned._db = None
+    abandoned._closed = True
+
+    # another session holding the write lock would make a refusal that
+    # contends for it wait out the busy timeout and fail as OperationalError
+    writer = sqlite3.connect(path, isolation_level=None)
+    writer.execute("BEGIN IMMEDIATE")
+    try:
+        dstore = DataStoreSqlite(path, mode=OVERWRITE)
+        dstore._connection().execute("PRAGMA busy_timeout=30000")
+
+        with pytest.raises(OSError, match="locked by"):
+            dstore.lock()
+    finally:
+        writer.close()
+    dstore.close()
+
+
 def test_is_locked(tmp_dir):
     path = tmp_dir / "test_locked.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)
@@ -573,6 +1103,9 @@ def test_lock_overwrite_on_locked_db(tmp_dir):
     dstore2._db = dstore._db
     with pytest.raises(OSError, match="locked"):
         dstore2.lock()
+    # the shared connection is a fiction of this test, so hand it back
+    # before dstore2 is collected and reports a store it never opened
+    dstore2._db = None
     dstore.close()
 
 
@@ -599,6 +1132,20 @@ def test_unlock_already_unlocked(writable_store):
 def test_write_duplicate_not_added_to_completed(writable_store):
     writable_store.write(unique_id="r1", data="d1_updated")
     assert len(writable_store.completed) == 1
+
+
+@pytest.mark.parametrize("unique_id", ["", "   ", ".hidden"])
+def test_an_identifier_that_names_no_record_is_refused(writable_store, unique_id):
+    """the identifier rule is the same one a directory store applies"""
+    with pytest.raises(ValueError):
+        writable_store.write(unique_id=unique_id, data="data")
+
+
+@pytest.mark.parametrize("unique_id", ["", ".hidden"])
+def test_a_not_completed_identifier_is_refused_too(writable_store, unique_id):
+    """both kinds of record, as in a directory store"""
+    with pytest.raises(ValueError):
+        writable_store.write_not_completed(unique_id=unique_id, data="{}")
 
 
 def test_write_log_with_table_prefix(tmp_dir, DATA_DIR):
@@ -653,14 +1200,26 @@ def test_load_citations_no_table(tmp_dir):
     dstore.close()
 
 
-def test_describe_locked_different_pid(writable_store):
+def test_describe_locked_by_another_session(writable_store):
+    """the description names the holder and this session separately"""
+    foreign = f"{os.getpid()}:{threading.get_native_id() + 1}"
     writable_store._db.execute(
         "UPDATE state SET lock_pid=? WHERE state_id=1",
-        (os.getpid() + 1,),
+        (foreign,),
     )
     result = writable_store._describe()
     assert "Locked db store" in result["title"]
-    assert str(os.getpid() + 1) in result["title"]
+    assert foreign in result["title"]
+    assert _owner_token() in result["title"]
+
+
+def test_describe_locked_by_this_session(writable_store):
+    """a store this session holds says so rather than naming tokens"""
+    assert writable_store._lock_id == _owner_token()
+
+    result = writable_store._describe()
+
+    assert result["title"] == "Locked to the current process and thread."
 
 
 def test_describe_unlocked(writable_store):
@@ -754,7 +1313,6 @@ def test_write_citations_no_table(tmp_dir, sample_citations):
         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
     )
     dstore._db.row_factory = sqlite3.Row
-    dstore._open = True
     assert not dstore._has_citations_table()
     dstore.write_citations(data=sample_citations)
     assert dstore._has_citations_table()

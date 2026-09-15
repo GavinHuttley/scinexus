@@ -1,13 +1,14 @@
 import copy
 import functools
 import json
+import os.path
 import pathlib
 import shutil
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from pickle import dumps, loads
 
 import pytest
@@ -21,17 +22,20 @@ except ImportError:
     c3 = None
     UnionDict = None
 
-from scinexus import open_data_store
+from scinexus import data_store, io_util, open_data_store
 from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import (
     APPEND,
     CITATIONS_FILE,
+    COMPLETED_CHECKSUM,
     MD5_TABLE,
+    NOT_COMPLETED_CHECKSUM,
     NOT_COMPLETED_TABLE,
     OVERWRITE,
     READONLY,
     DataStoreDirectory,
     ReadOnlyDataStoreZipped,
+    _is_record,
     get_data_source,
     get_id_from_source,
     get_summary_display,
@@ -321,15 +325,909 @@ def test_not_completed(nc_dstore):
 def test_drop_not_completed(nc_dstore):
     num_completed = len(nc_dstore.completed)
     num_not_completed = len(nc_dstore.not_completed)
-    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*.txt")))
+    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*")))
     assert num_not_completed == 3
     assert num_completed == 6
     assert len(nc_dstore) == 9
     assert num_md5 == num_completed + num_not_completed
     nc_dstore.drop_not_completed()
     assert len(nc_dstore.not_completed) == 0
-    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*.txt")))
+    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*")))
     assert num_md5 == num_completed
+
+
+def test_write_not_completed_twice_caches_one_member(w_dstore):
+    """re-writing a not-completed record leaves one cached member, not two"""
+    data = NotCompleted(
+        NotCompletedType.ERROR,
+        "location",
+        "message",
+        source="nc1",
+    ).to_json()
+    expect = [str(Path(NOT_COMPLETED_TABLE) / "nc1.json")]
+
+    w_dstore.write_not_completed(unique_id="nc1", data=data)
+
+    # the attribute, not the property: the property rebuilds itself from
+    # disk when empty, so it reports a member even if nothing recorded one
+    assert [m.unique_id for m in w_dstore._not_completed] == expect
+
+    # the second write rescans nothing, so the cached list is the same
+    # object as before it and identity alone cannot tell the two apart
+    w_dstore.write_not_completed(unique_id="nc1", data=data)
+
+    nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
+    assert len(list(nc_dir.glob("*.json"))) == 1
+    assert [m.unique_id for m in w_dstore._not_completed] == expect
+
+    w_dstore.drop_not_completed()
+
+    assert list(nc_dir.glob("*.json")) == []
+
+
+def test_append_mode_refuses_to_rewrite_a_not_completed_record(w_dstore):
+    """APPEND refuses a second not-completed record, as it does a completed one"""
+    data = NotCompleted(
+        NotCompletedType.ERROR,
+        "location",
+        "message",
+        source="nc1",
+    ).to_json()
+    w_dstore.write_not_completed(unique_id="nc1", data=data)
+    path = w_dstore.source / NOT_COMPLETED_TABLE / "nc1.json"
+
+    w_dstore._mode = APPEND
+
+    with pytest.raises(OSError):
+        w_dstore.write_not_completed(unique_id="nc1", data='{"replaced": true}')
+
+    assert path.read_text() == data
+
+
+def test_append_mode_refuses_to_rewrite_a_respelled_not_completed(w_dstore):
+    """the APPEND refusal follows a respelled identifier to the record it names"""
+    # the identifier resolves to nc1.json, so the refusal has to recognise
+    # the second write as the record already stored, not as a new one
+    data = NotCompleted(
+        NotCompletedType.ERROR,
+        "location",
+        "message",
+        source="nc1",
+    ).to_json()
+    w_dstore.write_not_completed(unique_id="nc1.fasta", data=data)
+    assert str(Path(NOT_COMPLETED_TABLE) / "nc1.json") in w_dstore
+
+    w_dstore._mode = APPEND
+
+    with pytest.raises(OSError):
+        w_dstore.write_not_completed(unique_id="nc1.json", data="{}")
+
+
+def test_write_not_completed_beside_a_colliding_completed_record(write_dir):
+    """a completed record of the same name does not suppress the write"""
+    # a store whose own suffix is json is where the completed id nc1.json
+    # and the not-completed one collide once the bare nc1 is completed
+    dstore = DataStoreDirectory(write_dir, suffix="json", mode=OVERWRITE)
+    dstore.write(unique_id="nc1.json", data='{"completed": true}')
+    dstore._mode = APPEND
+
+    member = dstore.write_not_completed(unique_id="nc1", data='{"failed": true}')
+
+    assert member is not None
+    assert (write_dir / NOT_COMPLETED_TABLE / "nc1.json").exists()
+
+
+def test_append_mode_refuses_a_rename_onto_an_existing_record(w_dstore):
+    """APPEND refuses a write whose identifier is renamed onto one in the store"""
+    # c1.txt carries the wrong suffix for this store and becomes c1.fasta
+    # before anything is written, so only the renamed id can be checked
+    w_dstore.write(unique_id="c1.fasta", data=">first\nAAAA\n")
+    w_dstore._mode = APPEND
+
+    with pytest.raises(OSError):
+        w_dstore.write(unique_id="c1.txt", data=">second\nTTTT\n")
+
+
+def test_write_twice_caches_one_member_for_log_suffix(write_dir):
+    """a store whose own suffix is log records a re-written member once"""
+    # log is the one suffix _write exempts from its duplicate guard, so
+    # this is the store where a repeat write reaches the cache at all
+    dstore = DataStoreDirectory(write_dir, suffix="log", mode=OVERWRITE)
+    dstore.write(unique_id="c1.log", data="first")
+    dstore.write(unique_id="c1.log", data="second")
+
+    assert [m.unique_id for m in dstore._completed] == ["c1.log"]
+    assert len(dstore) == 1
+
+
+@pytest.fixture
+def mixed_md5_dstore(tmp_dir):
+    """a store where only one of two not-completed records has a checksum"""
+    # a checksum is optional -- md5() returns None without one and
+    # _validate counts it under md5_missing -- so a store assembled by hand
+    # or by an earlier writer can hold both kinds, and a drop meets both
+    source = tmp_dir / "mixed_md5"
+    (source / NOT_COMPLETED_TABLE).mkdir(parents=True)
+    (source / MD5_TABLE).mkdir(parents=True)
+    for i in range(2):
+        nc = NotCompleted(
+            NotCompletedType.ERROR,
+            "location",
+            "message",
+            source=f"id_{i}",
+        )
+        data = nc.to_json()
+        (source / NOT_COMPLETED_TABLE / f"id_{i}.json").write_text(data)
+        if i == 0:
+            checksum = f"id_{i}.{NOT_COMPLETED_CHECKSUM}"
+            (source / MD5_TABLE / checksum).write_text(get_text_hexdigest(data))
+    return DataStoreDirectory(source, suffix="fasta", mode=OVERWRITE)
+
+
+def test_drop_not_completed_without_md5_file(mixed_md5_dstore):
+    """a record with no checksum file is dropped like any other"""
+    source = mixed_md5_dstore.source
+    assert len(mixed_md5_dstore.not_completed) == 2
+
+    # id_1 is the one without a checksum. dropping by identifier leaves the
+    # cache in place, unlike a full drop, so the assertion below observes
+    # the list itself rather than a rebuild of it
+    mixed_md5_dstore.drop_not_completed(unique_id="id_1")
+
+    expect = [str(Path(NOT_COMPLETED_TABLE) / "id_0.json")]
+    assert [m.unique_id for m in mixed_md5_dstore.not_completed] == expect
+    assert not (source / NOT_COMPLETED_TABLE / "id_1.json").exists()
+
+    mixed_md5_dstore.drop_not_completed()
+
+    assert list((source / NOT_COMPLETED_TABLE).glob("*.json")) == []
+    assert list((source / MD5_TABLE).glob("*")) == []
+
+
+def test_drop_not_completed_keeps_what_limit_hides(nc_dstore):
+    """a full drop empties the limited view and keeps the rest"""
+    nc_dstore._limit = 1
+    nc_dstore._not_completed = []
+    nc_dir = nc_dstore.source / NOT_COMPLETED_TABLE
+    assert len(nc_dstore.not_completed) == 1
+    assert len(list(nc_dir.glob("*.json"))) == 3
+
+    nc_dstore.drop_not_completed()
+
+    # records remain, so the directory is still in use
+    assert nc_dir.exists()
+    assert len(list(nc_dir.glob("*.json"))) == 2
+
+
+def test_drop_not_completed_by_id_keeps_what_limit_hides(nc_dstore):
+    """a record the limited view omits is not dropped by identifier"""
+    nc_dstore._limit = 1
+    nc_dstore._not_completed = []
+    nc_dir = nc_dstore.source / NOT_COMPLETED_TABLE
+    shown = {Path(m.unique_id).name for m in nc_dstore.not_completed}
+    hidden = next(p for p in nc_dir.glob("*.json") if p.name not in shown)
+
+    nc_dstore.drop_not_completed(unique_id=hidden.stem)
+
+    assert hidden.exists()
+
+
+@pytest.mark.parametrize(
+    "unique_id",
+    ["nc1", "nc1.fasta", "nc1.json", "nc1.txt", "a.b.fasta"],
+)
+def test_write_drops_the_twin_however_the_id_is_spelled(w_dstore, unique_id):
+    """the record a write supersedes is found whatever extension the id carries"""
+    # a compressed spelling is absent because this store does not write
+    # one, so it is refused rather than stored under some other name
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    w_dstore.write_not_completed(unique_id=unique_id, data=record.to_json())
+    nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
+    assert len(list(nc_dir.glob("*.json"))) == 1
+
+    w_dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+    assert list(nc_dir.glob("*.json")) == []
+
+
+def test_write_leaves_unrelated_not_completed_records(w_dstore):
+    """superseding one record does not touch another whose name ends the same"""
+    # write("c1.fasta") looks for not_completed/c1.json, and nc1.json and
+    # abc1.json both end with that name
+    for uid in ("nc1", "abc1", "c1"):
+        record = NotCompleted(NotCompletedType.ERROR, "location", "message", source=uid)
+        w_dstore.write_not_completed(unique_id=uid, data=record.to_json())
+
+    w_dstore.write(unique_id="c1.fasta", data=">s\nACGT\n")
+
+    nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
+    assert sorted(p.name for p in nc_dir.glob("*.json")) == ["abc1.json", "nc1.json"]
+
+
+def test_write_keeps_the_checksum_of_the_record_it_wrote(w_dstore):
+    """superseding a not-completed record leaves the new checksum in place"""
+    # both kinds were kept under one name, so the drop that supersedes the
+    # twin deleted the checksum _write had written moments earlier
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="id_0")
+    w_dstore.write_not_completed(unique_id="id_0", data=record.to_json())
+    data = ">s\nACGT\n"
+
+    w_dstore.write(unique_id="id_0.fasta", data=data)
+
+    assert w_dstore.md5("id_0.fasta") == get_text_hexdigest(data)
+
+
+def test_the_two_kinds_of_record_keep_separate_checksums(w_dstore):
+    """a completed and a not-completed record of one name each keep their own"""
+    data = ">s\nACGT\n"
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="id_0")
+    nc_data = record.to_json()
+    w_dstore.write(unique_id="id_0.fasta", data=data)
+
+    w_dstore.write_not_completed(unique_id="id_0", data=nc_data)
+
+    assert w_dstore.md5("id_0.fasta") == get_text_hexdigest(data)
+    nc_id = str(Path(NOT_COMPLETED_TABLE) / "id_0.json")
+    assert w_dstore.md5(nc_id) == get_text_hexdigest(nc_data)
+
+
+@pytest.mark.parametrize("unique_id", ["id_0", "id_0.fasta.gz"])
+def test_the_checksum_of_a_compressed_record_is_found(tmp_dir, unique_id):
+    """the two-suffix strip agrees across writing, reading and dropping"""
+    # a compressed store is where _record_stem has two suffixes to take
+    # off, so a checksum name built with one of them looks right for
+    # every uncompressed store and fails only here
+    dstore = DataStoreDirectory(tmp_dir / "gz", suffix="fasta.gz", mode=OVERWRITE)
+    data = ">s\nACGT\n"
+
+    dstore.write(unique_id=unique_id, data=data)
+
+    assert dstore.md5(unique_id) == get_text_hexdigest(data)
+
+
+@pytest.mark.parametrize("unique_id", ["id_0", "id_0.fasta", "id_0.genbank"])
+def test_the_checksum_of_a_record_is_found_where_it_was_put(w_dstore, unique_id):
+    """writing, reading and dropping agree on where a checksum lives"""
+    # they were three separate computations of the name, and an extension
+    # the store does not use made all three disagree. the store now names
+    # the file, so every spelling here is the one record, id_0.fasta
+    data = ">s\nACGT\n"
+    w_dstore.write(unique_id=unique_id, data=data)
+
+    assert w_dstore.md5(unique_id) == get_text_hexdigest(data)
+
+
+@pytest.mark.parametrize(
+    "unique_id",
+    ["id_0", "id_0.fasta", "id_0.genbank", "id_0.txt"],
+)
+def test_the_store_suffix_decides_the_stored_name(w_dstore, unique_id):
+    """however the identifier is spelled, the store names the file"""
+    # a suffix the identifier carried used to survive into the name, so a
+    # store of .fasta could hold an id_0.fasta.gz its own scan cannot see.
+    # globbing every file, not just *.fasta, so a record left under some
+    # other name is a failure rather than something the pattern hides
+    w_dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+    stored = [p.name for p in w_dstore.source.glob("*") if p.is_file()]
+    assert stored == ["id_0.fasta"]
+
+
+@pytest.mark.parametrize("unique_id", ["id_0", "id_0.fasta", "id_0.fasta.gz"])
+def test_a_compound_suffix_is_appended_once(tmp_dir, unique_id):
+    """a store of .fasta.gz stores id_0.fasta.gz, not id_0.fasta.fasta.gz"""
+    dstore = DataStoreDirectory(tmp_dir / "gz", suffix="fasta.gz", mode=OVERWRITE)
+
+    dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+    stored = [p.name for p in dstore.source.glob("*") if p.is_file()]
+    assert stored == ["id_0.fasta.gz"]
+
+
+def test_a_compound_suffix_store_writes_compressed(tmp_dir):
+    """the suffix the store names picks the engine the record is written with"""
+    # _write chooses the mode from the name, and open_ the handler, so the
+    # compression follows from the suffix rather than from the identifier
+    import gzip
+
+    dstore = DataStoreDirectory(tmp_dir / "gz", suffix="fasta.gz", mode=OVERWRITE)
+    data = ">s\nACGT\n"
+
+    dstore.write(unique_id="id_0", data=data)
+
+    assert (
+        gzip.decompress((dstore.source / "id_0.fasta.gz").read_bytes()) == data.encode()
+    )
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    ["fasta", "fasta.gz", "fasta.bz2", "fasta.xz", "fasta.zip"],
+)
+def test_a_record_is_written_with_a_line_feed_whatever_the_suffix(
+    tmp_dir,
+    monkeypatch,
+    suffix,
+):
+    """a record has the same bytes on disk on every platform"""
+    # newline=None is the universal default of TextIOWrapper, which on a
+    # write turns every \n into os.linesep, so a record left on it holds
+    # \r\n on windows and \n elsewhere. the choice is made inside
+    # TextIOWrapper from the platform it was built for, so the argument
+    # open_ is called with is the only part of it visible from here.
+    # both bindings are patched because a zip lands its bytes in the file
+    # atomic_write opens through io_util's own name, not this one
+    seen = []
+
+    def record_writes(module):
+        real_open = module.open_
+
+        def recording_open(filename, mode="rt", **kwargs):
+            if mode.startswith("w"):
+                seen.append((Path(filename).name, kwargs.get("newline")))
+            return real_open(filename, mode=mode, **kwargs)
+
+        monkeypatch.setattr(module, "open_", recording_open)
+
+    record_writes(data_store)
+    record_writes(io_util)
+
+    dstore = DataStoreDirectory(tmp_dir / "store", suffix=suffix, mode=OVERWRITE)
+    dstore.write(unique_id="id_0", data=">s\nACGT\n")
+
+    assert seen
+    assert all(newline == "\n" for _, newline in seen), seen
+
+
+@pytest.mark.parametrize(
+    "unique_id",
+    ["nc1", "nc1.json", "nc1.fasta", "nc1.txt"],
+)
+def test_a_not_completed_record_is_stored_as_plain_json(w_dstore, unique_id):
+    """not-completed records are json whatever the identifier carried"""
+    # nc1.fasta.gz used to become nc1.json.json, because the store suffix
+    # was replaced inside the name rather than the name being rebuilt
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+
+    w_dstore.write_not_completed(unique_id=unique_id, data=record.to_json())
+
+    nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
+    assert [p.name for p in nc_dir.glob("*")] == ["nc1.json"]
+
+
+def test_an_identifier_containing_the_suffix_keeps_its_stem(w_dstore):
+    """the suffix is replaced at the end of the name, not wherever it occurs"""
+    # the store suffix used to be replaced by str.replace over the whole
+    # name, so fasta_seqs was stored as json_seqs.json
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="x")
+
+    w_dstore.write_not_completed(unique_id="fasta_seqs", data=record.to_json())
+
+    nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
+    assert [p.name for p in nc_dir.glob("*")] == ["fasta_seqs.json"]
+
+
+@pytest.mark.parametrize(
+    "unique_id",
+    ["id_0.fasta.gz", "id_0.gz", "id_0.fasta.bz2"],
+)
+def test_a_compression_the_store_does_not_write_is_refused(w_dstore, unique_id):
+    """an identifier naming a compression this store does not use is an error"""
+    # the store decides the name, so it cannot honour the request
+    with pytest.raises(ValueError):
+        w_dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+
+@pytest.mark.parametrize("unique_id", ["id_0.fasta.bz2"])
+def test_another_compression_is_refused_by_a_compressed_store(tmp_dir, unique_id):
+    """a .fasta.gz store does not accept an identifier naming bz2"""
+    dstore = DataStoreDirectory(tmp_dir / "gz", suffix="fasta.gz", mode=OVERWRITE)
+
+    with pytest.raises(ValueError):
+        dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+
+def test_a_compressed_not_completed_identifier_is_refused(w_dstore):
+    """not-completed records are plain json, so a compressed id conflicts"""
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+
+    with pytest.raises(ValueError):
+        w_dstore.write_not_completed(unique_id="nc1.json.gz", data=record.to_json())
+
+
+@pytest.mark.parametrize("unique_id", ["", "   ", "\t", "."])
+def test_an_identifier_with_nothing_to_name_the_record_by_is_refused(
+    w_dstore,
+    unique_id,
+):
+    """a record needs a stem, since the stem is the whole of its identity"""
+    # an empty one gave the file the suffix and nothing else, .fasta in
+    # this store, and a whitespace one gave "   .fasta"
+    with pytest.raises(ValueError):
+        w_dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+
+def test_a_store_whose_suffix_is_a_compression_refuses_it_too(tmp_dir):
+    """the store that made this visible refuses it too"""
+    # an empty id here gave a file called .gz holding plain text, so the
+    # name claimed gzip and nothing had compressed it
+    dstore = DataStoreDirectory(tmp_dir / "gz", suffix="gz", mode=OVERWRITE)
+
+    with pytest.raises(ValueError):
+        dstore.write(unique_id="", data="hello")
+
+
+def test_a_not_completed_record_needs_a_stem_too(w_dstore):
+    """the refusal is about the identifier, so it covers every kind"""
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="x")
+
+    with pytest.raises(ValueError):
+        w_dstore.write_not_completed(unique_id="", data=record.to_json())
+
+
+def test_a_log_needs_a_stem_too(w_dstore):
+    """write_log goes through the same naming and the same refusal"""
+    with pytest.raises(ValueError):
+        w_dstore.write_log(unique_id="", data="a log line")
+
+
+def test_a_hidden_file_is_not_a_record(tmp_dir):
+    """the directory scan passes over a hidden file as the zip scan does"""
+    # a ._name sidecar from macOS, or an editor's .swp, is not data the
+    # store was asked to keep. listing it made the same directory two
+    # different stores once zipped, since the zip scan skips them
+    source = tmp_dir / "hidden"
+    source.mkdir(parents=True)
+    (source / "brca1.fasta").write_text(">s\nACGT\n")
+    (source / "._brca1.fasta").write_text("resource fork junk")
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert [m.unique_id for m in dstore.completed] == ["brca1.fasta"]
+
+
+def test_a_hidden_not_completed_file_is_not_a_record(tmp_dir):
+    """the not-completed scan passes over them too"""
+    source = tmp_dir / "hiddennc"
+    nc_dir = source / NOT_COMPLETED_TABLE
+    nc_dir.mkdir(parents=True)
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    (nc_dir / "nc1.json").write_text(record.to_json())
+    (nc_dir / "._nc1.json").write_text("junk")
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert [Path(m.unique_id).name for m in dstore.not_completed] == ["nc1.json"]
+
+
+@pytest.mark.parametrize("unique_id", [".brca1", "._brca1", ".brca1.fasta"])
+def test_a_hidden_identifier_is_refused(w_dstore, unique_id):
+    """what the scan will not read back, the store will not write"""
+    with pytest.raises(ValueError):
+        w_dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+
+def test_the_two_stores_agree_about_hidden_files(tmp_dir, tmp_path):
+    """a directory store and a zip of it have the same members"""
+    import shutil
+
+    source = tmp_dir / "agree"
+    source.mkdir(parents=True)
+    (source / "brca1.fasta").write_text(">s\nACGT\n")
+    (source / ".hidden.fasta").write_text(">s\nTTTT\n")
+    archive = shutil.make_archive(str(tmp_path / "agree"), "zip", str(tmp_dir), "agree")
+
+    directory = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+    zipped = ReadOnlyDataStoreZipped(pathlib.Path(archive), suffix="fasta")
+
+    assert [m.unique_id for m in directory.completed] == [
+        m.unique_id for m in zipped.completed
+    ]
+
+
+def test_a_read_only_store_says_so_before_judging_the_identifier(tmp_dir):
+    """being read only is the more fundamental refusal, so it comes first"""
+    source = tmp_dir / "ro"
+    source.mkdir(parents=True)
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    with pytest.raises(OSError, match="readonly"):
+        dstore.write(unique_id="id_0.fasta.gz", data=">s\nACGT\n")
+
+
+def test_contains_matches_a_member_id_across_separators(w_dstore):
+    """the separator a member id was composed with is not part of the question"""
+    # a member id is str(Path(NOT_COMPLETED_TABLE) / name), which reads
+    # not_completed\\nc1.json on Windows, and the string comparison meant
+    # only the platform's own spelling matched. PureWindowsPath stands in
+    # for the platform, since the parts are what __contains__ compares
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    member = w_dstore.write_not_completed(unique_id="nc1", data=record.to_json())
+
+    assert member.unique_id in w_dstore
+    assert f"./{member.unique_id}" in w_dstore
+    assert PureWindowsPath("not_completed/nc1.json").parts == (
+        PureWindowsPath(r"not_completed\nc1.json").parts
+    )
+
+
+def test_contains_keeps_the_kinds_and_the_case_apart(w_dstore):
+    """`in` names one exact record, not every record sharing its stem"""
+    # PureWindowsPath equality is case insensitive, so comparing Path
+    # objects would make these one record on Windows and two on POSIX
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    w_dstore.write_not_completed(unique_id="nc1", data=record.to_json())
+
+    assert "nc1" not in w_dstore
+    assert "nc1.fasta" not in w_dstore
+    assert str(Path(NOT_COMPLETED_TABLE) / "NC1.json") not in w_dstore
+    assert str(Path(NOT_COMPLETED_TABLE) / "nc1.json") in w_dstore
+
+
+@pytest.mark.parametrize("identifier", [None, 1, Path("nc1.json"), object()])
+def test_contains_says_no_to_what_is_not_an_identifier(
+    w_dstore,
+    zipped_basic,
+    identifier,
+):
+    """a non-string answers False rather than raising"""
+    # the comparison builds a Path from what it is given, and Path(1)
+    # raises, where the plain string comparison this replaced just missed.
+    # both stores, because DataStoreDirectory refuses a non-string in its
+    # own override and the zip store reaches the one in the base class
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    w_dstore.write_not_completed(unique_id="nc1", data=record.to_json())
+    zipped = ReadOnlyDataStoreZipped(zipped_basic, suffix="fasta")
+
+    assert identifier not in w_dstore
+    assert identifier not in zipped
+
+
+def test_the_scan_matches_the_suffix_as_written(tmp_dir):
+    """a store of .fasta does not claim an ID_0.FASTA"""
+    # this passes on POSIX either way and is here for the Windows runner,
+    # where Path.glob folds case and so answered the opposite of what the
+    # naming path does. the only file is the upper case one on purpose:
+    # writing a lower case twin beside it would land on the same file on
+    # a case insensitive filesystem, leaving one entry named id_0.fasta
+    # and a test that passes there whatever the scan does
+    source = tmp_dir / "cased"
+    source.mkdir(parents=True)
+    (source / "ID_0.FASTA").write_text(">s\nTTTT\n")
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert dstore.completed == []
+
+
+def test_the_scan_does_not_fold_case_the_way_the_platform_would(monkeypatch):
+    """the matcher ignores os.path.normcase, which is what folds on Windows"""
+    # the platform half of this cannot run here, so stand in for it: this
+    # is exactly what fnmatch does and fnmatchcase does not
+    monkeypatch.setattr(os.path, "normcase", str.lower)
+
+    assert _is_record("id_0.fasta", "fasta")
+    assert not _is_record("ID_0.FASTA", "fasta")
+
+
+def test_a_suffix_may_carry_a_trailing_wildcard(tmp_dir):
+    """suffix="fasta*" takes the compressed spellings in as well"""
+    # the scan is a pattern match, not a comparison, and this is the only
+    # thing that needs it to be
+    source = tmp_dir / "wild"
+    source.mkdir(parents=True)
+    for name in ("id_0.fasta", "id_1.fasta.gz", "id_2.fasta.bz2", "notes.txt"):
+        (source / name).write_text(">s\nACGT\n")
+
+    dstore = DataStoreDirectory(source, suffix="fasta*", mode=READONLY)
+
+    assert sorted(m.unique_id for m in dstore.completed) == [
+        "id_0.fasta",
+        "id_1.fasta.gz",
+        "id_2.fasta.bz2",
+    ]
+
+
+def test_limit_counts_matches_not_directory_entries(tmp_dir):
+    """limit truncates the members, so what is not a member does not count"""
+    # guards the accounting rather than fixing it: the scan sees every
+    # entry now, where the pattern used to pre-select what was counted,
+    # so limit had to start counting what it keeps
+    source = tmp_dir / "limited"
+    source.mkdir(parents=True)
+    for i in range(3):
+        (source / f"id_{i}.fasta").write_text(">s\nACGT\n")
+        (source / f"note_{i}.txt").write_text("ignore me")
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY, limit=2)
+
+    assert len(dstore.completed) == 2
+
+
+def test_the_not_completed_scan_passes_over_what_is_not_a_record(tmp_dir):
+    """a stray file in not_completed is not a not-completed record"""
+    source = tmp_dir / "stray"
+    nc_dir = source / NOT_COMPLETED_TABLE
+    nc_dir.mkdir(parents=True)
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    (nc_dir / "nc1.json").write_text(record.to_json())
+    (nc_dir / "README.txt").write_text("notes about this directory")
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert [Path(m.unique_id).name for m in dstore.not_completed] == ["nc1.json"]
+
+
+def test_a_case_variant_extension_is_a_different_record(w_dstore):
+    """FASTA is not the suffix of a .fasta store, so it stays in the stem"""
+    # the suffix is matched as written. an extension that is not it, for
+    # whatever reason, is part of the name the store appends its own to
+    w_dstore.write(unique_id="id_0.fasta", data=">s\nACGT\n")
+
+    w_dstore.write(unique_id="id_0.FASTA", data=">s\nTTTT\n")
+
+    stored = sorted(p.name for p in w_dstore.source.glob("*") if p.is_file())
+    assert stored == ["id_0.FASTA.fasta", "id_0.fasta"]
+
+
+def test_an_identifier_carrying_a_directory_is_stored_by_its_name(w_dstore):
+    """a path-like identifier names a record, it does not name a location"""
+    # it used to be kept whole and handed to open_, which raised
+    # FileNotFoundError for a subdirectory the store had not created
+    w_dstore.write(unique_id="sub/id_0.fasta", data=">s\nACGT\n")
+
+    assert [p.name for p in w_dstore.source.glob("*.fasta")] == ["id_0.fasta"]
+
+
+def test_md5_falls_back_to_the_older_checksum_name(tmp_dir):
+    """a store written before the rename still reports its checksums"""
+    source = tmp_dir / "legacy"
+    (source / MD5_TABLE).mkdir(parents=True)
+    data = ">s\nACGT\n"
+    (source / "id_0.fasta").write_text(data)
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(data))
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert dstore.md5("id_0.fasta") == get_text_hexdigest(data)
+
+
+def test_dropping_removes_a_shared_checksum_only_it_can_claim(tmp_dir):
+    """a drop takes the shared file when no completed record wants it"""
+    source = tmp_dir / "sharedgone"
+    (source / MD5_TABLE).mkdir(parents=True)
+    (source / NOT_COMPLETED_TABLE).mkdir(parents=True)
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="id_0")
+    failed = record.to_json()
+    (source / NOT_COMPLETED_TABLE / "id_0.json").write_text(failed)
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(failed))
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=OVERWRITE)
+
+    dstore.drop_not_completed()
+
+    assert list((source / MD5_TABLE).glob("*")) == []
+
+
+def test_dropping_keeps_a_shared_checksum_a_completed_record_may_own(tmp_dir):
+    """a drop leaves the shared file when a completed record carries the stem"""
+    # it holds whichever of the two wrote last, which was never recorded,
+    # so taking it would be guessing and leaving it makes it answer for the
+    # completed record. neither is right, so it is left and reported
+    source = tmp_dir / "sharedkept"
+    (source / MD5_TABLE).mkdir(parents=True)
+    (source / NOT_COMPLETED_TABLE).mkdir(parents=True)
+    done = ">s\nACGT\n"
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="id_0")
+    (source / "id_0.fasta").write_text(done)
+    (source / NOT_COMPLETED_TABLE / "id_0.json").write_text(record.to_json())
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(done))
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=OVERWRITE)
+
+    dstore.drop_not_completed()
+
+    assert (source / MD5_TABLE / "id_0.txt").exists()
+    assert dstore.md5("id_0.fasta") == get_text_hexdigest(done)
+
+
+def test_zipped_md5_falls_back_to_the_older_checksum_name(tmp_dir):
+    """the same fallback works inside an archive, which cannot be renamed"""
+    source = tmp_dir / "ziplegacy"
+    (source / MD5_TABLE).mkdir(parents=True)
+    data = ">s\nACGT\n"
+    (source / "id_0.fasta").write_text(data)
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(data))
+    path = shutil.make_archive(
+        base_name=str(source.parent / source.name),
+        format="zip",
+        base_dir=source.name,
+        root_dir=source.parent,
+    )
+
+    dstore = ReadOnlyDataStoreZipped(pathlib.Path(path), suffix="fasta")
+
+    assert dstore.md5("id_0.fasta") == get_text_hexdigest(data)
+
+
+@pytest.fixture
+def legacy_md5_dstore(tmp_dir):
+    """a store whose checksums are all under the name both kinds shared"""
+    source = tmp_dir / "legacy_store"
+    (source / MD5_TABLE).mkdir(parents=True)
+    (source / NOT_COMPLETED_TABLE).mkdir(parents=True)
+    md5_dir = source / MD5_TABLE
+
+    # only a completed record carries this stem
+    done = ">s\nACGT\n"
+    (source / "solo_done.fasta").write_text(done)
+    (md5_dir / "solo_done.txt").write_text(get_text_hexdigest(done))
+
+    # only a not-completed record carries this one
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="x")
+    failed = record.to_json()
+    (source / NOT_COMPLETED_TABLE / "solo_failed.json").write_text(failed)
+    (md5_dir / "solo_failed.txt").write_text(get_text_hexdigest(failed))
+
+    # both kinds carry this one, so the file cannot be attributed
+    (source / "both.fasta").write_text(done)
+    (source / NOT_COMPLETED_TABLE / "both.json").write_text(failed)
+    (md5_dir / "both.txt").write_text(get_text_hexdigest(done))
+
+    # no record carries this one at all
+    (md5_dir / "gone.txt").write_text("orphaned")
+
+    return source
+
+
+def test_migrate_checksums(legacy_md5_dstore):
+    """the ones that can be attributed are renamed and the rest reported"""
+    dstore = DataStoreDirectory(legacy_md5_dstore, suffix="fasta", mode=OVERWRITE)
+
+    got = dstore.migrate_checksums()
+
+    assert got == {
+        "migrated": 2,
+        "ambiguous": ["both"],
+        "orphaned": ["gone"],
+        "superseded": [],
+    }
+    md5_dir = legacy_md5_dstore / MD5_TABLE
+    assert (md5_dir / f"solo_done.{COMPLETED_CHECKSUM}").exists()
+    assert (md5_dir / f"solo_failed.{NOT_COMPLETED_CHECKSUM}").exists()
+    assert sorted(p.name for p in md5_dir.glob("*.txt")) == ["both.txt", "gone.txt"]
+
+
+def test_migrate_checksums_is_idempotent(legacy_md5_dstore):
+    """running it again finds only what it could not attribute"""
+    dstore = DataStoreDirectory(legacy_md5_dstore, suffix="fasta", mode=OVERWRITE)
+    first = dstore.migrate_checksums()
+
+    got = dstore.migrate_checksums()
+
+    assert got["migrated"] == 0
+    # it has not forgotten what it could not do
+    assert got["ambiguous"] == first["ambiguous"]
+    assert got["orphaned"] == first["orphaned"]
+
+
+def test_migrate_checksums_reads_past_the_limit(legacy_md5_dstore):
+    """a limited view does not make a record look absent"""
+    # limit truncates the member lists, and a stem seen in neither would
+    # then be attributed to whichever kind was in view, or called orphaned
+    dstore = DataStoreDirectory(
+        legacy_md5_dstore,
+        suffix="fasta",
+        mode=OVERWRITE,
+        limit=1,
+    )
+
+    got = dstore.migrate_checksums()
+
+    assert got["ambiguous"] == ["both"]
+    assert got["orphaned"] == ["gone"]
+    assert got["migrated"] == 2
+
+
+def test_migrate_checksums_keeps_a_checksum_already_under_the_new_name(tmp_dir):
+    """a record whose checksum this version wrote keeps that one"""
+    # the shared file may belong to a record since dropped, while the one
+    # under the current name was written for this record by this version
+    source = tmp_dir / "superseded"
+    (source / MD5_TABLE).mkdir(parents=True)
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=OVERWRITE)
+    data = ">s\nACGT\n"
+    dstore.write(unique_id="rec.fasta", data=data)
+    (source / MD5_TABLE / "rec.txt").write_text("stale")
+
+    got = dstore.migrate_checksums()
+
+    assert got["superseded"] == ["rec"]
+    assert got["migrated"] == 0
+    assert dstore.md5("rec.fasta") == get_text_hexdigest(data)
+
+
+def test_migrate_checksums_keeps_the_checksums_readable(legacy_md5_dstore):
+    """a migrated record reports the same checksum it did before"""
+    dstore = DataStoreDirectory(legacy_md5_dstore, suffix="fasta", mode=OVERWRITE)
+    before = dstore.md5("solo_done.fasta")
+
+    dstore.migrate_checksums()
+
+    assert dstore.md5("solo_done.fasta") == before
+
+
+@pytest.mark.parametrize("mode", [READONLY, APPEND])
+def test_migrate_checksums_needs_write_mode(legacy_md5_dstore, mode):
+    """migrating rewrites records already there, so it takes mode w"""
+    # read only cannot rewrite anything, and append undertakes not to touch
+    # what is already in the store, which is exactly what this does
+    dstore = DataStoreDirectory(legacy_md5_dstore, suffix="fasta", mode=mode)
+
+    with pytest.raises(OSError, match='mode="w"'):
+        dstore.migrate_checksums()
+
+    assert (legacy_md5_dstore / MD5_TABLE / "solo_done.txt").exists()
+
+
+def test_validate_counts_checksums_in_the_older_layout(tmp_dir):
+    """a store says how many of its checksums are still unattributed"""
+    # so a caller learns there is migrating to do without having to run it
+    source = tmp_dir / "counted"
+    (source / MD5_TABLE).mkdir(parents=True)
+    data = ">s\nACGT\n"
+    (source / "id_0.fasta").write_text(data)
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(data))
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert dstore._validate()["md5_legacy"] == 1
+
+
+def test_validate_counts_no_legacy_checksums_in_a_new_store(w_dstore):
+    """a store written since the rename has none of them"""
+    w_dstore.write(unique_id="id_0.fasta", data=">s\nACGT\n")
+
+    assert w_dstore._validate()["md5_legacy"] == 0
+
+
+def test_validate_counts_legacy_checksums_in_an_archive(tmp_dir):
+    """an archive reports them too, though it can never migrate them"""
+    source = tmp_dir / "zipcounted"
+    (source / MD5_TABLE).mkdir(parents=True)
+    data = ">s\nACGT\n"
+    (source / "id_0.fasta").write_text(data)
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(data))
+    path = shutil.make_archive(
+        base_name=str(source.parent / source.name),
+        format="zip",
+        base_dir=source.name,
+        root_dir=source.parent,
+    )
+
+    dstore = ReadOnlyDataStoreZipped(pathlib.Path(path), suffix="fasta")
+
+    assert dstore._validate()["md5_legacy"] == 1
+
+
+def test_close_a_directory_store(w_dstore):
+    """a directory store can be closed, and holds nothing back afterwards"""
+    # it exists so a caller can close whatever open_data_store returned
+    # without asking which backend it got. a directory store holds no
+    # connection and no lock, so there is nothing for closing to end
+    w_dstore.write(unique_id="c1.fasta", data=">s\nACGT\n")
+
+    w_dstore.close()
+    w_dstore.close()
+
+    assert w_dstore.read("c1.fasta") == ">s\nACGT\n"
+    assert [m.unique_id for m in w_dstore.completed] == ["c1.fasta"]
+
+
+def test_close_a_zipped_store(zipped_basic):
+    """a read only zip store can be closed too"""
+    dstore = ReadOnlyDataStoreZipped(zipped_basic, suffix="fasta")
+
+    dstore.close()
+
+    assert len(dstore.completed) > 0
 
 
 def test_write_read_only_datastore(ro_dstore):
@@ -369,18 +1267,45 @@ def test_append(w_dstore):
     assert got == data
 
 
+class _CountingMembersStore(DataStoreDirectory):
+    """counts how often the member list gets built"""
+
+    members_built = 0
+
+    @property
+    def members(self):
+        self.members_built += 1
+        return super().members
+
+
+@pytest.mark.parametrize("summary", [lambda d: d.validate(), str])
+def test_summaries_build_the_member_list_once(write_dir, summary):
+    """a summary works from one member list rather than rebuilding it"""
+    # each build is a fresh concatenation of the two cached halves, so two
+    # of them taken either side of a write disagree about what is held
+    dstore = _CountingMembersStore(write_dir, suffix="fasta", mode=OVERWRITE)
+    for i in range(3):
+        dstore.write(unique_id=f"c{i}.fasta", data=f">s{i}\nACGT\n")
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    dstore.write_not_completed(unique_id="nc1", data=record.to_json())
+
+    dstore.members_built = 0
+    summary(dstore)
+
+    assert dstore.members_built == 1
+
+
 def test_no_not_completed_subdir(nc_dstore):
     expect = f"{len(nc_dstore.completed) + len(nc_dstore.not_completed)}x member"
     assert str(nc_dstore).startswith(expect)
     nc_dstore.drop_not_completed()
-    assert not Path(nc_dstore.source / NOT_COMPLETED_TABLE).exists()
+    not_dir = nc_dstore.source / NOT_COMPLETED_TABLE
+    assert list(not_dir.glob("*.json")) == []
     expect = f"{len(nc_dstore.completed)}x member"
     assert str(nc_dstore).startswith(expect)
     expect = f"{len(nc_dstore)}x member"
     assert str(nc_dstore).startswith(expect)
     assert len(nc_dstore) == len(nc_dstore.completed)
-    not_dir = nc_dstore.source / NOT_COMPLETED_TABLE
-    not_dir.mkdir(exist_ok=True)
 
 
 def test_limit_datastore(nc_dstore):
@@ -747,7 +1672,7 @@ def test_validate_incorrect_md5(write_dir):
     dstore = DataStoreDirectory(write_dir, suffix="txt", mode=OVERWRITE)
     dstore.write(unique_id="item.txt", data="original")
     # corrupt the md5
-    md5_path = write_dir / MD5_TABLE / "item.txt"
+    md5_path = write_dir / MD5_TABLE / f"item.{COMPLETED_CHECKSUM}"
     md5_path.write_text("wrong_md5_value")
     result = dstore._validate()
     assert result["md5_incorrect"] == 1
@@ -1254,6 +2179,7 @@ _CONCURRENT_MEMBERS = 300
 _CONCURRENT_READERS = 8
 _CONCURRENT_ROUNDS = 20
 _WRITE_ROUNDS = 40
+_MOVED_RECORDS = 40
 # generous: it only has to exceed a scan, and a hang here should fail not stall
 _SYNC_TIMEOUT = 30
 
@@ -1359,6 +2285,97 @@ def test_concurrent_write_is_recorded_once(write_dir):
         reader.result(timeout=_SYNC_TIMEOUT)
 
     assert [m.unique_id for m in dstore.completed] == ["brand_new.fasta"]
+
+
+class _PausingNotCompletedStore(DataStoreDirectory):
+    """holds a not-completed write between the mkdir and the file landing
+
+    ``write_not_completed`` makes the directory and ``_write`` then opens the
+    file in it. Pausing between the two makes the window a test can drive
+    rather than one it has to race for.
+    """
+
+    def _write(self, **kwargs):
+        self.writer_paused.set()
+        self.release_writer.wait(timeout=_SYNC_TIMEOUT)
+        return super()._write(**kwargs)
+
+
+def test_drop_during_a_not_completed_write_leaves_it_somewhere_to_write(write_dir):
+    """a drop running mid-write leaves the directory the write is opening in"""
+    dstore = _PausingNotCompletedStore(write_dir, suffix="fasta", mode=OVERWRITE)
+    dstore.writer_paused = threading.Event()
+    dstore.release_writer = threading.Event()
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        writer = executor.submit(
+            dstore.write_not_completed,
+            unique_id="nc1",
+            data=record.to_json(),
+        )
+        try:
+            assert dstore.writer_paused.wait(timeout=_SYNC_TIMEOUT)
+            # the whole drop runs in the window between the writer making
+            # the directory and opening its file in it
+            dstore.drop_not_completed()
+        finally:
+            dstore.release_writer.set()
+
+        member = writer.result(timeout=_SYNC_TIMEOUT)
+
+    assert member.unique_id == str(Path(NOT_COMPLETED_TABLE) / "nc1.json")
+    assert (write_dir / NOT_COMPLETED_TABLE / "nc1.json").exists()
+
+
+def test_drop_not_completed_twice(nc_dstore):
+    """dropping an already emptied store is not an error"""
+    nc_dstore.drop_not_completed()
+
+    nc_dstore.drop_not_completed()
+
+    assert nc_dstore.not_completed == []
+
+
+def test_a_write_never_hides_the_record_it_moves(write_dir):
+    """a record moving from not_completed to completed stays countable"""
+    dstore = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
+    for i in range(_MOVED_RECORDS):
+        record = NotCompleted(
+            NotCompletedType.ERROR,
+            "location",
+            "message",
+            source=f"r{i}",
+        )
+        dstore.write_not_completed(unique_id=f"r{i}", data=record.to_json())
+
+    observed = set()
+    stop = threading.Event()
+
+    def count_members():
+        while not stop.is_set():
+            observed.add(len(dstore))
+
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        with ThreadPoolExecutor(max_workers=_CONCURRENT_READERS + 1) as executor:
+            readers = [
+                executor.submit(count_members) for _ in range(_CONCURRENT_READERS)
+            ]
+            for i in range(_MOVED_RECORDS):
+                dstore.write(unique_id=f"r{i}.fasta", data=f">s{i}\nACGT\n")
+            stop.set()
+            for reader in readers:
+                reader.result(timeout=_SYNC_TIMEOUT)
+    finally:
+        sys.setswitchinterval(old_interval)
+
+    # each write moves one record between the halves, so the count is
+    # invariant. only the low side is asserted: a count above it comes from
+    # the completed file landing before the not-completed record is
+    # removed, which is a state the directory itself passes through
+    assert min(observed) == _MOVED_RECORDS
 
 
 def _scan_completed(dstore, barrier, _):
