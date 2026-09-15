@@ -650,6 +650,45 @@ def test_zipped_md5_falls_back_to_the_older_checksum_name(tmp_dir):
     assert dstore.md5("id_0.fasta") == get_text_hexdigest(data)
 
 
+def test_validate_counts_checksums_in_the_older_layout(tmp_dir):
+    """a store says how many of its checksums are still unattributed"""
+    # so a caller learns there is migrating to do without having to run it
+    source = tmp_dir / "counted"
+    (source / MD5_TABLE).mkdir(parents=True)
+    data = ">s\nACGT\n"
+    (source / "id_0.fasta").write_text(data)
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(data))
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert dstore._validate()["md5_legacy"] == 1
+
+
+def test_validate_counts_no_legacy_checksums_in_a_new_store(w_dstore):
+    """a store written since the rename has none of them"""
+    w_dstore.write(unique_id="id_0.fasta", data=">s\nACGT\n")
+
+    assert w_dstore._validate()["md5_legacy"] == 0
+
+
+def test_validate_counts_legacy_checksums_in_an_archive(tmp_dir):
+    """an archive reports them too, though it can never migrate them"""
+    source = tmp_dir / "zipcounted"
+    (source / MD5_TABLE).mkdir(parents=True)
+    data = ">s\nACGT\n"
+    (source / "id_0.fasta").write_text(data)
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(data))
+    path = shutil.make_archive(
+        base_name=str(source.parent / source.name),
+        format="zip",
+        base_dir=source.name,
+        root_dir=source.parent,
+    )
+
+    dstore = ReadOnlyDataStoreZipped(pathlib.Path(path), suffix="fasta")
+
+    assert dstore._validate()["md5_legacy"] == 1
+
+
 def test_close_a_directory_store(w_dstore):
     """a directory store can be closed, and holds nothing back afterwards"""
     # it exists so a caller can close whatever open_data_store returned

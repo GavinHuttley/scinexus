@@ -379,8 +379,18 @@ class DataStoreABC(LockMixin, ABC):
             "md5_correct": correct_md5,
             "md5_incorrect": incorrect_md5,
             "md5_missing": missing_md5,
+            "md5_legacy": self._count_legacy_checksums(),
             "has_log": len(self.logs) > 0,
         }
+
+    def _count_legacy_checksums(self) -> int:
+        """how many checksum files are still under the name both kinds shared
+
+        Notes
+        -----
+        Zero for a store that keeps no checksum files of its own.
+        """
+        return 0
 
     def validate(self) -> dict[str, object]:
         return _apply_summary_display(self._validate(), name="validate")
@@ -853,6 +863,10 @@ class DataStoreDirectory(DataStoreABC):
         legacy = self.source / MD5_TABLE / _legacy_checksum_name(unique_id)
         return legacy.read_text() if legacy.exists() else None
 
+    def _count_legacy_checksums(self) -> int:
+        md5_dir = self.source / MD5_TABLE
+        return len(list(md5_dir.glob(f"*.{LEGACY_CHECKSUM}")))
+
     def write_citations(self, *, data: tuple[CitationBase, ...]) -> None:
         if not data:
             return
@@ -1017,6 +1031,9 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
             result = m.read()
             return result if isinstance(result, str) else result.decode()
         return None
+
+    def _count_legacy_checksums(self) -> int:
+        return len(list(self._iter_matches(MD5_TABLE, f"*.{LEGACY_CHECKSUM}")))
 
     def drop_not_completed(self, *, unique_id: str | None = None) -> None:
         """not supported on read-only zip data stores"""
