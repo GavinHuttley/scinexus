@@ -21,6 +21,7 @@ from scinexus.data_store import (
     DataStoreABC,
     DataStoreDirectory,
     Mode,
+    _check_identifier,
 )
 from scinexus.misc import extend_docstring_from
 
@@ -357,7 +358,13 @@ class DataStoreSqlite(DataStoreABC):
         Returns
         -------
         DataMember instance or None when writing to _LOG_TABLE
+
+        Raises
+        ------
+        ValueError
+            if unique_id does not name a record
         """
+        _check_identifier(unique_id)
         if self._log_id is None:
             self._init_log()
 

@@ -670,28 +670,16 @@ def test_an_identifier_containing_the_suffix_keeps_its_stem(w_dstore):
 
 @pytest.mark.parametrize(
     "unique_id",
-    [
-        "id_0.fasta.gz",
-        "id_0.gz",
-        "id_0.fasta.bz2",
-        "id_0.gz.fasta",
-        "id_0.bz2.fasta",
-        ".gz",
-    ],
+    ["id_0.fasta.gz", "id_0.gz", "id_0.fasta.bz2"],
 )
 def test_a_compression_the_store_does_not_write_is_refused(w_dstore, unique_id):
     """an identifier naming a compression this store does not use is an error"""
-    # the store decides the name, so it cannot honour the request. saying
-    # so beats writing an uncompressed record under a name that claims
-    # otherwise, or a compressed one the store's scan cannot see.
-    # id_0.gz.fasta is here because the claim travels with the name even
-    # when it is not the last thing in it, and .gz because Path.suffixes
-    # reports nothing for a leading-dot name and so saw no claim at all
+    # the store decides the name, so it cannot honour the request
     with pytest.raises(ValueError):
         w_dstore.write(unique_id=unique_id, data=">s\nACGT\n")
 
 
-@pytest.mark.parametrize("unique_id", ["id_0.fasta.bz2", "id_0.fasta.bz2.gz"])
+@pytest.mark.parametrize("unique_id", ["id_0.fasta.bz2"])
 def test_another_compression_is_refused_by_a_compressed_store(tmp_dir, unique_id):
     """a .fasta.gz store does not accept an identifier naming bz2"""
     dstore = DataStoreDirectory(tmp_dir / "gz", suffix="fasta.gz", mode=OVERWRITE)
@@ -742,6 +730,60 @@ def test_a_log_needs_a_stem_too(w_dstore):
     """write_log goes through the same naming and the same refusal"""
     with pytest.raises(ValueError):
         w_dstore.write_log(unique_id="", data="a log line")
+
+
+def test_a_hidden_file_is_not_a_record(tmp_dir):
+    """the directory scan passes over a hidden file as the zip scan does"""
+    # a ._name sidecar from macOS, or an editor's .swp, is not data the
+    # store was asked to keep. listing it made the same directory two
+    # different stores once zipped, since the zip scan skips them
+    source = tmp_dir / "hidden"
+    source.mkdir(parents=True)
+    (source / "brca1.fasta").write_text(">s\nACGT\n")
+    (source / "._brca1.fasta").write_text("resource fork junk")
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert [m.unique_id for m in dstore.completed] == ["brca1.fasta"]
+
+
+def test_a_hidden_not_completed_file_is_not_a_record(tmp_dir):
+    """the not-completed scan passes over them too"""
+    source = tmp_dir / "hiddennc"
+    nc_dir = source / NOT_COMPLETED_TABLE
+    nc_dir.mkdir(parents=True)
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    (nc_dir / "nc1.json").write_text(record.to_json())
+    (nc_dir / "._nc1.json").write_text("junk")
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert [Path(m.unique_id).name for m in dstore.not_completed] == ["nc1.json"]
+
+
+@pytest.mark.parametrize("unique_id", [".brca1", "._brca1", ".brca1.fasta"])
+def test_a_hidden_identifier_is_refused(w_dstore, unique_id):
+    """what the scan will not read back, the store will not write"""
+    with pytest.raises(ValueError):
+        w_dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+
+def test_the_two_stores_agree_about_hidden_files(tmp_dir, tmp_path):
+    """a directory store and a zip of it have the same members"""
+    import shutil
+
+    source = tmp_dir / "agree"
+    source.mkdir(parents=True)
+    (source / "brca1.fasta").write_text(">s\nACGT\n")
+    (source / ".hidden.fasta").write_text(">s\nTTTT\n")
+    archive = shutil.make_archive(str(tmp_path / "agree"), "zip", str(tmp_dir), "agree")
+
+    directory = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+    zipped = ReadOnlyDataStoreZipped(pathlib.Path(archive), suffix="fasta")
+
+    assert [m.unique_id for m in directory.completed] == [
+        m.unique_id for m in zipped.completed
+    ]
 
 
 def test_a_read_only_store_says_so_before_judging_the_identifier(tmp_dir):

@@ -89,9 +89,9 @@ The creation of a writeable data store is specified with `mode="w"`, or (to appe
 In a directory store, the `suffix` you open with names every *completed* record it writes. The identifier you pass to `write()` supplies the stem only, so `"brca1"`, `"brca1.fa"` and `"brca1.genbank"` all become `brca1.fasta` in a store opened with `suffix="fasta"`. Not-completed records, logs and checksums are kept in their own subdirectories under their own extensions, and the store's suffix does not apply to them.
 
 !!! warning "A compression suffix is refused, not replaced"
-    This applies to directory stores. A SQLite store keeps the identifier you give it verbatim and does not enforce any of this.
-
     Compression is the one part of the name that says how to read the record back, so a directory store will not quietly swap it. If the identifier names a compression the store does not write, `write()` raises `ValueError` rather than storing the record under a different name.
+
+    This part is specific to directory stores, since a SQLite store has no suffix to contradict. The rule that an identifier must name a record — a non-blank, non-hidden stem — applies to both.
 
     ```python { notest }
     dstore = open_data_store("results", suffix="fasta", mode="w")
@@ -99,8 +99,6 @@ In a directory store, the `suffix` you open with names every *completed* record 
     # ValueError: identifier 'brca1.fasta.gz' names .gz, but a record
     # stored as .fasta carries no compression
     ```
-
-    It is the claim that is refused, not its position, so `"brca1.gz.fasta"` is refused for the same reason.
 
     Open the store with the compression in its suffix instead, and its completed records are gzipped:
 

@@ -1060,6 +1060,20 @@ def test_write_duplicate_not_added_to_completed(writable_store):
     assert len(writable_store.completed) == 1
 
 
+@pytest.mark.parametrize("unique_id", ["", "   ", ".hidden"])
+def test_an_identifier_that_names_no_record_is_refused(writable_store, unique_id):
+    """the identifier rule is the same one a directory store applies"""
+    with pytest.raises(ValueError):
+        writable_store.write(unique_id=unique_id, data="data")
+
+
+@pytest.mark.parametrize("unique_id", ["", ".hidden"])
+def test_a_not_completed_identifier_is_refused_too(writable_store, unique_id):
+    """both kinds of record, as in a directory store"""
+    with pytest.raises(ValueError):
+        writable_store.write_not_completed(unique_id=unique_id, data="{}")
+
+
 def test_write_log_with_table_prefix(tmp_dir, DATA_DIR):
     path = tmp_dir / "log_prefix.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)

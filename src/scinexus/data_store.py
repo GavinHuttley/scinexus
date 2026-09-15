@@ -18,7 +18,7 @@ from scitrack import get_text_hexdigest  # type: ignore[import-untyped]
 
 from scinexus._sync import LockMixin
 from scinexus.deserialise import deserialise_object
-from scinexus.io_util import _compression_handlers, get_format_suffixes, open_
+from scinexus.io_util import get_format_suffixes, open_
 from scinexus.parallel import is_master_process
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -73,35 +73,11 @@ def _is_record(name: str, suffix: str) -> bool:
 
     Notes
     -----
-    The suffix may carry a trailing wildcard, so this is a pattern match
-    rather than a comparison. fnmatchcase rather than Path.glob or
-    fnmatch, both of which fold case on Windows: a scan expressed through
-    either claimed an ID_0.FASTA there and not here, where _record_name
-    puts the suffix on as written on every platform. A store whose
-    membership depends on the platform cannot be reasoned about.
+    A hidden file is not a record. The suffix may carry a trailing
+    wildcard, so the rest is a pattern match, and fnmatchcase because
+    Path.glob and fnmatch both fold case on Windows.
     """
-    return fnmatchcase(name, f"*.{suffix}")
-
-
-def _compressions(name: str) -> frozenset[str]:
-    """the compression suffixes this name carries, wherever they sit
-
-    Notes
-    -----
-    Split on the dot rather than read from Path.suffixes, which reports
-    nothing for a leading-dot name: Path(".gz").suffixes is empty, so a
-    ".gz" identifier read as carrying no compression at all and was
-    stored as .gz.fasta, a plain file under a name claiming gzip.
-
-    Everything before the first dot is the stem and is skipped, so an
-    identifier of "gz" stays a record called gz and is not read as a
-    claim about compression.
-    """
-    return frozenset(
-        part.lower()
-        for part in name.split(".")[1:]
-        if part.lower() in _compression_handlers
-    )
+    return not name.startswith(".") and fnmatchcase(name, f"*.{suffix}")
 
 
 def _check_identifier(unique_id: str) -> None:
@@ -115,33 +91,19 @@ def _check_identifier(unique_id: str) -> None:
     Raises
     ------
     ValueError
-        if the stem the store would put its suffix on is blank
+        if the stem is blank, or names a hidden file
 
     Notes
     -----
-    A record is named by its stem, and the store puts the suffix on. An
-    empty identifier therefore asked for a file that is only a suffix:
-    .fasta in a store of .fasta, and in a store of .gz a file called .gz
-    holding plain text, since nothing compressed it. Whitespace did the
-    same, giving "   .fasta".
-
-    The stem is judged as it will be stored, not stripped first. Leading
-    and trailing whitespace is left alone, so " brca1" is stored as
-    " brca1.fasta" and is a different record from "brca1", rather than
-    being approved as one and written as the other.
-
-    Only a directory store asks this. DataStoreSqlite keeps the
-    identifier it is given and has no suffix to put on it, so an empty
-    one names an empty record there rather than a file that is all
-    extension.
+    A record is named by its stem. Every data store asks this, so the
+    same identifier is a record in all of them or in none.
     """
-    if _record_stem(unique_id).strip():
+    stem = _record_stem(unique_id)
+    if stem.strip() and not stem.startswith("."):
         return
 
-    msg = (
-        f"identifier {unique_id!r} names no record: the stem the store "
-        "would put its suffix on is blank"
-    )
+    why = "names a hidden file" if stem.strip() else "is blank"
+    msg = f"identifier {unique_id!r} names no record: its stem {why}"
     raise ValueError(msg)
 
 
@@ -160,32 +122,18 @@ def _check_compression(unique_id: str, suffix: str) -> None:
     ValueError
         if the two name different compressions, or the identifier names
         one and the suffix does not
-
-    Notes
-    -----
-    Only a write asks this. The store decides the name, so it cannot
-    honour a compression the caller asks for and the suffix does not
-    give: it would either write an uncompressed record under a name
-    claiming otherwise, or a compressed one under a name its own scan
-    could not match. Saying so beats picking one of those.
-
-    Every component is examined, not just the last one. A name claims a
-    compression wherever it carries one -- id_0.gz.fasta reads as gzip to
-    anything working left to right, and the .gz would survive into the
-    stem and so into the stored name.
     """
-    asked = _compressions(Path(unique_id).name)
-    stored = _compressions(f"x.{suffix}")
+    asked = get_format_suffixes(Path(unique_id).name)[1]
+    stored = get_format_suffixes(f"x.{suffix}")[1]
     # naming none is never a conflict: the suffix supplies whatever
     # compression there is, and the identifier is only asked not to
     # contradict it
-    if not asked or asked == stored:
+    if asked is None or asked == stored:
         return
 
-    named = ", ".join(f".{c}" for c in sorted(asked))
-    carries = ", ".join(f".{c}" for c in sorted(stored)) if stored else "no compression"
+    carries = f".{stored}" if stored else "no compression"
     msg = (
-        f"identifier {unique_id!r} names {named}, but a record stored "
+        f"identifier {unique_id!r} names .{asked}, but a record stored "
         f"as .{suffix} carries {carries}"
     )
     raise ValueError(msg)
@@ -369,16 +317,10 @@ class DataStoreABC(LockMixin, ABC):
 
         Notes
         -----
-        A member id is composed with pathlib, so on Windows it reads
-        not_completed\\nc1.json, and comparing it to the caller's string
-        meant the forward slash form -- the one the docs use and the one
-        anything written on POSIX produces -- matched nothing.
-
-        The comparison is on Path.parts rather than on Path equality.
-        Path equality is case insensitive on Windows, which would make
-        ID_0.fasta and id_0.fasta the same record on one platform and
-        not the other. Comparing the parts keeps the separator handling
-        and leaves the case alone.
+        Compared on Path.parts, so a member id composed with either
+        separator names the same record. Not Path equality, which is
+        case insensitive on Windows and would make ID_0.fasta and
+        id_0.fasta one record there and two here.
         """
         if not isinstance(identifier, str):
             return False
@@ -888,16 +830,11 @@ class DataStoreDirectory(DataStoreABC):
 
         Notes
         -----
-        The suffix names the file, the identifier does not, so the
-        completed records of a ``.fasta.gz`` store are all ``.fasta.gz``.
-        Honouring the identifier instead let a store of ``.fasta`` hold an
-        ``id_0.fasta.gz`` that its own scan, which asks for the store's
-        suffix, could never match.
-
-        The stem is the identifier with a trailing format or compression
-        suffix taken off. A suffix is recognised as written, so in a
-        ``.fasta`` store ``id_0.FASTA`` is not a respelling of
-        ``id_0.fasta``: it keeps its extension and becomes
+        The suffix names the file and the identifier supplies the stem,
+        so the completed records of a ``.fasta.gz`` store are all
+        ``.fasta.gz``. The stem is the identifier with a trailing format
+        or compression suffix taken off, recognised as written: in a
+        ``.fasta`` store ``id_0.FASTA`` keeps its extension and becomes
         ``id_0.FASTA.fasta``.
         """
         name = f"{_record_stem(unique_id)}.{suffix}"
@@ -967,17 +904,16 @@ class DataStoreDirectory(DataStoreABC):
         Raises
         ------
         ValueError
-            if unique_id names a compression this store does not write
+            if unique_id does not name a record, or names a compression
+            this store does not write
 
         Notes
         -----
         Drops any not-completed member corresponding to this identifier
 
         The store's suffix names the file, so any format suffix on
-        unique_id is replaced by it. A compression suffix is the one part
-        that cannot be replaced silently, because it says how to read the
-        record back, so an identifier naming one the store does not write
-        is refused instead.
+        unique_id is replaced by it. A compression suffix says how to
+        read the record back, so it is refused rather than replaced.
         """
         member = self._write(
             subdir="",
@@ -1010,8 +946,8 @@ class DataStoreDirectory(DataStoreABC):
         Raises
         ------
         ValueError
-            if unique_id names a compression. These records are written
-            as plain json whatever the store's own suffix is
+            if unique_id does not name a record, or names a compression.
+            These are written as plain json whatever the store's suffix is
         """
         (self.source / NOT_COMPLETED_TABLE).mkdir(parents=True, exist_ok=True)
         member = self._write(
@@ -1039,8 +975,8 @@ class DataStoreDirectory(DataStoreABC):
         Raises
         ------
         ValueError
-            if unique_id names a compression. Logs are written as plain
-            .log whatever the store's own suffix is
+            if unique_id does not name a record, or names a compression.
+            Logs are written as plain .log whatever the store's suffix is
         """
         (self.source / LOG_TABLE).mkdir(parents=True, exist_ok=True)
         _ = self._write(subdir=LOG_TABLE, unique_id=unique_id, suffix="log", data=data)
@@ -1068,7 +1004,7 @@ class DataStoreDirectory(DataStoreABC):
 
     def _count_legacy_checksums(self) -> int:
         md5_dir = self.source / MD5_TABLE
-        return sum(1 for p in md5_dir.glob("*") if _is_record(p.name, LEGACY_CHECKSUM))
+        return sum(_is_record(p.name, LEGACY_CHECKSUM) for p in md5_dir.glob("*"))
 
     def migrate_checksums(self) -> ChecksumMigration:
         """rename checksum files that predate the two kinds being named
@@ -1216,10 +1152,9 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         Parameters
         ----------
         subdir
-            directory the entry sits in. An empty string does not mean
-            the archive root, it means no check at all, so entries at
-            every depth are considered. That is pre-existing and is why
-            a zipped store's completed can pick up a .json out of
+            directory the entry sits in. An empty string means no check
+            at all, so entries at every depth are considered, which is
+            why a zipped store's completed can pick up a .json out of
             not_completed and report it twice
         suffix
             suffix the entry is stored under, None for any
@@ -1227,8 +1162,8 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         Notes
         -----
         A suffix rather than a glob pattern, because Path.match folds
-        case on Windows and so gave an archive a different membership
-        there than the same archive has here.
+        case on Windows and an archive has the same membership wherever
+        it is opened.
         """
         import zipfile
 
