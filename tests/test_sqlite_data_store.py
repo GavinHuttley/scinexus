@@ -1,6 +1,7 @@
 import gc
 import os
 import sqlite3
+import threading
 from pathlib import Path
 from pickle import dumps, loads
 
@@ -21,6 +22,7 @@ from scinexus.sqlite_data_store import (
     LOG_TABLE,
     RESULT_TABLE,
     DataStoreSqlite,
+    _owner_token,
     has_valid_schema,
     open_sqlite_db_ro,
     open_sqlite_db_rw,
@@ -428,7 +430,7 @@ def test_collection_without_close_keeps_the_lock(tmp_dir):
         held = db.execute("SELECT lock_pid FROM state").fetchone()[0]
     finally:
         db.close()
-    assert held == os.getpid()
+    assert held == f"{os.getpid()}:{threading.get_native_id()}"
 
 
 def test_collection_of_a_store_refused_the_lock_stays_quiet(tmp_dir, recwarn):
@@ -496,7 +498,7 @@ def test_close_hands_the_database_on(tmp_dir):
     second = DataStoreSqlite(path, mode=OVERWRITE)
 
     assert second.read("r1") == "d1"
-    assert second._lock_id == os.getpid()
+    assert second._lock_id == f"{os.getpid()}:{threading.get_native_id()}"
     second.close()
 
 
@@ -564,7 +566,7 @@ def test_unlock_reaches_a_lock_held_by_another_session(tmp_dir, mode):
     # the lock the store is now free to take
     assert dstore._db.execute("SELECT lock_pid FROM state").fetchone()[0] is None
     assert dstore.read("r1") == "d1"
-    assert dstore._lock_id == os.getpid()
+    assert dstore._lock_id == f"{os.getpid()}:{threading.get_native_id()}"
     dstore.close()
 
 
@@ -598,6 +600,68 @@ def test_a_held_lock_allows_a_readonly_store(tmp_dir):
     dstore = DataStoreSqlite(path, mode=READONLY)
 
     assert dstore.read("r1") == "d1"
+    dstore.close()
+
+
+def test_the_owner_token_tells_threads_apart():
+    """two threads of one process do not produce the same owner"""
+    # the main thread's native id equals the pid on Linux, so a token built
+    # from the pid twice is indistinguishable from a real one when it is
+    # only ever read from the main thread
+    tokens = []
+
+    def record():
+        tokens.append(_owner_token())
+
+    record()
+    other = threading.Thread(target=record)
+    other.start()
+    other.join()
+
+    assert tokens[0] != tokens[1]
+    assert all(t.startswith(f"{os.getpid()}:") for t in tokens)
+
+
+def test_the_lock_names_the_thread_as_well_as_the_process(tmp_dir):
+    """ownership identifies one store, not merely one process"""
+    path = tmp_dir / "owner.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+
+    assert dstore._lock_id == f"{os.getpid()}:{threading.get_native_id()}"
+    dstore.close()
+
+
+def test_unlock_declines_a_lock_taken_by_another_thread(tmp_dir):
+    """a lock this thread did not take is not this thread's to release"""
+    # threads share a pid, so an owner recorded as one gave every thread of
+    # a process the run of every lock any of them held
+    path = tmp_dir / "otherthread.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    foreign = f"{os.getpid()}:{threading.get_native_id() + 1}"
+    dstore._db.execute("UPDATE state SET lock_pid=?", (foreign,))
+
+    dstore.unlock()
+
+    assert dstore._lock_id == foreign
+    dstore.unlock(force=True)
+    assert dstore._lock_id is None
+    dstore.close()
+
+
+def test_unlock_declines_a_lock_in_the_older_format(tmp_dir):
+    """a bare pid names a session this one cannot identify itself with"""
+    path = tmp_dir / "legacy.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    dstore._db.execute("UPDATE state SET lock_pid=?", (os.getpid(),))
+
+    dstore.unlock()
+
+    assert dstore._lock_id == os.getpid()
+    dstore.unlock(force=True)
+    assert dstore._lock_id is None
     dstore.close()
 
 
@@ -916,14 +980,26 @@ def test_load_citations_no_table(tmp_dir):
     dstore.close()
 
 
-def test_describe_locked_different_pid(writable_store):
+def test_describe_locked_by_another_session(writable_store):
+    """the description names the holder and this session separately"""
+    foreign = f"{os.getpid()}:{threading.get_native_id() + 1}"
     writable_store._db.execute(
         "UPDATE state SET lock_pid=? WHERE state_id=1",
-        (os.getpid() + 1,),
+        (foreign,),
     )
     result = writable_store._describe()
     assert "Locked db store" in result["title"]
-    assert str(os.getpid() + 1) in result["title"]
+    assert foreign in result["title"]
+    assert _owner_token() in result["title"]
+
+
+def test_describe_locked_by_this_session(writable_store):
+    """a store this session holds says so rather than naming tokens"""
+    assert writable_store._lock_id == _owner_token()
+
+    result = writable_store._describe()
+
+    assert result["title"] == "Locked to the current process and thread."
 
 
 def test_describe_unlocked(writable_store):

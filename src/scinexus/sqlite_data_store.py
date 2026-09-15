@@ -4,6 +4,7 @@ import datetime
 import os
 import re
 import sqlite3
+import threading
 import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -102,6 +103,19 @@ def open_sqlite_db_ro(path: str | Path) -> sqlite3.Connection:
         msg = "database does not have a valid schema"
         raise ValueError(msg)
     return db
+
+
+def _owner_token() -> str:
+    """identifies the process and thread taking a lock
+
+    Notes
+    -----
+    Written into ``state.lock_pid``, whose INTEGER is an affinity rather
+    than a constraint, so the column takes this without a schema change.
+    A value that is still a bare integer was written by a version that
+    recorded only the process.
+    """
+    return f"{os.getpid()}:{threading.get_native_id()}"
 
 
 def has_valid_schema(db: sqlite3.Connection) -> bool:
@@ -384,8 +398,8 @@ class DataStoreSqlite(DataStoreABC):
         self._not_completed = []
 
     @property
-    def _lock_id(self) -> int | None:
-        """returns lock_pid"""
+    def _lock_id(self) -> int | str | None:
+        """returns lock_pid: an owner token, or a bare pid from an older version"""
         result = self._connection().execute("SELECT lock_pid FROM state").fetchone()
         return result[0] if result else result
 
@@ -395,23 +409,21 @@ class DataStoreSqlite(DataStoreABC):
 
         Notes
         -----
-        This reports whether *some* process holds the lock, not whether the
-        caller does. See ``lock()`` on why that distinction is not available
-        between threads.
+        This reports whether the store is locked at all, not whether the
+        caller is the one holding it. Compare ``_lock_id`` against
+        ``_owner_token()`` for that.
         """
         return self._lock_id is not None
 
     def lock(self) -> None:
-        """if writable, and not locked, locks the database to this pid
+        """if writable, and not locked, locks the database to this session
 
         Notes
         -----
-        The lock is scoped to the *process*, not the thread. Ownership is
-        recorded as ``os.getpid()``, which every thread of a process shares,
-        so this gives no exclusion at all between threads of one process:
-        two threads writing through separate instances will both record the
-        same owner and both believe they hold it. Guarding a store against
-        concurrent threads needs a different mechanism.
+        Any lock already recorded is refused, whoever holds it, so a store
+        is claimed by one session at a time whether the other is a thread
+        of this process or another process entirely. Ownership is recorded
+        as ``_owner_token()`` and decides only who may release it.
         """
         self._check_open()
         if self.mode is READONLY:
@@ -435,24 +447,27 @@ class DataStoreSqlite(DataStoreABC):
                 msg,
             )
 
+        vals: list[object]
         if result:
             # we will update an existing
             state_id = result[0]["state_id"]
             cmnd = "UPDATE state SET lock_pid=? WHERE state_id=?"
-            vals = [os.getpid(), state_id]
+            vals = [_owner_token(), state_id]
         else:
             cmnd = "INSERT INTO state(lock_pid) VALUES (?)"
-            vals = [os.getpid()]
+            vals = [_owner_token()]
         self._db.execute(cmnd, tuple(vals))
         self._holds_lock = True
 
     def unlock(self, force: bool = False) -> None:
-        """remove a lock if pid matches. If force, ignores pid. ignored if mode is READONLY
+        """remove a lock this session took. If force, remove any. ignored if mode is READONLY
 
         Notes
         -----
-        The pid test is a tautology within a process, since threads share a
-        pid, so any thread can release a lock taken by another one.
+        The owner recorded names a thread as well as a process, so a lock
+        another thread of this process took is not this one's to release
+        without *force*. Nor is one recorded by a version that wrote only a
+        pid, which names a session this one cannot claim to be.
         """
         self._check_open()
         if self.mode is READONLY:
@@ -463,7 +478,9 @@ class DataStoreSqlite(DataStoreABC):
         if lock_id is None:
             return
 
-        if lock_id == os.getpid() or force:
+        # a lock recorded by an older version names only a process, which
+        # this session cannot claim to be, so clearing one takes force
+        if lock_id == _owner_token() or force:
             db.execute("UPDATE state SET lock_pid=NULL WHERE state_id=1")
             self._holds_lock = False
 
@@ -573,10 +590,13 @@ class DataStoreSqlite(DataStoreABC):
         return result is not None
 
     def _describe(self) -> dict[str, object]:
-        if self.locked and self._lock_id != os.getpid():
-            title = f"Locked db store. Locked to pid={self._lock_id}, current pid={os.getpid()}."
+        if self.locked and self._lock_id != _owner_token():
+            title = (
+                f"Locked db store. Locked by {self._lock_id}, "
+                f"this session is {_owner_token()}."
+            )
         elif self.locked:
-            title = "Locked to the current process."
+            title = "Locked to the current process and thread."
         else:
             title = "Unlocked db store."
         result = super()._describe()
