@@ -650,6 +650,126 @@ def test_zipped_md5_falls_back_to_the_older_checksum_name(tmp_dir):
     assert dstore.md5("id_0.fasta") == get_text_hexdigest(data)
 
 
+@pytest.fixture
+def legacy_md5_dstore(tmp_dir):
+    """a store whose checksums are all under the name both kinds shared"""
+    source = tmp_dir / "legacy_store"
+    (source / MD5_TABLE).mkdir(parents=True)
+    (source / NOT_COMPLETED_TABLE).mkdir(parents=True)
+    md5_dir = source / MD5_TABLE
+
+    # only a completed record carries this stem
+    done = ">s\nACGT\n"
+    (source / "solo_done.fasta").write_text(done)
+    (md5_dir / "solo_done.txt").write_text(get_text_hexdigest(done))
+
+    # only a not-completed record carries this one
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="x")
+    failed = record.to_json()
+    (source / NOT_COMPLETED_TABLE / "solo_failed.json").write_text(failed)
+    (md5_dir / "solo_failed.txt").write_text(get_text_hexdigest(failed))
+
+    # both kinds carry this one, so the file cannot be attributed
+    (source / "both.fasta").write_text(done)
+    (source / NOT_COMPLETED_TABLE / "both.json").write_text(failed)
+    (md5_dir / "both.txt").write_text(get_text_hexdigest(done))
+
+    # no record carries this one at all
+    (md5_dir / "gone.txt").write_text("orphaned")
+
+    return source
+
+
+def test_migrate_checksums(legacy_md5_dstore):
+    """the ones that can be attributed are renamed and the rest reported"""
+    dstore = DataStoreDirectory(legacy_md5_dstore, suffix="fasta", mode=OVERWRITE)
+
+    got = dstore.migrate_checksums()
+
+    assert got == {
+        "migrated": 2,
+        "ambiguous": ["both"],
+        "orphaned": ["gone"],
+        "superseded": [],
+    }
+    md5_dir = legacy_md5_dstore / MD5_TABLE
+    assert (md5_dir / f"solo_done.{COMPLETED_CHECKSUM}").exists()
+    assert (md5_dir / f"solo_failed.{NOT_COMPLETED_CHECKSUM}").exists()
+    assert sorted(p.name for p in md5_dir.glob("*.txt")) == ["both.txt", "gone.txt"]
+
+
+def test_migrate_checksums_is_idempotent(legacy_md5_dstore):
+    """running it again finds only what it could not attribute"""
+    dstore = DataStoreDirectory(legacy_md5_dstore, suffix="fasta", mode=OVERWRITE)
+    first = dstore.migrate_checksums()
+
+    got = dstore.migrate_checksums()
+
+    assert got["migrated"] == 0
+    # it has not forgotten what it could not do
+    assert got["ambiguous"] == first["ambiguous"]
+    assert got["orphaned"] == first["orphaned"]
+
+
+def test_migrate_checksums_reads_past_the_limit(legacy_md5_dstore):
+    """a limited view does not make a record look absent"""
+    # limit truncates the member lists, and a stem seen in neither would
+    # then be attributed to whichever kind was in view, or called orphaned
+    dstore = DataStoreDirectory(
+        legacy_md5_dstore,
+        suffix="fasta",
+        mode=OVERWRITE,
+        limit=1,
+    )
+
+    got = dstore.migrate_checksums()
+
+    assert got["ambiguous"] == ["both"]
+    assert got["orphaned"] == ["gone"]
+    assert got["migrated"] == 2
+
+
+def test_migrate_checksums_keeps_a_checksum_already_under_the_new_name(tmp_dir):
+    """a record whose checksum this version wrote keeps that one"""
+    # the shared file may belong to a record since dropped, while the one
+    # under the current name was written for this record by this version
+    source = tmp_dir / "superseded"
+    (source / MD5_TABLE).mkdir(parents=True)
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=OVERWRITE)
+    data = ">s\nACGT\n"
+    dstore.write(unique_id="rec.fasta", data=data)
+    (source / MD5_TABLE / "rec.txt").write_text("stale")
+
+    got = dstore.migrate_checksums()
+
+    assert got["superseded"] == ["rec"]
+    assert got["migrated"] == 0
+    assert dstore.md5("rec.fasta") == get_text_hexdigest(data)
+
+
+def test_migrate_checksums_keeps_the_checksums_readable(legacy_md5_dstore):
+    """a migrated record reports the same checksum it did before"""
+    dstore = DataStoreDirectory(legacy_md5_dstore, suffix="fasta", mode=OVERWRITE)
+    before = dstore.md5("solo_done.fasta")
+
+    dstore.migrate_checksums()
+
+    assert dstore.md5("solo_done.fasta") == before
+
+
+@pytest.mark.parametrize("mode", [READONLY, APPEND])
+def test_migrate_checksums_needs_write_mode(legacy_md5_dstore, mode):
+    """migrating rewrites records already there, so it takes mode w"""
+    # read only cannot rewrite anything, and append undertakes not to touch
+    # what is already in the store, which is exactly what this does
+    dstore = DataStoreDirectory(legacy_md5_dstore, suffix="fasta", mode=mode)
+
+    with pytest.raises(OSError, match='mode="w"'):
+        dstore.migrate_checksums()
+
+    assert (legacy_md5_dstore / MD5_TABLE / "solo_done.txt").exists()
+
+
 def test_validate_counts_checksums_in_the_older_layout(tmp_dir):
     """a store says how many of its checksums are still unattributed"""
     # so a caller learns there is migrating to do without having to run it

@@ -11,7 +11,7 @@ from enum import Enum
 from functools import singledispatch
 from io import TextIOWrapper
 from pathlib import Path
-from typing import TYPE_CHECKING, overload
+from typing import TYPE_CHECKING, TypedDict, overload
 
 from scitrack import get_text_hexdigest  # type: ignore[import-untyped]
 
@@ -41,6 +41,20 @@ CITATIONS_FILE = "bibliography.citations"
 COMPLETED_CHECKSUM = "cmplt"
 NOT_COMPLETED_CHECKSUM = "ncmplt"
 LEGACY_CHECKSUM = "txt"
+
+
+class ChecksumMigration(TypedDict):
+    """what :meth:`DataStoreDirectory.migrate_checksums` did, and did not
+
+    ``ambiguous`` is a stem both kinds of record carry, so the file cannot
+    be attributed. ``orphaned`` is one no record carries. ``superseded`` is
+    one whose record already has a checksum under the current name.
+    """
+
+    migrated: int
+    ambiguous: list[str]
+    orphaned: list[str]
+    superseded: list[str]
 
 
 def _record_stem(unique_id: str) -> str:
@@ -866,6 +880,75 @@ class DataStoreDirectory(DataStoreABC):
     def _count_legacy_checksums(self) -> int:
         md5_dir = self.source / MD5_TABLE
         return len(list(md5_dir.glob(f"*.{LEGACY_CHECKSUM}")))
+
+    def migrate_checksums(self) -> ChecksumMigration:
+        """rename checksum files that predate the two kinds being named
+
+        Returns
+        -------
+        how many were renamed, and the stems of those that were not
+
+        Notes
+        -----
+        A file under the shared name holds whichever of the two records
+        wrote last, which was never recorded, so one can be attributed only
+        when a single record carries its stem. The rest are reported and
+        left alone rather than guessed at.
+
+        Requires ``mode="w"``. Read-only cannot rewrite anything, and
+        append undertakes not to touch what is already in the store, which
+        is what renaming these does.
+        """
+        if self.mode is not OVERWRITE:
+            msg = (
+                "migrating checksums rewrites files already in the store, "
+                'which needs mode="w"'
+            )
+            raise OSError(msg)
+
+        md5_dir = self.source / MD5_TABLE
+        # read from the directories rather than the member properties,
+        # which limit truncates and which answer from a cache another
+        # writer cannot have updated. attributing a file to a record that
+        # is merely out of view is the guess this exists to avoid
+        completed = {_record_stem(p.name) for p in self.source.glob(f"*.{self.suffix}")}
+        not_completed = {
+            _record_stem(p.name)
+            for p in (self.source / NOT_COMPLETED_TABLE).glob("*.json")
+        }
+
+        migrated = 0
+        ambiguous: list[str] = []
+        orphaned: list[str] = []
+        superseded: list[str] = []
+        for legacy in sorted(md5_dir.glob(f"*.{LEGACY_CHECKSUM}")):
+            stem = legacy.name.removesuffix(f".{LEGACY_CHECKSUM}")
+            kinds = (stem in completed, stem in not_completed)
+            if all(kinds):
+                ambiguous.append(stem)
+                continue
+            if not any(kinds):
+                orphaned.append(stem)
+                continue
+
+            suffix = COMPLETED_CHECKSUM if kinds[0] else NOT_COMPLETED_CHECKSUM
+            target = md5_dir / f"{stem}.{suffix}"
+            # a file already under the current name was written for that
+            # record by this version, so it is the authority. renaming over
+            # it replaces a checksum known to be right with one that may
+            # belong to a record since dropped
+            if target.exists():
+                superseded.append(stem)
+                continue
+            legacy.rename(target)
+            migrated += 1
+
+        return {
+            "migrated": migrated,
+            "ambiguous": ambiguous,
+            "orphaned": orphaned,
+            "superseded": superseded,
+        }
 
     def write_citations(self, *, data: tuple[CitationBase, ...]) -> None:
         if not data:
