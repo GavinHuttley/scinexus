@@ -26,7 +26,9 @@ from scinexus.composable import NotCompleted, NotCompletedType
 from scinexus.data_store import (
     APPEND,
     CITATIONS_FILE,
+    COMPLETED_CHECKSUM,
     MD5_TABLE,
+    NOT_COMPLETED_CHECKSUM,
     NOT_COMPLETED_TABLE,
     OVERWRITE,
     READONLY,
@@ -321,14 +323,14 @@ def test_not_completed(nc_dstore):
 def test_drop_not_completed(nc_dstore):
     num_completed = len(nc_dstore.completed)
     num_not_completed = len(nc_dstore.not_completed)
-    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*.txt")))
+    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*")))
     assert num_not_completed == 3
     assert num_completed == 6
     assert len(nc_dstore) == 9
     assert num_md5 == num_completed + num_not_completed
     nc_dstore.drop_not_completed()
     assert len(nc_dstore.not_completed) == 0
-    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*.txt")))
+    num_md5 = len(list((nc_dstore.source / MD5_TABLE).glob("*")))
     assert num_md5 == num_completed
 
 
@@ -455,7 +457,8 @@ def mixed_md5_dstore(tmp_dir):
         data = nc.to_json()
         (source / NOT_COMPLETED_TABLE / f"id_{i}.json").write_text(data)
         if i == 0:
-            (source / MD5_TABLE / f"id_{i}.txt").write_text(get_text_hexdigest(data))
+            checksum = f"id_{i}.{NOT_COMPLETED_CHECKSUM}"
+            (source / MD5_TABLE / checksum).write_text(get_text_hexdigest(data))
     return DataStoreDirectory(source, suffix="fasta", mode=OVERWRITE)
 
 
@@ -476,7 +479,7 @@ def test_drop_not_completed_without_md5_file(mixed_md5_dstore):
     mixed_md5_dstore.drop_not_completed()
 
     assert list((source / NOT_COMPLETED_TABLE).glob("*.json")) == []
-    assert list((source / MD5_TABLE).glob("*.txt")) == []
+    assert list((source / MD5_TABLE).glob("*")) == []
 
 
 def test_drop_not_completed_keeps_what_limit_hides(nc_dstore):
@@ -538,6 +541,113 @@ def test_write_leaves_unrelated_not_completed_records(w_dstore):
 
     nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
     assert sorted(p.name for p in nc_dir.glob("*.json")) == ["abc1.json", "nc1.json"]
+
+
+def test_write_keeps_the_checksum_of_the_record_it_wrote(w_dstore):
+    """superseding a not-completed record leaves the new checksum in place"""
+    # both kinds were kept under one name, so the drop that supersedes the
+    # twin deleted the checksum _write had written moments earlier
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="id_0")
+    w_dstore.write_not_completed(unique_id="id_0", data=record.to_json())
+    data = ">s\nACGT\n"
+
+    w_dstore.write(unique_id="id_0.fasta", data=data)
+
+    assert w_dstore.md5("id_0.fasta") == get_text_hexdigest(data)
+
+
+def test_the_two_kinds_of_record_keep_separate_checksums(w_dstore):
+    """a completed and a not-completed record of one name each keep their own"""
+    data = ">s\nACGT\n"
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="id_0")
+    nc_data = record.to_json()
+    w_dstore.write(unique_id="id_0.fasta", data=data)
+
+    w_dstore.write_not_completed(unique_id="id_0", data=nc_data)
+
+    assert w_dstore.md5("id_0.fasta") == get_text_hexdigest(data)
+    nc_id = str(Path(NOT_COMPLETED_TABLE) / "id_0.json")
+    assert w_dstore.md5(nc_id) == get_text_hexdigest(nc_data)
+
+
+@pytest.mark.parametrize("unique_id", ["id_0.fasta", "id_0.fasta.gz"])
+def test_the_checksum_of_a_record_is_found_where_it_was_put(w_dstore, unique_id):
+    """writing, reading and dropping agree on where a checksum lives"""
+    # they were three separate computations of the name, and a compressed
+    # record made all three disagree
+    data = ">s\nACGT\n"
+    w_dstore.write(unique_id=unique_id, data=data)
+
+    assert w_dstore.md5(unique_id) == get_text_hexdigest(data)
+
+
+def test_md5_falls_back_to_the_older_checksum_name(tmp_dir):
+    """a store written before the rename still reports its checksums"""
+    source = tmp_dir / "legacy"
+    (source / MD5_TABLE).mkdir(parents=True)
+    data = ">s\nACGT\n"
+    (source / "id_0.fasta").write_text(data)
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(data))
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert dstore.md5("id_0.fasta") == get_text_hexdigest(data)
+
+
+def test_dropping_removes_a_shared_checksum_only_it_can_claim(tmp_dir):
+    """a drop takes the shared file when no completed record wants it"""
+    source = tmp_dir / "sharedgone"
+    (source / MD5_TABLE).mkdir(parents=True)
+    (source / NOT_COMPLETED_TABLE).mkdir(parents=True)
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="id_0")
+    failed = record.to_json()
+    (source / NOT_COMPLETED_TABLE / "id_0.json").write_text(failed)
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(failed))
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=OVERWRITE)
+
+    dstore.drop_not_completed()
+
+    assert list((source / MD5_TABLE).glob("*")) == []
+
+
+def test_dropping_keeps_a_shared_checksum_a_completed_record_may_own(tmp_dir):
+    """a drop leaves the shared file when a completed record carries the stem"""
+    # it holds whichever of the two wrote last, which was never recorded,
+    # so taking it would be guessing and leaving it makes it answer for the
+    # completed record. neither is right, so it is left and reported
+    source = tmp_dir / "sharedkept"
+    (source / MD5_TABLE).mkdir(parents=True)
+    (source / NOT_COMPLETED_TABLE).mkdir(parents=True)
+    done = ">s\nACGT\n"
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="id_0")
+    (source / "id_0.fasta").write_text(done)
+    (source / NOT_COMPLETED_TABLE / "id_0.json").write_text(record.to_json())
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(done))
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=OVERWRITE)
+
+    dstore.drop_not_completed()
+
+    assert (source / MD5_TABLE / "id_0.txt").exists()
+    assert dstore.md5("id_0.fasta") == get_text_hexdigest(done)
+
+
+def test_zipped_md5_falls_back_to_the_older_checksum_name(tmp_dir):
+    """the same fallback works inside an archive, which cannot be renamed"""
+    source = tmp_dir / "ziplegacy"
+    (source / MD5_TABLE).mkdir(parents=True)
+    data = ">s\nACGT\n"
+    (source / "id_0.fasta").write_text(data)
+    (source / MD5_TABLE / "id_0.txt").write_text(get_text_hexdigest(data))
+    path = shutil.make_archive(
+        base_name=str(source.parent / source.name),
+        format="zip",
+        base_dir=source.name,
+        root_dir=source.parent,
+    )
+
+    dstore = ReadOnlyDataStoreZipped(pathlib.Path(path), suffix="fasta")
+
+    assert dstore.md5("id_0.fasta") == get_text_hexdigest(data)
 
 
 def test_close_a_directory_store(w_dstore):
@@ -1005,7 +1115,7 @@ def test_validate_incorrect_md5(write_dir):
     dstore = DataStoreDirectory(write_dir, suffix="txt", mode=OVERWRITE)
     dstore.write(unique_id="item.txt", data="original")
     # corrupt the md5
-    md5_path = write_dir / MD5_TABLE / "item.txt"
+    md5_path = write_dir / MD5_TABLE / f"item.{COMPLETED_CHECKSUM}"
     md5_path.write_text("wrong_md5_value")
     result = dstore._validate()
     assert result["md5_incorrect"] == 1

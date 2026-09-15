@@ -35,6 +35,35 @@ _special_suffixes = re.compile(r"\.(log|json)$")
 
 CITATIONS_FILE = "bibliography.citations"
 
+# a checksum file is named for the record it belongs to and for which of the
+# two kinds that record is. LEGACY is what both kinds shared before, so a
+# file still carrying it belongs to a record this store cannot identify
+COMPLETED_CHECKSUM = "cmplt"
+NOT_COMPLETED_CHECKSUM = "ncmplt"
+LEGACY_CHECKSUM = "txt"
+
+
+def _record_stem(unique_id: str) -> str:
+    """the identifier with its format and compression suffixes removed"""
+    stem = Path(unique_id).name
+    sfx, cmp = get_format_suffixes(stem)
+    for part in (cmp, sfx):
+        if part:
+            stem = stem.removesuffix(f".{part}")
+    return stem
+
+
+def _checksum_name(unique_id: str, *, completed: bool) -> str:
+    """the file a record's checksum is kept in"""
+    suffix = COMPLETED_CHECKSUM if completed else NOT_COMPLETED_CHECKSUM
+    return f"{_record_stem(unique_id)}.{suffix}"
+
+
+def _legacy_checksum_name(unique_id: str) -> str:
+    """the file a record's checksum was kept in before the kinds were named"""
+    return f"{_record_stem(unique_id)}.{LEGACY_CHECKSUM}"
+
+
 NoneType = type(None)
 
 
@@ -589,6 +618,9 @@ class DataStoreDirectory(DataStoreABC):
         # removed from that list rather than it being rebound. nor is it
         # atomic -- an unlink can still raise and leave it torn
         with self._cache_lock:
+            # built only if a file under the shared name turns up, which
+            # takes a scan and is worth nothing in a store without one
+            completed_stems: set[str] | None = None
             for m in list(self.not_completed):
                 # exact: an endswith test also matches a record whose name
                 # merely ends with this one, such as abc1.json for c1.json
@@ -600,8 +632,20 @@ class DataStoreDirectory(DataStoreABC):
                 # a checksum is optional -- md5() returns None without one
                 # and _validate counts it under md5_missing -- so a record
                 # that has none is still droppable
-                md5_file = md5_dir / f"{file.stem}.txt"
+                md5_file = md5_dir / _checksum_name(m.unique_id, completed=False)
                 md5_file.unlink(missing_ok=True)
+                # a file under the name both kinds shared is this record's
+                # only when no completed record carries the stem. with one
+                # there it cannot be attributed, and leaving it would have
+                # it answer for that record once this one is gone
+                legacy = md5_dir / _legacy_checksum_name(m.unique_id)
+                if legacy.exists():
+                    if completed_stems is None:
+                        completed_stems = {
+                            _record_stem(c.unique_id) for c in self.completed
+                        }
+                    if _record_stem(m.unique_id) not in completed_stems:
+                        legacy.unlink()
                 self.not_completed.remove(m)
 
             if not target:
@@ -715,9 +759,12 @@ class DataStoreDirectory(DataStoreABC):
             member = DataMember(data_store=self, unique_id=unique_id)
 
         md5 = get_text_hexdigest(data)
-        unique_id = unique_id.replace(suffix, "txt")
-        unique_id = unique_id if cmp is None else unique_id.replace(f".{cmp}", "")
-        with open_(self.source / MD5_TABLE / unique_id, mode="w") as out:
+        # named for the kind as well as the record, so a completed record
+        # and a not-completed one of the same name no longer share a file.
+        # they still share one with a compressed record of that name, since
+        # the stem drops the compression suffix
+        checksum = _checksum_name(unique_id, completed=not subdir)
+        with open_(self.source / MD5_TABLE / checksum, mode="w") as out:
             out.write(md5)
 
         return member
@@ -796,11 +843,15 @@ class DataStoreDirectory(DataStoreABC):
         -------
         md5 checksum for the member, if available, None otherwise
         """
-        uid_name = Path(unique_id).name
-        md5_name = re.sub(rf"[.]({self.suffix}|json)$", ".txt", uid_name)
-        path = self.source / MD5_TABLE / md5_name
+        completed = Path(unique_id).parent.name != NOT_COMPLETED_TABLE
+        path = self.source / MD5_TABLE / _checksum_name(unique_id, completed=completed)
+        if path.exists():
+            return path.read_text()
 
-        return path.read_text() if path.exists() else None
+        # a store written before the kinds were named keeps both under one
+        # name, so nothing has to be rewritten for it to be readable
+        legacy = self.source / MD5_TABLE / _legacy_checksum_name(unique_id)
+        return legacy.read_text() if legacy.exists() else None
 
     def write_citations(self, *, data: tuple[CitationBase, ...]) -> None:
         if not data:
@@ -943,11 +994,26 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         -------
         md5 checksum for the member, if available, None otherwise
         """
-        uid_name = Path(unique_id).name
-        md5_name = re.sub(rf"[.]({self.suffix}|json)$", ".txt", uid_name)
+        completed = Path(unique_id).parent.name != NOT_COMPLETED_TABLE
         md5_dir = Path(MD5_TABLE)
-        for name in self._iter_matches(MD5_TABLE, md5_name):
-            m = DataMember(data_store=self, unique_id=str(md5_dir / name.name))
+        # the legacy name second: an archive cannot be rewritten, so a
+        # store zipped before the kinds were named falls back forever
+        candidates = (
+            _checksum_name(unique_id, completed=completed),
+            _legacy_checksum_name(unique_id),
+        )
+        # one pass: _iter_matches opens the archive and reads its central
+        # directory each time it is called, so asking it per candidate
+        # would open the file twice to answer one question
+        found = {
+            name.name: name
+            for name in self._iter_matches(MD5_TABLE, "*")
+            if name.name in candidates
+        }
+        for md5_name in candidates:
+            if md5_name not in found:
+                continue
+            m = DataMember(data_store=self, unique_id=str(md5_dir / md5_name))
             result = m.read()
             return result if isinstance(result, str) else result.decode()
         return None
