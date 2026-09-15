@@ -739,18 +739,23 @@ class DataStoreDirectory(DataStoreABC):
         Returns
         -------
         the file name, and the compression suffix it carries if any
-        """
-        sfx, cmp = get_format_suffixes(unique_id)
-        if sfx != suffix:
-            unique_id = f"{Path(unique_id).stem}.{suffix}"
-            sfx, cmp = get_format_suffixes(unique_id)
 
-        name = (
-            unique_id.replace(self.suffix, suffix)
-            if self.suffix and self.suffix != suffix
-            else unique_id
-        )
-        return name, cmp
+        Notes
+        -----
+        The suffix names the file, the identifier does not, so the
+        completed records of a ``.fasta.gz`` store are all ``.fasta.gz``.
+        Honouring the identifier instead let a store of ``.fasta`` hold an
+        ``id_0.fasta.gz`` that its own scan, which asks for the store's
+        suffix, could never match.
+
+        The stem is the identifier with a trailing format or compression
+        suffix taken off. A suffix is recognised as written, so in a
+        ``.fasta`` store ``id_0.FASTA`` is not a respelling of
+        ``id_0.fasta``: it keeps its extension and becomes
+        ``id_0.FASTA.fasta``.
+        """
+        name = f"{_record_stem(unique_id)}.{suffix}"
+        return name, get_format_suffixes(name)[1]
 
     def _write(
         self,

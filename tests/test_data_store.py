@@ -383,9 +383,9 @@ def test_append_mode_refuses_to_rewrite_a_not_completed_record(w_dstore):
 
 
 def test_append_mode_refuses_to_rewrite_a_compressed_not_completed(w_dstore):
-    """the APPEND refusal covers a not-completed record written compressed"""
-    # a compressed id ends in neither of the suffixes __contains__ treats
-    # as complete, so it is the case where suffix completion can corrupt it
+    """the APPEND refusal follows a compressed identifier to the record it names"""
+    # the identifier resolves to nc1.json, so the refusal has to recognise
+    # the second write as the record already stored, not as a new one
     data = NotCompleted(
         NotCompletedType.ERROR,
         "location",
@@ -393,7 +393,7 @@ def test_append_mode_refuses_to_rewrite_a_compressed_not_completed(w_dstore):
         source="nc1",
     ).to_json()
     w_dstore.write_not_completed(unique_id="nc1.json.gz", data=data)
-    assert f"{NOT_COMPLETED_TABLE}/nc1.json.gz" in w_dstore
+    assert f"{NOT_COMPLETED_TABLE}/nc1.json" in w_dstore
 
     w_dstore._mode = APPEND
 
@@ -512,13 +512,21 @@ def test_drop_not_completed_by_id_keeps_what_limit_hides(nc_dstore):
 
 @pytest.mark.parametrize(
     "unique_id",
-    ["nc1", "nc1.fasta", "nc1.json", "nc1.txt", "nc1.fasta.gz", "a.b.fasta"],
+    [
+        "nc1",
+        "nc1.fasta",
+        "nc1.json",
+        "nc1.txt",
+        "nc1.fasta.gz",
+        "nc1.json.gz",
+        "a.b.fasta",
+    ],
 )
 def test_write_drops_the_twin_however_the_id_is_spelled(w_dstore, unique_id):
     """the record a write supersedes is found whatever extension the id carries"""
-    # nc1.json.gz is absent from the shapes above because it is stored
-    # under that name, which the *.json scan behind not_completed does not
-    # match, so the first assertion rather than the drop would fail
+    # nc1.json.gz belongs here now: the store names the file, so it is
+    # stored as nc1.json like every other spelling. it used to be stored
+    # under its own name, which the *.json scan could not match
     record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
     w_dstore.write_not_completed(unique_id=unique_id, data=record.to_json())
     nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
@@ -574,11 +582,104 @@ def test_the_two_kinds_of_record_keep_separate_checksums(w_dstore):
 def test_the_checksum_of_a_record_is_found_where_it_was_put(w_dstore, unique_id):
     """writing, reading and dropping agree on where a checksum lives"""
     # they were three separate computations of the name, and a compressed
-    # record made all three disagree
+    # identifier made all three disagree. the store now names the file, so
+    # both spellings here are the one record, id_0.fasta
     data = ">s\nACGT\n"
     w_dstore.write(unique_id=unique_id, data=data)
 
     assert w_dstore.md5(unique_id) == get_text_hexdigest(data)
+
+
+@pytest.mark.parametrize(
+    "unique_id",
+    ["id_0", "id_0.fasta", "id_0.fasta.gz", "id_0.gz", "id_0.genbank"],
+)
+def test_the_store_suffix_decides_the_stored_name(w_dstore, unique_id):
+    """however the identifier is spelled, the store names the file"""
+    # a suffix the identifier carried used to survive into the name, so a
+    # store of .fasta could hold an id_0.fasta.gz its own scan cannot see.
+    # globbing every file, not just *.fasta, so a record left under some
+    # other name is a failure rather than something the pattern hides
+    w_dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+    stored = [p.name for p in w_dstore.source.glob("*") if p.is_file()]
+    assert stored == ["id_0.fasta"]
+
+
+@pytest.mark.parametrize("unique_id", ["id_0", "id_0.fasta", "id_0.fasta.gz"])
+def test_a_compound_suffix_is_appended_once(tmp_dir, unique_id):
+    """a store of .fasta.gz stores id_0.fasta.gz, not id_0.fasta.fasta.gz"""
+    dstore = DataStoreDirectory(tmp_dir / "gz", suffix="fasta.gz", mode=OVERWRITE)
+
+    dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+    stored = [p.name for p in dstore.source.glob("*") if p.is_file()]
+    assert stored == ["id_0.fasta.gz"]
+
+
+def test_a_compound_suffix_store_writes_compressed(tmp_dir):
+    """the suffix the store names picks the engine the record is written with"""
+    # _write chooses the mode from the name, and open_ the handler, so the
+    # compression follows from the suffix rather than from the identifier
+    import gzip
+
+    dstore = DataStoreDirectory(tmp_dir / "gz", suffix="fasta.gz", mode=OVERWRITE)
+    data = ">s\nACGT\n"
+
+    dstore.write(unique_id="id_0", data=data)
+
+    assert (
+        gzip.decompress((dstore.source / "id_0.fasta.gz").read_bytes()) == data.encode()
+    )
+
+
+@pytest.mark.parametrize(
+    "unique_id",
+    ["nc1", "nc1.json", "nc1.json.gz", "nc1.fasta.gz"],
+)
+def test_a_not_completed_record_is_stored_as_plain_json(w_dstore, unique_id):
+    """not-completed records are json whatever the identifier carried"""
+    # nc1.fasta.gz used to become nc1.json.json, because the store suffix
+    # was replaced inside the name rather than the name being rebuilt
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+
+    w_dstore.write_not_completed(unique_id=unique_id, data=record.to_json())
+
+    nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
+    assert [p.name for p in nc_dir.glob("*")] == ["nc1.json"]
+
+
+def test_an_identifier_containing_the_suffix_keeps_its_stem(w_dstore):
+    """the suffix is replaced at the end of the name, not wherever it occurs"""
+    # the store suffix used to be replaced by str.replace over the whole
+    # name, so fasta_seqs was stored as json_seqs.json
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="x")
+
+    w_dstore.write_not_completed(unique_id="fasta_seqs", data=record.to_json())
+
+    nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
+    assert [p.name for p in nc_dir.glob("*")] == ["fasta_seqs.json"]
+
+
+def test_a_case_variant_extension_is_a_different_record(w_dstore):
+    """FASTA is not the suffix of a .fasta store, so it stays in the stem"""
+    # the suffix is matched as written. an extension that is not it, for
+    # whatever reason, is part of the name the store appends its own to
+    w_dstore.write(unique_id="id_0.fasta", data=">s\nACGT\n")
+
+    w_dstore.write(unique_id="id_0.FASTA", data=">s\nTTTT\n")
+
+    stored = sorted(p.name for p in w_dstore.source.glob("*") if p.is_file())
+    assert stored == ["id_0.FASTA.fasta", "id_0.fasta"]
+
+
+def test_an_identifier_carrying_a_directory_is_stored_by_its_name(w_dstore):
+    """a path-like identifier names a record, it does not name a location"""
+    # it used to be kept whole and handed to open_, which raised
+    # FileNotFoundError for a subdirectory the store had not created
+    w_dstore.write(unique_id="sub/id_0.fasta", data=">s\nACGT\n")
+
+    assert [p.name for p in w_dstore.source.glob("*.fasta")] == ["id_0.fasta"]
 
 
 def test_md5_falls_back_to_the_older_checksum_name(tmp_dir):
