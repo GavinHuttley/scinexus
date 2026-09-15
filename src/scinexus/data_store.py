@@ -8,6 +8,7 @@ import reprlib
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from enum import Enum
+from fnmatch import fnmatchcase
 from functools import singledispatch
 from io import TextIOWrapper
 from pathlib import Path
@@ -65,6 +66,21 @@ def _record_stem(unique_id: str) -> str:
         if part:
             stem = stem.removesuffix(f".{part}")
     return stem
+
+
+def _is_record(name: str, suffix: str) -> bool:
+    """whether a file of this name is a record stored under this suffix
+
+    Notes
+    -----
+    The suffix may carry a trailing wildcard, so this is a pattern match
+    rather than a comparison. fnmatchcase rather than Path.glob or
+    fnmatch, both of which fold case on Windows: a scan expressed through
+    either claimed an ID_0.FASTA there and not here, where _record_name
+    puts the suffix on as written on every platform. A store whose
+    membership depends on the platform cannot be reasoned about.
+    """
+    return fnmatchcase(name, f"*.{suffix}")
 
 
 def _compressions(name: str) -> frozenset[str]:
@@ -784,11 +800,15 @@ class DataStoreDirectory(DataStoreABC):
                 # built locally and assigned once: appending to
                 # self._completed would publish a partly scanned list
                 found: list[DataMemberABC] = []
-                suffix = f"*.{self.suffix}"
-                for i, m in enumerate(self.source.glob(suffix)):
-                    if self.limit and i == self.limit:
-                        break
+                # counts what it keeps, not what it looked at: the scan
+                # now sees every entry in the directory, and limit
+                # truncates the members
+                for m in self.source.glob("*"):
+                    if not _is_record(m.name, self.suffix):
+                        continue
                     found.append(DataMember(data_store=self, unique_id=m.name))
+                    if self.limit and len(found) == self.limit:
+                        break
                 self._completed = found
             return self._completed
 
@@ -797,17 +817,17 @@ class DataStoreDirectory(DataStoreABC):
         with self._cache_lock:
             if not self._not_completed:
                 found: list[DataMemberABC] = []
-                for i, m in enumerate(
-                    (self.source / NOT_COMPLETED_TABLE).glob("*.json"),
-                ):
-                    if self.limit and i == self.limit:
-                        break
+                for m in (self.source / NOT_COMPLETED_TABLE).glob("*"):
+                    if not _is_record(m.name, "json"):
+                        continue
                     found.append(
                         DataMember(
                             data_store=self,
                             unique_id=str(Path(NOT_COMPLETED_TABLE) / m.name),
                         ),
                     )
+                    if self.limit and len(found) == self.limit:
+                        break
                 self._not_completed = found
             return self._not_completed
 
@@ -1006,7 +1026,7 @@ class DataStoreDirectory(DataStoreABC):
 
     def _count_legacy_checksums(self) -> int:
         md5_dir = self.source / MD5_TABLE
-        return len(list(md5_dir.glob(f"*.{LEGACY_CHECKSUM}")))
+        return sum(1 for p in md5_dir.glob("*") if _is_record(p.name, LEGACY_CHECKSUM))
 
     def migrate_checksums(self) -> ChecksumMigration:
         """rename checksum files that predate the two kinds being named
@@ -1038,17 +1058,23 @@ class DataStoreDirectory(DataStoreABC):
         # which limit truncates and which answer from a cache another
         # writer cannot have updated. attributing a file to a record that
         # is merely out of view is the guess this exists to avoid
-        completed = {_record_stem(p.name) for p in self.source.glob(f"*.{self.suffix}")}
+        completed = {
+            _record_stem(p.name)
+            for p in self.source.glob("*")
+            if _is_record(p.name, self.suffix)
+        }
         not_completed = {
             _record_stem(p.name)
-            for p in (self.source / NOT_COMPLETED_TABLE).glob("*.json")
+            for p in (self.source / NOT_COMPLETED_TABLE).glob("*")
+            if _is_record(p.name, "json")
         }
 
         migrated = 0
         ambiguous: list[str] = []
         orphaned: list[str] = []
         superseded: list[str] = []
-        for legacy in sorted(md5_dir.glob(f"*.{LEGACY_CHECKSUM}")):
+        legacies = (p for p in md5_dir.glob("*") if _is_record(p.name, LEGACY_CHECKSUM))
+        for legacy in sorted(legacies):
             stem = legacy.name.removesuffix(f".{LEGACY_CHECKSUM}")
             kinds = (stem in completed, stem in not_completed)
             if all(kinds):
@@ -1142,7 +1168,26 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
             wrapped = TextIOWrapper(raw, encoding="latin-1")
             return wrapped.read()
 
-    def _iter_matches(self, subdir: str, pattern: str) -> Iterator[Path]:
+    def _iter_matches(self, subdir: str, suffix: str | None) -> Iterator[Path]:
+        """archive entries under subdir, stored with this suffix
+
+        Parameters
+        ----------
+        subdir
+            directory the entry sits in. An empty string does not mean
+            the archive root, it means no check at all, so entries at
+            every depth are considered. That is pre-existing and is why
+            a zipped store's completed can pick up a .json out of
+            not_completed and report it twice
+        suffix
+            suffix the entry is stored under, None for any
+
+        Notes
+        -----
+        A suffix rather than a glob pattern, because Path.match folds
+        case on Windows and so gave an archive a different membership
+        there than the same archive has here.
+        """
         import zipfile
 
         with zipfile.ZipFile(self._source) as archive:
@@ -1151,7 +1196,9 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
                 p = Path(name)
                 if subdir and p.parent.name != subdir:
                     continue
-                if p.match(pattern) and not p.name.startswith("."):
+                if p.name.startswith("."):
+                    continue
+                if suffix is None or _is_record(p.name, suffix):
                     yield p
 
     @property
@@ -1162,10 +1209,9 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         # properties uniform
         with self._cache_lock:
             if not self._completed:
-                pattern = f"*.{self.suffix}"
                 found: list[DataMemberABC] = []
                 num_matches = 0
-                for name in self._iter_matches("", pattern):
+                for name in self._iter_matches("", self.suffix):
                     num_matches += 1
                     member = DataMember(data_store=self, unique_id=name.name)
                     found.append(member)
@@ -1184,7 +1230,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
                 found: list[DataMemberABC] = []
                 num_matches = 0
                 nc_dir_path = Path(NOT_COMPLETED_TABLE)
-                for name in self._iter_matches(NOT_COMPLETED_TABLE, "*.json"):
+                for name in self._iter_matches(NOT_COMPLETED_TABLE, "json"):
                     num_matches += 1
                     member = DataMember(
                         data_store=self,
@@ -1202,7 +1248,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
     def logs(self) -> list[DataMemberABC]:
         log_dir = Path(LOG_TABLE)
         logs: list[DataMemberABC] = []
-        for name in self._iter_matches(LOG_TABLE, "*"):
+        for name in self._iter_matches(LOG_TABLE, None):
             m = DataMember(data_store=self, unique_id=str(log_dir / name.name))
             logs.append(m)
         return logs
@@ -1231,7 +1277,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         # would open the file twice to answer one question
         found = {
             name.name: name
-            for name in self._iter_matches(MD5_TABLE, "*")
+            for name in self._iter_matches(MD5_TABLE, None)
             if name.name in candidates
         }
         for md5_name in candidates:
@@ -1243,7 +1289,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         return None
 
     def _count_legacy_checksums(self) -> int:
-        return len(list(self._iter_matches(MD5_TABLE, f"*.{LEGACY_CHECKSUM}")))
+        return len(list(self._iter_matches(MD5_TABLE, LEGACY_CHECKSUM)))
 
     def drop_not_completed(self, *, unique_id: str | None = None) -> None:
         """not supported on read-only zip data stores"""

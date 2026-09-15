@@ -1,6 +1,7 @@
 import copy
 import functools
 import json
+import os.path
 import pathlib
 import shutil
 import sys
@@ -34,6 +35,7 @@ from scinexus.data_store import (
     READONLY,
     DataStoreDirectory,
     ReadOnlyDataStoreZipped,
+    _is_record,
     get_data_source,
     get_id_from_source,
     get_summary_display,
@@ -762,6 +764,81 @@ def test_contains_says_no_to_what_is_not_an_identifier(
 
     assert identifier not in w_dstore
     assert identifier not in zipped
+
+
+def test_the_scan_matches_the_suffix_as_written(tmp_dir):
+    """a store of .fasta does not claim an ID_0.FASTA"""
+    # this passes on POSIX either way and is here for the Windows runner,
+    # where Path.glob folds case and so answered the opposite of what the
+    # naming path does. the only file is the upper case one on purpose:
+    # writing a lower case twin beside it would land on the same file on
+    # a case insensitive filesystem, leaving one entry named id_0.fasta
+    # and a test that passes there whatever the scan does
+    source = tmp_dir / "cased"
+    source.mkdir(parents=True)
+    (source / "ID_0.FASTA").write_text(">s\nTTTT\n")
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert dstore.completed == []
+
+
+def test_the_scan_does_not_fold_case_the_way_the_platform_would(monkeypatch):
+    """the matcher ignores os.path.normcase, which is what folds on Windows"""
+    # the platform half of this cannot run here, so stand in for it: this
+    # is exactly what fnmatch does and fnmatchcase does not
+    monkeypatch.setattr(os.path, "normcase", str.lower)
+
+    assert _is_record("id_0.fasta", "fasta")
+    assert not _is_record("ID_0.FASTA", "fasta")
+
+
+def test_a_suffix_may_carry_a_trailing_wildcard(tmp_dir):
+    """suffix="fasta*" takes the compressed spellings in as well"""
+    # the scan is a pattern match, not a comparison, and this is the only
+    # thing that needs it to be
+    source = tmp_dir / "wild"
+    source.mkdir(parents=True)
+    for name in ("id_0.fasta", "id_1.fasta.gz", "id_2.fasta.bz2", "notes.txt"):
+        (source / name).write_text(">s\nACGT\n")
+
+    dstore = DataStoreDirectory(source, suffix="fasta*", mode=READONLY)
+
+    assert sorted(m.unique_id for m in dstore.completed) == [
+        "id_0.fasta",
+        "id_1.fasta.gz",
+        "id_2.fasta.bz2",
+    ]
+
+
+def test_limit_counts_matches_not_directory_entries(tmp_dir):
+    """limit truncates the members, so what is not a member does not count"""
+    # guards the accounting rather than fixing it: the scan sees every
+    # entry now, where the pattern used to pre-select what was counted,
+    # so limit had to start counting what it keeps
+    source = tmp_dir / "limited"
+    source.mkdir(parents=True)
+    for i in range(3):
+        (source / f"id_{i}.fasta").write_text(">s\nACGT\n")
+        (source / f"note_{i}.txt").write_text("ignore me")
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY, limit=2)
+
+    assert len(dstore.completed) == 2
+
+
+def test_the_not_completed_scan_passes_over_what_is_not_a_record(tmp_dir):
+    """a stray file in not_completed is not a not-completed record"""
+    source = tmp_dir / "stray"
+    nc_dir = source / NOT_COMPLETED_TABLE
+    nc_dir.mkdir(parents=True)
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    (nc_dir / "nc1.json").write_text(record.to_json())
+    (nc_dir / "README.txt").write_text("notes about this directory")
+
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    assert [Path(m.unique_id).name for m in dstore.not_completed] == ["nc1.json"]
 
 
 def test_a_case_variant_extension_is_a_different_record(w_dstore):
