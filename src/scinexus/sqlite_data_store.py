@@ -406,9 +406,25 @@ class DataStoreSqlite(DataStoreABC):
 
     @property
     def _lock_id(self) -> int | str | None:
-        """returns lock_pid: an owner token, or a bare pid from an older version"""
-        result = self._connection().execute("SELECT lock_pid FROM state").fetchone()
-        return result[0] if result else result
+        """returns lock_pid: an owner token, or a bare pid from an older version
+
+        Notes
+        -----
+        The first lock recorded, not the first row. A version that claimed
+        the store as two statements rather than one transaction inserted a
+        row per session, so a database written by it can carry a lock below
+        a row holding none. ``IS NOT NULL`` rather than a truth test,
+        because a lock recorded as 0 is a lock.
+        """
+        result = (
+            self._connection()
+            .execute(
+                "SELECT lock_pid FROM state WHERE lock_pid IS NOT NULL "
+                "ORDER BY state_id LIMIT 1",
+            )
+            .fetchone()
+        )
+        return result[0] if result else None
 
     @property
     def locked(self) -> bool:
@@ -475,20 +491,31 @@ class DataStoreSqlite(DataStoreABC):
         """
         db.execute("BEGIN IMMEDIATE")
         try:
-            result = db.execute("SELECT state_id,lock_pid FROM state").fetchall()
+            result = db.execute(
+                "SELECT state_id,lock_pid FROM state ORDER BY state_id",
+            ).fetchall()
             # is not None rather than truthy: a lock recorded as 0 is a lock
-            locked = result[0]["lock_pid"] if result else None
-            if locked is None:
-                vals: list[object]
-                if result:
-                    # we will update an existing
-                    state_id = result[0]["state_id"]
-                    cmnd = "UPDATE state SET lock_pid=? WHERE state_id=?"
-                    vals = [_owner_token(), state_id]
-                else:
-                    cmnd = "INSERT INTO state(lock_pid) VALUES (?)"
-                    vals = [_owner_token()]
-                db.execute(cmnd, tuple(vals))
+            locked = next(
+                (r["lock_pid"] for r in result if r["lock_pid"] is not None),
+                None,
+            )
+            if locked is None and result:
+                # we will update an existing
+                state_id = result[0]["state_id"]
+                db.execute(
+                    "UPDATE state SET lock_pid=? WHERE state_id=?",
+                    (_owner_token(), state_id),
+                )
+                if len(result) > 1:
+                    # rows the two-statement version left behind. reaching
+                    # here means none of them holds a lock, and only the
+                    # first carries a record_type, so they record nothing
+                    db.execute("DELETE FROM state WHERE state_id>?", (state_id,))
+            elif locked is None:
+                db.execute(
+                    "INSERT INTO state(lock_pid) VALUES (?)",
+                    (_owner_token(),),
+                )
             # inside the try: a commit wants an exclusive lock where the
             # begin wanted a reserved one, so it is the statement here most
             # likely to be refused, and one left unended strands the
@@ -511,6 +538,11 @@ class DataStoreSqlite(DataStoreABC):
         another thread of this process took is not this one's to release
         without *force*. Nor is one recorded by a version that wrote only a
         pid, which names a session this one cannot claim to be.
+
+        Every lock recorded is cleared, not merely the one reported. A
+        database written by the two-statement version can hold a lock in
+        more than one row, and clearing them one call at a time leaves the
+        store still refusing after the user has forced it open.
         """
         self._check_open()
         if self.mode is READONLY:
@@ -524,7 +556,7 @@ class DataStoreSqlite(DataStoreABC):
         # a lock recorded by an older version names only a process, which
         # this session cannot claim to be, so clearing one takes force
         if lock_id == _owner_token() or force:
-            db.execute("UPDATE state SET lock_pid=NULL WHERE state_id=1")
+            db.execute("UPDATE state SET lock_pid=NULL")
             self._holds_lock = False
 
         return

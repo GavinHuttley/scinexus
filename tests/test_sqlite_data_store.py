@@ -605,6 +605,80 @@ def test_a_held_lock_allows_a_readonly_store(tmp_dir):
     dstore.close()
 
 
+def _abandon_with_a_lock_in_a_later_row(path, lock_pid):
+    """leaves the state table as the racy implementation could have
+
+    Row 1 free, because the session that held it called unlock(), and row 2
+    still holding the lock of a session that never closed.
+    """
+    abandoned = DataStoreSqlite(path, mode=OVERWRITE)
+    abandoned.write(unique_id="r1", data="d1")
+    abandoned.record_type = str
+    # the racy lock() inserted rather than updated, so a second session got
+    # its own row. seed it the same way to get row 2 for the right reason
+    abandoned._db.execute("INSERT INTO state(lock_pid) VALUES (?)", (lock_pid,))
+    # that version's unlock() cleared state_id 1 alone, which is how a
+    # database ends up free in its first row and locked below it
+    abandoned._db.execute("UPDATE state SET lock_pid=NULL WHERE state_id=1")
+    abandoned._db.close()
+    abandoned._db = None
+    abandoned._closed = True
+
+
+@pytest.mark.parametrize("mode", [OVERWRITE, APPEND])
+def test_a_lock_in_a_later_state_row_refuses_a_writable_store(tmp_dir, mode):
+    """a lock is a lock whichever state row records it"""
+    # the racy lock() left rows past the first, and unlock() cleared only
+    # row 1. read from row 1 alone, a lock below it is invisible, so the
+    # store it marks as never confirmed opens for writing
+    path = tmp_dir / "laterrow.sqlitedb"
+    _abandon_with_a_lock_in_a_later_row(path, f"{os.getpid() + 1}:1")
+
+    dstore = DataStoreSqlite(path, mode=mode)
+
+    assert dstore.locked
+    with pytest.raises(OSError, match="locked"):
+        dstore.read("r1")
+
+
+def test_a_lock_in_a_later_state_row_shows_on_a_readonly_store(tmp_dir):
+    """a read-only store reports the lock it cannot take"""
+    # READONLY returns from lock() before any claim, so nothing on that path
+    # can put a later row right: the reader itself has to see it
+    path = tmp_dir / "laterrow_ro.sqlitedb"
+    _abandon_with_a_lock_in_a_later_row(path, f"{os.getpid() + 1}:1")
+
+    dstore = DataStoreSqlite(path, mode=READONLY)
+
+    assert dstore.locked
+    assert dstore.read("r1") == "d1"
+    dstore.close()
+
+
+@pytest.mark.parametrize("mode", [OVERWRITE, APPEND])
+def test_unlock_reaches_a_lock_in_a_later_state_row(tmp_dir, mode):
+    """the deliberate override clears every lock recorded, not merely row 1"""
+    # clearing one row per call leaves the store refusing after the user has
+    # forced it open, and unlock() reads the lock before clearing it, so a
+    # row it cannot see is a row it never clears
+    from scinexus.misc import get_object_provenance
+
+    path = tmp_dir / "laterrow_unlock.sqlitedb"
+    _abandon_with_a_lock_in_a_later_row(path, f"{os.getpid() + 1}:1")
+
+    dstore = DataStoreSqlite(path, mode=mode)
+    dstore.unlock(force=True)
+
+    assert dstore.read("r1") == "d1"
+    assert dstore._lock_id == _owner_token()
+    # claiming the store collapses the rows the racy version left behind,
+    # keeping row 1 and the record_type it carries
+    rows = dstore._db.execute("SELECT state_id FROM state").fetchall()
+    assert [r["state_id"] for r in rows] == [1]
+    assert dstore.record_type == get_object_provenance(str)
+    dstore.close()
+
+
 def test_the_owner_token_tells_threads_apart():
     """two threads of one process do not produce the same owner"""
     # the main thread's native id equals the pid on Linux, so a token built
