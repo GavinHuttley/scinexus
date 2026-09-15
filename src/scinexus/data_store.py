@@ -204,6 +204,17 @@ class DataStoreABC(LockMixin, ABC):
     @abstractmethod
     def read(self, unique_id: str) -> str | bytes: ...
 
+    def close(self) -> None:
+        """release whatever the store holds open
+
+        Notes
+        -----
+        Does nothing for a store that holds nothing, which is every one but
+        :class:`DataStoreSqlite`. It is defined here so a caller can close
+        what :func:`open_data_store` returned without knowing which backend
+        it got.
+        """
+
     @staticmethod
     def _append_once(
         current: list[DataMemberABC],

@@ -540,6 +540,29 @@ def test_write_leaves_unrelated_not_completed_records(w_dstore):
     assert sorted(p.name for p in nc_dir.glob("*.json")) == ["abc1.json", "nc1.json"]
 
 
+def test_close_a_directory_store(w_dstore):
+    """a directory store can be closed, and holds nothing back afterwards"""
+    # it exists so a caller can close whatever open_data_store returned
+    # without asking which backend it got. a directory store holds no
+    # connection and no lock, so there is nothing for closing to end
+    w_dstore.write(unique_id="c1.fasta", data=">s\nACGT\n")
+
+    w_dstore.close()
+    w_dstore.close()
+
+    assert w_dstore.read("c1.fasta") == ">s\nACGT\n"
+    assert [m.unique_id for m in w_dstore.completed] == ["c1.fasta"]
+
+
+def test_close_a_zipped_store(zipped_basic):
+    """a read only zip store can be closed too"""
+    dstore = ReadOnlyDataStoreZipped(zipped_basic, suffix="fasta")
+
+    dstore.close()
+
+    assert len(dstore.completed) > 0
+
+
 def test_write_read_only_datastore(ro_dstore):
     with pytest.raises(IOError):
         ro_dstore.write(unique_id="brca1.fasta", data="test data")

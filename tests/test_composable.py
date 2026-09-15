@@ -2361,8 +2361,7 @@ def test_apply_to_strings(DATA_DIR, tmp_dir, klass, cast):
     # create paths as strings
     _ = process.apply_to(dstore, show_progress=False)
     assert len(process.data_store.logs) == 1
-    if isinstance(process.data_store, DataStoreSqlite):
-        process.data_store.close()
+    process.data_store.close()
 
 
 @pytest.mark.parametrize("klass", [DataStoreDirectory, DataStoreSqlite])
@@ -2385,8 +2384,7 @@ def test_as_completed_strings(DATA_DIR, tmp_dir, klass, cast):
     # create paths as strings
     got = list(process.as_completed(dstore, show_progress=False))
     assert len(got) > orig_length
-    if isinstance(process.data_store, DataStoreSqlite):
-        process.data_store.close()
+    process.data_store.close()
 
 
 def test_apply_to_non_unique_identifiers(tmp_dir):
@@ -2739,8 +2737,7 @@ def test_apply_to_writes_citations(DATA_DIR, tmp_dir, klass):
     assert len(loaded) >= 1
     titles = [c.title for c in loaded]
     assert "Test Citation" in titles
-    if isinstance(out_dstore, DataStoreSqlite):
-        out_dstore.close()
+    out_dstore.close()
 
 
 @pytest.fixture
