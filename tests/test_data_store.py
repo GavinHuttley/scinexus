@@ -7,7 +7,7 @@ import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from pickle import dumps, loads
 
 import pytest
@@ -659,6 +659,54 @@ def test_an_identifier_containing_the_suffix_keeps_its_stem(w_dstore):
 
     nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
     assert [p.name for p in nc_dir.glob("*")] == ["fasta_seqs.json"]
+
+
+def test_contains_matches_a_member_id_across_separators(w_dstore):
+    """the separator a member id was composed with is not part of the question"""
+    # a member id is str(Path(NOT_COMPLETED_TABLE) / name), which reads
+    # not_completed\\nc1.json on Windows, and the string comparison meant
+    # only the platform's own spelling matched. PureWindowsPath stands in
+    # for the platform, since the parts are what __contains__ compares
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    member = w_dstore.write_not_completed(unique_id="nc1", data=record.to_json())
+
+    assert member.unique_id in w_dstore
+    assert f"./{member.unique_id}" in w_dstore
+    assert PureWindowsPath("not_completed/nc1.json").parts == (
+        PureWindowsPath(r"not_completed\nc1.json").parts
+    )
+
+
+def test_contains_keeps_the_kinds_and_the_case_apart(w_dstore):
+    """`in` names one exact record, not every record sharing its stem"""
+    # PureWindowsPath equality is case insensitive, so comparing Path
+    # objects would make these one record on Windows and two on POSIX
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    w_dstore.write_not_completed(unique_id="nc1", data=record.to_json())
+
+    assert "nc1" not in w_dstore
+    assert "nc1.fasta" not in w_dstore
+    assert str(Path(NOT_COMPLETED_TABLE) / "NC1.json") not in w_dstore
+    assert str(Path(NOT_COMPLETED_TABLE) / "nc1.json") in w_dstore
+
+
+@pytest.mark.parametrize("identifier", [None, 1, Path("nc1.json"), object()])
+def test_contains_says_no_to_what_is_not_an_identifier(
+    w_dstore,
+    zipped_basic,
+    identifier,
+):
+    """a non-string answers False rather than raising"""
+    # the comparison builds a Path from what it is given, and Path(1)
+    # raises, where the plain string comparison this replaced just missed.
+    # both stores, because DataStoreDirectory refuses a non-string in its
+    # own override and the zip store reaches the one in the base class
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    w_dstore.write_not_completed(unique_id="nc1", data=record.to_json())
+    zipped = ReadOnlyDataStoreZipped(zipped_basic, suffix="fasta")
+
+    assert identifier not in w_dstore
+    assert identifier not in zipped
 
 
 def test_a_case_variant_extension_is_a_different_record(w_dstore):

@@ -241,8 +241,26 @@ class DataStoreABC(LockMixin, ABC):
         return len(self.members)
 
     def __contains__(self, identifier: object) -> bool:
-        """whether relative identifier has been stored"""
-        return any(m.unique_id == identifier for m in self)
+        """whether relative identifier has been stored
+
+        Notes
+        -----
+        A member id is composed with pathlib, so on Windows it reads
+        not_completed\\nc1.json, and comparing it to the caller's string
+        meant the forward slash form -- the one the docs use and the one
+        anything written on POSIX produces -- matched nothing.
+
+        The comparison is on Path.parts rather than on Path equality.
+        Path equality is case insensitive on Windows, which would make
+        ID_0.fasta and id_0.fasta the same record on one platform and
+        not the other. Comparing the parts keeps the separator handling
+        and leaves the case alone.
+        """
+        if not isinstance(identifier, str):
+            return False
+
+        wanted = Path(identifier).parts
+        return any(Path(m.unique_id).parts == wanted for m in self)
 
     @abstractmethod
     def read(self, unique_id: str) -> str | bytes: ...
