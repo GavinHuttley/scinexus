@@ -90,7 +90,8 @@ The creation of a writeable data store is specified with `mode="w"`, or (to appe
 
 When you specify a Sqlitedb data store as your output (by using `open_data_store()`) you write multiple records into a single file making distribution easier.
 
-One important issue to note is the process which creates a Sqlitedb "locks" the file. If that process exits unnaturally (e.g. the run that was producing it was interrupted) then the file may remain in a locked state. If the db is in this state, `scinexus` will not modify it unless you explicitly unlock it.
+!!! warning
+    The process which creates a Sqlitedb "locks" the file. If that process exits unnaturally (e.g. the run that was producing it was interrupted) then the file may remain in a locked state. If the db is in this state, `scinexus` will not modify it unless you explicitly unlock it.
 
 ### Closing a Sqlitedb data store
 
@@ -102,9 +103,9 @@ out_dstore = open_data_store("results.sqlitedb", mode="w")
 out_dstore.close()
 ```
 
-A store that is garbage collected without being closed warns you and names the file, because it has left a lock behind that the next run will refuse to write over. Closing ends a store: reading from one afterwards raises rather than returning stale answers.
+A store that is garbage collected without being closed warns you and names the file, because it has left a lock behind that the next run will refuse to write over. Closing a data store ends access to it – trying to read from one afterwards raises an exception rather than returning stale answers.
 
-Directory data stores take no such lock and have no `close()`.
+Directory and zip data stores take no such lock, and closing one does nothing. `close()` is defined on every data store so that code holding whatever `open_data_store()` returned can close it without first asking which kind it got.
 
 This is represented in the display as shown below.
 
@@ -134,7 +135,7 @@ dstore = open_data_store("data/demo-locked.sqlitedb", mode="a")
 dstore.unlock(force=True)
 ```
 
-The store has to be writable, since unlocking writes to it, and a read only store ignores the call. `force=True` is needed when the lock was taken by another process, which is the usual case for a store left behind by an interrupted run. Overriding it is meant to be a deliberate act, because the records in such a store were never confirmed complete.
+The store has to be writable, since unlocking writes to it (a read only store ignores the call). `force=True` is needed when the lock was taken by another process, which is the usual case for a store left behind by an interrupted run. Overriding it is meant to be a deliberate act, because the records in such a store were never confirmed complete.
 
 ## Interrogating run logs
 

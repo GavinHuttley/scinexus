@@ -33,8 +33,17 @@ demo_dstore
 └── ... <the completed members>
 ```
 
-`logs/` stores `scitrack` log files produced by `scinexus` writer apps. `md5/` stores plain text files with the md5 sum of a corresponding data member which are used to check the integrity of the data store.
+`logs/` stores `scitrack` log files produced by `scinexus` writer apps. `md5/` stores plain text files with the md5 sum of a corresponding data member which are used to check the integrity of the data store. A checksum file is named for the record it belongs to and for which kind of record that is: `md5/id_0.cmplt` for a completed record and `md5/id_0.ncmplt` for a not completed one.
+
+!!! note
+    Earlier versions kept both kinds under `md5/id_0.txt`, and reading such a store still works, since `md5()` falls back to that name. `validate()` counts them under `md5_legacy`, and `migrate_checksums()` renames the ones it can attribute:
+
+    ```python { notest }
+    dstore = open_data_store("results", suffix="fasta", mode="w")
+    dstore.migrate_checksums()
+    # {'migrated': 12, 'ambiguous': ['id_3'], 'orphaned': ['id_9'], 'superseded': []}
+    ```
+
+    `migrate_checksums()` needs `mode="w"`, because it rewrites files already in the store. A file is reported rather than renamed in three cases: `ambiguous` when both kinds of record carry its name, since it holds whichever of them wrote last and that was never recorded; `orphaned` when no record carries it; and `superseded` when that record already has a checksum under the current name, which was written for it by this version and so is the one to trust.
 
 The `DataStoreSqlite` stores the same information, just in SQL tables.
-
-
