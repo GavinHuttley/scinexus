@@ -431,12 +431,17 @@ class DataStoreSqlite(DataStoreABC):
         if self._db is None:
             msg = "database connection is unexpectedly None"
             raise RuntimeError(msg)
-        result = self._db.execute("SELECT state_id,lock_pid FROM state").fetchall()
-        locked = result[0]["lock_pid"] if result else None
+        # a store already locked is answered from this read, which needs
+        # only a shared lock. claiming takes the write lock, so going
+        # straight there would make a refusal wait out the busy timeout
+        # behind any writer and then fail as OperationalError
+        locked = self._lock_id
+        if locked is None:
+            locked = self._claim(self._db)
+
         # a lock marks a store whose session did not end through close(), so
         # its records were never confirmed complete. no mode that writes may
         # build on that without being told to
-        # is not None rather than truthy: a lock recorded as 0 is a lock
         if locked is not None:
             msg = (
                 f"You are trying to open {str(self.source)!r} for writing but "
@@ -446,18 +451,49 @@ class DataStoreSqlite(DataStoreABC):
             raise OSError(
                 msg,
             )
-
-        vals: list[object]
-        if result:
-            # we will update an existing
-            state_id = result[0]["state_id"]
-            cmnd = "UPDATE state SET lock_pid=? WHERE state_id=?"
-            vals = [_owner_token(), state_id]
-        else:
-            cmnd = "INSERT INTO state(lock_pid) VALUES (?)"
-            vals = [_owner_token()]
-        self._db.execute(cmnd, tuple(vals))
         self._holds_lock = True
+
+    def _claim(self, db: sqlite3.Connection) -> int | str | None:
+        """record this session as the owner, or report who already is
+
+        Notes
+        -----
+        The read and the write are one transaction. As two statements on a
+        connection in autocommit, sessions starting together each read an
+        unlocked store and each wrote itself in. IMMEDIATE takes the write
+        lock when the transaction opens rather than at its first write, so
+        a second session waits there and then reads what the first
+        committed. The statements are literal because ``isolation_level``
+        is None, which leaves the DB-API transaction methods out of it.
+        """
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            result = db.execute("SELECT state_id,lock_pid FROM state").fetchall()
+            # is not None rather than truthy: a lock recorded as 0 is a lock
+            locked = result[0]["lock_pid"] if result else None
+            if locked is None:
+                vals: list[object]
+                if result:
+                    # we will update an existing
+                    state_id = result[0]["state_id"]
+                    cmnd = "UPDATE state SET lock_pid=? WHERE state_id=?"
+                    vals = [_owner_token(), state_id]
+                else:
+                    cmnd = "INSERT INTO state(lock_pid) VALUES (?)"
+                    vals = [_owner_token()]
+                db.execute(cmnd, tuple(vals))
+            # inside the try: a commit wants an exclusive lock where the
+            # begin wanted a reserved one, so it is the statement here most
+            # likely to be refused, and one left unended strands the
+            # connection in a transaction it can never start another after
+            db.execute("COMMIT")
+        except BaseException:
+            # sqlite ends the transaction itself on some errors, and asking
+            # again then raises over the real failure
+            if db.in_transaction:
+                db.execute("ROLLBACK")
+            raise
+        return locked
 
     def unlock(self, force: bool = False) -> None:
         """remove a lock this session took. If force, remove any. ignored if mode is READONLY

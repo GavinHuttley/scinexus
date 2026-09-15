@@ -1,6 +1,8 @@
+import contextlib
 import gc
 import os
 import sqlite3
+import sys
 import threading
 from pathlib import Path
 from pickle import dumps, loads
@@ -662,6 +664,136 @@ def test_unlock_declines_a_lock_in_the_older_format(tmp_dir):
     assert dstore._lock_id == os.getpid()
     dstore.unlock(force=True)
     assert dstore._lock_id is None
+    dstore.close()
+
+
+_LOCK_RACERS = 8
+_LOCK_ROUNDS = 5
+_LOCK_TIMEOUT = 30
+
+
+def _race_for_the_lock(path):
+    """let several sessions reach for the lock of a fresh store at once
+
+    Returns the rows left in the state table.
+    """
+    open_sqlite_db_rw(path).close()
+    barrier = threading.Barrier(_LOCK_RACERS, timeout=_LOCK_TIMEOUT)
+
+    def claim():
+        store = DataStoreSqlite(path, mode=OVERWRITE)
+        barrier.wait(timeout=_LOCK_TIMEOUT)
+        with contextlib.suppress(OSError, sqlite3.OperationalError):
+            _ = store.db
+        # closed in the thread that opened the connection, which is the
+        # only one sqlite3 will let touch it
+        with contextlib.suppress(sqlite3.Error):
+            store.close()
+
+    threads = [threading.Thread(target=claim) for _ in range(_LOCK_RACERS)]
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=_LOCK_TIMEOUT)
+    finally:
+        sys.setswitchinterval(old_interval)
+
+    raw = sqlite3.connect(path)
+    try:
+        return raw.execute("SELECT state_id FROM state").fetchall()
+    finally:
+        raw.close()
+
+
+@pytest.mark.parametrize("attempt", list(range(_LOCK_ROUNDS)))
+def test_only_one_session_takes_the_lock(tmp_dir, attempt):
+    """sessions racing for a free store leave one state row between them"""
+    # reading the state table and claiming it are one transaction, so a
+    # racer either finds the store free and takes it or finds it taken.
+    # as two statements each racer found it free and inserted its own row,
+    # and since unlock() clears state_id 1 the rest were held for good.
+    # one round in two showed it, so a red case here reruns green: it is
+    # the parametrised set that carries the test, not any single attempt
+    rows = _race_for_the_lock(tmp_dir / f"race{attempt}.sqlitedb")
+
+    assert rows == [(1,)]
+
+
+def test_a_failed_claim_leaves_the_connection_usable(tmp_dir, monkeypatch):
+    """a claim that raises ends its transaction rather than stranding it"""
+    path = tmp_dir / "failclaim.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    dstore.unlock()
+
+    def explode():
+        msg = "no token"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr("scinexus.sqlite_data_store._owner_token", explode)
+    with pytest.raises(RuntimeError):
+        dstore.lock()
+    assert not dstore._db.in_transaction
+
+    monkeypatch.undo()
+    dstore.lock()
+
+    assert dstore._lock_id == _owner_token()
+    dstore.close()
+
+
+def test_a_claim_refused_at_the_commit_leaves_the_store_usable(tmp_dir):
+    """a commit that cannot complete does not strand the connection"""
+    path = tmp_dir / "busycommit.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    dstore.unlock()
+    dstore._db.execute("PRAGMA busy_timeout=100")
+
+    # a reader inside a read transaction blocks the exclusive lock a commit
+    # needs without blocking the reserved one the claim opens with, so the
+    # claim fails at the last statement of the three
+    reader = sqlite3.connect(path, isolation_level=None, timeout=1)
+    reader.execute("BEGIN")
+    reader.execute("SELECT * FROM state").fetchall()
+    try:
+        with pytest.raises(sqlite3.OperationalError):
+            dstore.lock()
+        assert not dstore._db.in_transaction
+    finally:
+        reader.close()
+
+    dstore.lock()
+
+    assert dstore._lock_id == _owner_token()
+    dstore.close()
+
+
+def test_a_locked_store_is_refused_without_waiting_for_the_write_lock(tmp_dir):
+    """the refusal reads the owner, which does not need the write lock"""
+    path = tmp_dir / "refuse.sqlitedb"
+    abandoned = DataStoreSqlite(path, mode=OVERWRITE)
+    abandoned.write(unique_id="r1", data="d1")
+    abandoned._db.execute("UPDATE state SET lock_pid=?", ("999999:999999",))
+    abandoned._db.close()
+    abandoned._db = None
+    abandoned._closed = True
+
+    # another session holding the write lock would make a refusal that
+    # contends for it wait out the busy timeout and fail as OperationalError
+    writer = sqlite3.connect(path, isolation_level=None)
+    writer.execute("BEGIN IMMEDIATE")
+    try:
+        dstore = DataStoreSqlite(path, mode=OVERWRITE)
+        dstore._connection().execute("PRAGMA busy_timeout=30000")
+
+        with pytest.raises(OSError, match="locked by"):
+            dstore.lock()
+    finally:
+        writer.close()
     dstore.close()
 
 
