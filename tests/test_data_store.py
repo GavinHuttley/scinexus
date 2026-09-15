@@ -382,8 +382,8 @@ def test_append_mode_refuses_to_rewrite_a_not_completed_record(w_dstore):
     assert path.read_text() == data
 
 
-def test_append_mode_refuses_to_rewrite_a_compressed_not_completed(w_dstore):
-    """the APPEND refusal follows a compressed identifier to the record it names"""
+def test_append_mode_refuses_to_rewrite_a_respelled_not_completed(w_dstore):
+    """the APPEND refusal follows a respelled identifier to the record it names"""
     # the identifier resolves to nc1.json, so the refusal has to recognise
     # the second write as the record already stored, not as a new one
     data = NotCompleted(
@@ -392,13 +392,13 @@ def test_append_mode_refuses_to_rewrite_a_compressed_not_completed(w_dstore):
         "message",
         source="nc1",
     ).to_json()
-    w_dstore.write_not_completed(unique_id="nc1.json.gz", data=data)
-    assert f"{NOT_COMPLETED_TABLE}/nc1.json" in w_dstore
+    w_dstore.write_not_completed(unique_id="nc1.fasta", data=data)
+    assert str(Path(NOT_COMPLETED_TABLE) / "nc1.json") in w_dstore
 
     w_dstore._mode = APPEND
 
     with pytest.raises(OSError):
-        w_dstore.write_not_completed(unique_id="nc1.json.gz", data="{}")
+        w_dstore.write_not_completed(unique_id="nc1.json", data="{}")
 
 
 def test_write_not_completed_beside_a_colliding_completed_record(write_dir):
@@ -512,21 +512,12 @@ def test_drop_not_completed_by_id_keeps_what_limit_hides(nc_dstore):
 
 @pytest.mark.parametrize(
     "unique_id",
-    [
-        "nc1",
-        "nc1.fasta",
-        "nc1.json",
-        "nc1.txt",
-        "nc1.fasta.gz",
-        "nc1.json.gz",
-        "a.b.fasta",
-    ],
+    ["nc1", "nc1.fasta", "nc1.json", "nc1.txt", "a.b.fasta"],
 )
 def test_write_drops_the_twin_however_the_id_is_spelled(w_dstore, unique_id):
     """the record a write supersedes is found whatever extension the id carries"""
-    # nc1.json.gz belongs here now: the store names the file, so it is
-    # stored as nc1.json like every other spelling. it used to be stored
-    # under its own name, which the *.json scan could not match
+    # a compressed spelling is absent because this store does not write
+    # one, so it is refused rather than stored under some other name
     record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
     w_dstore.write_not_completed(unique_id=unique_id, data=record.to_json())
     nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
@@ -578,12 +569,26 @@ def test_the_two_kinds_of_record_keep_separate_checksums(w_dstore):
     assert w_dstore.md5(nc_id) == get_text_hexdigest(nc_data)
 
 
-@pytest.mark.parametrize("unique_id", ["id_0.fasta", "id_0.fasta.gz"])
+@pytest.mark.parametrize("unique_id", ["id_0", "id_0.fasta.gz"])
+def test_the_checksum_of_a_compressed_record_is_found(tmp_dir, unique_id):
+    """the two-suffix strip agrees across writing, reading and dropping"""
+    # a compressed store is where _record_stem has two suffixes to take
+    # off, so a checksum name built with one of them looks right for
+    # every uncompressed store and fails only here
+    dstore = DataStoreDirectory(tmp_dir / "gz", suffix="fasta.gz", mode=OVERWRITE)
+    data = ">s\nACGT\n"
+
+    dstore.write(unique_id=unique_id, data=data)
+
+    assert dstore.md5(unique_id) == get_text_hexdigest(data)
+
+
+@pytest.mark.parametrize("unique_id", ["id_0", "id_0.fasta", "id_0.genbank"])
 def test_the_checksum_of_a_record_is_found_where_it_was_put(w_dstore, unique_id):
     """writing, reading and dropping agree on where a checksum lives"""
-    # they were three separate computations of the name, and a compressed
-    # identifier made all three disagree. the store now names the file, so
-    # both spellings here are the one record, id_0.fasta
+    # they were three separate computations of the name, and an extension
+    # the store does not use made all three disagree. the store now names
+    # the file, so every spelling here is the one record, id_0.fasta
     data = ">s\nACGT\n"
     w_dstore.write(unique_id=unique_id, data=data)
 
@@ -592,7 +597,7 @@ def test_the_checksum_of_a_record_is_found_where_it_was_put(w_dstore, unique_id)
 
 @pytest.mark.parametrize(
     "unique_id",
-    ["id_0", "id_0.fasta", "id_0.fasta.gz", "id_0.gz", "id_0.genbank"],
+    ["id_0", "id_0.fasta", "id_0.genbank", "id_0.txt"],
 )
 def test_the_store_suffix_decides_the_stored_name(w_dstore, unique_id):
     """however the identifier is spelled, the store names the file"""
@@ -635,7 +640,7 @@ def test_a_compound_suffix_store_writes_compressed(tmp_dir):
 
 @pytest.mark.parametrize(
     "unique_id",
-    ["nc1", "nc1.json", "nc1.json.gz", "nc1.fasta.gz"],
+    ["nc1", "nc1.json", "nc1.fasta", "nc1.txt"],
 )
 def test_a_not_completed_record_is_stored_as_plain_json(w_dstore, unique_id):
     """not-completed records are json whatever the identifier carried"""
@@ -659,6 +664,56 @@ def test_an_identifier_containing_the_suffix_keeps_its_stem(w_dstore):
 
     nc_dir = w_dstore.source / NOT_COMPLETED_TABLE
     assert [p.name for p in nc_dir.glob("*")] == ["fasta_seqs.json"]
+
+
+@pytest.mark.parametrize(
+    "unique_id",
+    [
+        "id_0.fasta.gz",
+        "id_0.gz",
+        "id_0.fasta.bz2",
+        "id_0.gz.fasta",
+        "id_0.bz2.fasta",
+        ".gz",
+    ],
+)
+def test_a_compression_the_store_does_not_write_is_refused(w_dstore, unique_id):
+    """an identifier naming a compression this store does not use is an error"""
+    # the store decides the name, so it cannot honour the request. saying
+    # so beats writing an uncompressed record under a name that claims
+    # otherwise, or a compressed one the store's scan cannot see.
+    # id_0.gz.fasta is here because the claim travels with the name even
+    # when it is not the last thing in it, and .gz because Path.suffixes
+    # reports nothing for a leading-dot name and so saw no claim at all
+    with pytest.raises(ValueError):
+        w_dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+
+@pytest.mark.parametrize("unique_id", ["id_0.fasta.bz2", "id_0.fasta.bz2.gz"])
+def test_another_compression_is_refused_by_a_compressed_store(tmp_dir, unique_id):
+    """a .fasta.gz store does not accept an identifier naming bz2"""
+    dstore = DataStoreDirectory(tmp_dir / "gz", suffix="fasta.gz", mode=OVERWRITE)
+
+    with pytest.raises(ValueError):
+        dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+
+def test_a_compressed_not_completed_identifier_is_refused(w_dstore):
+    """not-completed records are plain json, so a compressed id conflicts"""
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+
+    with pytest.raises(ValueError):
+        w_dstore.write_not_completed(unique_id="nc1.json.gz", data=record.to_json())
+
+
+def test_a_read_only_store_says_so_before_judging_the_identifier(tmp_dir):
+    """being read only is the more fundamental refusal, so it comes first"""
+    source = tmp_dir / "ro"
+    source.mkdir(parents=True)
+    dstore = DataStoreDirectory(source, suffix="fasta", mode=READONLY)
+
+    with pytest.raises(OSError, match="readonly"):
+        dstore.write(unique_id="id_0.fasta.gz", data=">s\nACGT\n")
 
 
 def test_contains_matches_a_member_id_across_separators(w_dstore):

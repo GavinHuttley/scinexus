@@ -17,7 +17,7 @@ from scitrack import get_text_hexdigest  # type: ignore[import-untyped]
 
 from scinexus._sync import LockMixin
 from scinexus.deserialise import deserialise_object
-from scinexus.io_util import get_format_suffixes, open_
+from scinexus.io_util import _compression_handlers, get_format_suffixes, open_
 from scinexus.parallel import is_master_process
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -65,6 +65,73 @@ def _record_stem(unique_id: str) -> str:
         if part:
             stem = stem.removesuffix(f".{part}")
     return stem
+
+
+def _compressions(name: str) -> frozenset[str]:
+    """the compression suffixes this name carries, wherever they sit
+
+    Notes
+    -----
+    Split on the dot rather than read from Path.suffixes, which reports
+    nothing for a leading-dot name: Path(".gz").suffixes is empty, so a
+    ".gz" identifier read as carrying no compression at all and was
+    stored as .gz.fasta, a plain file under a name claiming gzip.
+
+    Everything before the first dot is the stem and is skipped, so an
+    identifier of "gz" stays a record called gz and is not read as a
+    claim about compression.
+    """
+    return frozenset(
+        part.lower()
+        for part in name.split(".")[1:]
+        if part.lower() in _compression_handlers
+    )
+
+
+def _check_compression(unique_id: str, suffix: str) -> None:
+    """raise if the identifier names a compression this suffix does not write
+
+    Parameters
+    ----------
+    unique_id
+        identifier as given by the caller
+    suffix
+        format suffix the record is about to be stored with
+
+    Raises
+    ------
+    ValueError
+        if the two name different compressions, or the identifier names
+        one and the suffix does not
+
+    Notes
+    -----
+    Only a write asks this. The store decides the name, so it cannot
+    honour a compression the caller asks for and the suffix does not
+    give: it would either write an uncompressed record under a name
+    claiming otherwise, or a compressed one under a name its own scan
+    could not match. Saying so beats picking one of those.
+
+    Every component is examined, not just the last one. A name claims a
+    compression wherever it carries one -- id_0.gz.fasta reads as gzip to
+    anything working left to right, and the .gz would survive into the
+    stem and so into the stored name.
+    """
+    asked = _compressions(Path(unique_id).name)
+    stored = _compressions(f"x.{suffix}")
+    # naming none is never a conflict: the suffix supplies whatever
+    # compression there is, and the identifier is only asked not to
+    # contradict it
+    if not asked or asked == stored:
+        return
+
+    named = ", ".join(f".{c}" for c in sorted(asked))
+    carries = ", ".join(f".{c}" for c in sorted(stored)) if stored else "no compression"
+    msg = (
+        f"identifier {unique_id!r} names {named}, but a record stored "
+        f"as .{suffix} carries {carries}"
+    )
+    raise ValueError(msg)
 
 
 def _checksum_name(unique_id: str, *, completed: bool) -> str:
@@ -783,9 +850,14 @@ class DataStoreDirectory(DataStoreABC):
         suffix: str,
         data: str,
     ) -> DataMember | None:
+        given = unique_id
         unique_id, cmp = self._record_name(unique_id, suffix)
         member_id = str(Path(subdir) / unique_id)
+        # super().write refuses a read only store and an APPEND overwrite,
+        # and both are more fundamental than a complaint about the name,
+        # so they answer first
         super().write(unique_id=member_id, data=data)
+        _check_compression(given, suffix)
         # unique_id names a completed record whatever subdir holds, so this
         # can only speak for completed ones
         if not subdir and suffix != "log" and unique_id in self:
@@ -830,9 +902,20 @@ class DataStoreDirectory(DataStoreABC):
         -------
         a member for this record
 
+        Raises
+        ------
+        ValueError
+            if unique_id names a compression this store does not write
+
         Notes
         -----
         Drops any not-completed member corresponding to this identifier
+
+        The store's suffix names the file, so any format suffix on
+        unique_id is replaced by it. A compression suffix is the one part
+        that cannot be replaced silently, because it says how to read the
+        record back, so an identifier naming one the store does not write
+        is refused instead.
         """
         member = self._write(
             subdir="",
@@ -861,6 +944,12 @@ class DataStoreDirectory(DataStoreABC):
         Returns
         -------
         a member for this record
+
+        Raises
+        ------
+        ValueError
+            if unique_id names a compression. These records are written
+            as plain json whatever the store's own suffix is
         """
         (self.source / NOT_COMPLETED_TABLE).mkdir(parents=True, exist_ok=True)
         member = self._write(
@@ -876,6 +965,21 @@ class DataStoreDirectory(DataStoreABC):
         return member  # type: ignore[return-value]
 
     def write_log(self, *, unique_id: str, data: str) -> None:  # type: ignore[override]
+        """writes a log file
+
+        Parameters
+        ----------
+        unique_id
+            unique identifier
+        data
+            text data to be written
+
+        Raises
+        ------
+        ValueError
+            if unique_id names a compression. Logs are written as plain
+            .log whatever the store's own suffix is
+        """
         (self.source / LOG_TABLE).mkdir(parents=True, exist_ok=True)
         _ = self._write(subdir=LOG_TABLE, unique_id=unique_id, suffix="log", data=data)
 
