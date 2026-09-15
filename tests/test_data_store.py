@@ -708,6 +708,42 @@ def test_a_compressed_not_completed_identifier_is_refused(w_dstore):
         w_dstore.write_not_completed(unique_id="nc1.json.gz", data=record.to_json())
 
 
+@pytest.mark.parametrize("unique_id", ["", "   ", "\t", "."])
+def test_an_identifier_with_nothing_to_name_the_record_by_is_refused(
+    w_dstore,
+    unique_id,
+):
+    """a record needs a stem, since the stem is the whole of its identity"""
+    # an empty one gave the file the suffix and nothing else, .fasta in
+    # this store, and a whitespace one gave "   .fasta"
+    with pytest.raises(ValueError):
+        w_dstore.write(unique_id=unique_id, data=">s\nACGT\n")
+
+
+def test_a_store_whose_suffix_is_a_compression_refuses_it_too(tmp_dir):
+    """the store that made this visible refuses it too"""
+    # an empty id here gave a file called .gz holding plain text, so the
+    # name claimed gzip and nothing had compressed it
+    dstore = DataStoreDirectory(tmp_dir / "gz", suffix="gz", mode=OVERWRITE)
+
+    with pytest.raises(ValueError):
+        dstore.write(unique_id="", data="hello")
+
+
+def test_a_not_completed_record_needs_a_stem_too(w_dstore):
+    """the refusal is about the identifier, so it covers every kind"""
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="x")
+
+    with pytest.raises(ValueError):
+        w_dstore.write_not_completed(unique_id="", data=record.to_json())
+
+
+def test_a_log_needs_a_stem_too(w_dstore):
+    """write_log goes through the same naming and the same refusal"""
+    with pytest.raises(ValueError):
+        w_dstore.write_log(unique_id="", data="a log line")
+
+
 def test_a_read_only_store_says_so_before_judging_the_identifier(tmp_dir):
     """being read only is the more fundamental refusal, so it comes first"""
     source = tmp_dir / "ro"

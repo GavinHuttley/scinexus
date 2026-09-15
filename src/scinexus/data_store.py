@@ -104,6 +104,47 @@ def _compressions(name: str) -> frozenset[str]:
     )
 
 
+def _check_identifier(unique_id: str) -> None:
+    """raise if the identifier has nothing to name a record by
+
+    Parameters
+    ----------
+    unique_id
+        identifier as given by the caller
+
+    Raises
+    ------
+    ValueError
+        if the stem the store would put its suffix on is blank
+
+    Notes
+    -----
+    A record is named by its stem, and the store puts the suffix on. An
+    empty identifier therefore asked for a file that is only a suffix:
+    .fasta in a store of .fasta, and in a store of .gz a file called .gz
+    holding plain text, since nothing compressed it. Whitespace did the
+    same, giving "   .fasta".
+
+    The stem is judged as it will be stored, not stripped first. Leading
+    and trailing whitespace is left alone, so " brca1" is stored as
+    " brca1.fasta" and is a different record from "brca1", rather than
+    being approved as one and written as the other.
+
+    Only a directory store asks this. DataStoreSqlite keeps the
+    identifier it is given and has no suffix to put on it, so an empty
+    one names an empty record there rather than a file that is all
+    extension.
+    """
+    if _record_stem(unique_id).strip():
+        return
+
+    msg = (
+        f"identifier {unique_id!r} names no record: the stem the store "
+        "would put its suffix on is blank"
+    )
+    raise ValueError(msg)
+
+
 def _check_compression(unique_id: str, suffix: str) -> None:
     """raise if the identifier names a compression this suffix does not write
 
@@ -877,6 +918,7 @@ class DataStoreDirectory(DataStoreABC):
         # and both are more fundamental than a complaint about the name,
         # so they answer first
         super().write(unique_id=member_id, data=data)
+        _check_identifier(given)
         _check_compression(given, suffix)
         # unique_id names a completed record whatever subdir holds, so this
         # can only speak for completed ones
