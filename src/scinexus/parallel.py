@@ -254,7 +254,7 @@ class MPIBackend(Parallel):
         self._mpi = MPI
         self._comm = COMM
         self._futures = MPIfutures
-        self._size: int = self._comm.Get_attr(self._mpi.UNIVERSE_SIZE)
+        self._size: int = _universe_size(self._comm, self._mpi)
 
     def imap(
         self,
@@ -268,8 +268,7 @@ class MPIBackend(Parallel):
             kwargs.get("if_serial", "raise"),
         )
         self._check_serial(if_serial)
-        max_workers = max_workers or 1
-        max_workers = self._clamp_workers(max_workers)
+        max_workers = _resolve_max_workers_mpi(max_workers, self._size)
         chunksize = _resolve_chunksize(s, max_workers, kwargs.get("chunksize"))
         with self._futures.MPIPoolExecutor(max_workers=max_workers) as executor:
             yield from executor.map(f, s, chunksize=chunksize)
@@ -286,9 +285,8 @@ class MPIBackend(Parallel):
             kwargs.get("if_serial", "raise"),
         )
         self._check_serial(if_serial)
-        max_workers = max_workers or 1
         pickled_f: Callable[[T], R] = PicklableAndCallable(f)
-        max_workers = self._clamp_workers(max_workers)
+        max_workers = _resolve_max_workers_mpi(max_workers, self._size)
         chunksize = _resolve_chunksize(s, max_workers, kwargs.get("chunksize"))
         with self._futures.MPIPoolExecutor(
             max_workers=max_workers,
@@ -320,15 +318,6 @@ class MPIBackend(Parallel):
                 raise RuntimeError(err_msg)
             if if_serial == "warn":
                 warnings.warn(err_msg, UserWarning, stacklevel=4)
-
-    def _clamp_workers(self, max_workers: int) -> int:
-        if max_workers > self._size:
-            warnings.warn(
-                "max_workers too large, reducing to UNIVERSE_SIZE-1",
-                UserWarning,
-                stacklevel=3,
-            )
-        return min(max_workers, self._size - 1)
 
 
 class PicklableAndCallable(Generic[P, R]):
@@ -385,7 +374,7 @@ def _assign_rank_thread() -> None:
         _thread_state.rank = next(_rank_counter)
 
 
-def _check_max_workers_local(max_workers: int | None) -> None:
+def _check_max_workers(max_workers: int | None) -> None:
     """raise unless max_workers is None or an int of at least 1"""
     if max_workers is None:
         return
@@ -394,7 +383,7 @@ def _check_max_workers_local(max_workers: int | None) -> None:
 
 def _resolve_max_workers_local(max_workers: int | None) -> int:
     """resolve max_workers for local (non-MPI) backends"""
-    _check_max_workers_local(max_workers)
+    _check_max_workers(max_workers)
     cpu = multiprocessing.cpu_count()
     if max_workers is None:
         return cpu
@@ -406,9 +395,41 @@ def _resolve_max_workers_local(max_workers: int | None) -> int:
 
 def _clamp_max_workers_local(max_workers: int | None) -> int:
     """clamp max_workers for local as_completed, raising only below one"""
-    _check_max_workers_local(max_workers)
+    _check_max_workers(max_workers)
     if max_workers is None or max_workers > multiprocessing.cpu_count():
         return multiprocessing.cpu_count()
+    return int(max_workers)
+
+
+def _universe_size(comm: Any, mpi: Any) -> int:
+    """return the slots available to this job, or the ranks if it is unset"""
+    # Get_attr answers None for an attribute nobody set, and 1 there would
+    # tell a job of any size that it is running in serial
+    universe_size = comm.Get_attr(mpi.UNIVERSE_SIZE)
+    if universe_size is None:
+        universe_size = comm.Get_size()
+    return int(universe_size)
+
+
+def _resolve_max_workers_mpi(max_workers: int | None, universe_size: int) -> int:
+    """resolve max_workers against UNIVERSE_SIZE, the slots the job may use
+
+    None asks for as many workers as there is room for.
+    """
+    _check_max_workers(max_workers)
+    # the master holds one slot, so the rest bound what can be spawned. a
+    # universe with nothing left still asks for one worker rather than none,
+    # which divided by zero when the chunk size was worked out
+    available = max(int(universe_size) - 1, 1)
+    if max_workers is None:
+        return available
+    if max_workers > available:
+        warnings.warn(
+            f"max_workers too large, reducing to {available}",
+            UserWarning,
+            stacklevel=3,
+        )
+        return available
     return int(max_workers)
 
 
@@ -683,7 +704,7 @@ def get_size() -> int:
 
 
 SIZE = (
-    COMM.Get_attr(MPI.UNIVERSE_SIZE)  # type: ignore[possibly-undefined]
+    _universe_size(COMM, MPI)  # type: ignore[possibly-undefined]
     if USING_MPI
     else multiprocessing.cpu_count()
 )

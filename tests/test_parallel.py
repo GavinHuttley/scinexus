@@ -24,6 +24,8 @@ from scinexus.parallel import (
     _gil_enabled,
     _resolve_chunksize,
     _resolve_max_workers_local,
+    _resolve_max_workers_mpi,
+    _universe_size,
     as_completed,
     get_default_chunksize,
     get_parallel_backend,
@@ -320,6 +322,75 @@ def test_max_workers_numpy_integer_accepted(resolve):
     """a numpy integer is a worker count, and reaches the executor as an int"""
     got = resolve(numpy.int64(1))
     assert got == 1
+    assert type(got) is int
+
+
+def test_resolve_max_workers_mpi_none_fills_the_universe():
+    """None asks for every slot but the master's, as it does locally"""
+    assert _resolve_max_workers_mpi(None, 8) == 7
+
+
+def test_resolve_max_workers_mpi_single_slot_asks_for_one_worker():
+    """a universe with no room to spare still asks for one worker"""
+    assert _resolve_max_workers_mpi(None, 1) == 1
+    with pytest.warns(UserWarning, match="max_workers too large"):
+        assert _resolve_max_workers_mpi(4, 1) == 1
+
+
+def test_resolve_max_workers_mpi_keeps_what_fits():
+    """a request within the universe is passed through untouched"""
+    assert _resolve_max_workers_mpi(3, 8) == 3
+
+
+def test_resolve_max_workers_mpi_warns_at_the_universe_size():
+    """asking for one worker per slot is one more than there is room for"""
+    with pytest.warns(UserWarning, match="max_workers too large"):
+        assert _resolve_max_workers_mpi(8, 8) == 7
+
+
+@pytest.mark.parametrize("max_workers", [-1, 0])
+def test_resolve_max_workers_mpi_below_one_refused(max_workers):
+    """MPI refuses a worker count below one, as the local backends do"""
+    with pytest.raises(ValueError, match=rf"max_workers \({max_workers}\)"):
+        _resolve_max_workers_mpi(max_workers, 8)
+
+
+@pytest.mark.parametrize("max_workers", [True, numpy.True_, 2.5])
+def test_resolve_max_workers_mpi_non_integer_refused(max_workers):
+    """MPI refuses what is not a worker count, as the local backends do"""
+    with pytest.raises(TypeError, match="max_workers must be an int or None"):
+        _resolve_max_workers_mpi(max_workers, 8)
+
+
+def test_resolve_max_workers_mpi_returns_an_int():
+    """a numpy count reaches the executor as an int"""
+    got = _resolve_max_workers_mpi(numpy.int64(3), 8)
+    assert got == 3
+    assert type(got) is int
+
+
+def _fake_comm(universe_size, world_size):
+    return type(
+        "FakeComm",
+        (),
+        {
+            "Get_attr": lambda self, _attr: universe_size,
+            "Get_size": lambda self: world_size,
+        },
+    )()
+
+
+def test_universe_size_reads_the_attribute():
+    """UNIVERSE_SIZE is the answer where it is set"""
+    assert (
+        _universe_size(_fake_comm(6, 4), type("FakeMPI", (), {"UNIVERSE_SIZE": 0})) == 6
+    )
+
+
+def test_universe_size_falls_back_to_the_ranks_launched():
+    """an MPI that leaves UNIVERSE_SIZE unset gives a size, not None"""
+    got = _universe_size(_fake_comm(None, 4), type("FakeMPI", (), {"UNIVERSE_SIZE": 0}))
+    assert got == 4
     assert type(got) is int
 
 
