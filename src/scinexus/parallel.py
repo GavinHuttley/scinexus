@@ -441,7 +441,62 @@ def get_default_chunksize(s: Sized, max_workers: int) -> int:
 
 
 _default_backend: Parallel | None = None
+_default_backend_lock = threading.Lock()
+_auto_selected = False
 _mpi_backend: MPIBackend | None = None
+
+
+def _replace_locks_after_fork() -> None:
+    """give a forked child its own module locks
+
+    A fork copies each lock in whatever state the parent held it, so a child
+    that inherits a held one would wait for an owner that does not exist in
+    it. Registered below on platforms that can fork.
+    """
+    global _default_backend_lock, _rank_lock  # noqa: PLW0603
+    _default_backend_lock = threading.Lock()
+    _rank_lock = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_replace_locks_after_fork)
+
+
+def _gil_enabled() -> bool:
+    """report whether the GIL is currently in force
+
+    ``sys._is_gil_enabled`` arrived in 3.13, so its absence means a build
+    that always has the GIL. On a free-threaded build it can still report
+    ``True``, because ``PYTHON_GIL=1`` forces the GIL on and because
+    importing an extension module that does not declare free-threading
+    support re-enables it.
+    """
+    probe = getattr(sys, "_is_gil_enabled", None)
+    return True if probe is None else bool(probe())
+
+
+def _in_worker_process() -> bool:
+    """report whether this process was started by one of the pool backends
+
+    One question covers every backend that starts processes. loky builds its
+    workers through a ``multiprocessing`` context, so its contexts expose
+    this very function and its workers answer it the same way a spawned
+    worker does.
+    """
+    return multiprocessing.parent_process() is not None
+
+
+def _auto_backend_type() -> BackendType:
+    """the backend to use when the caller has not chosen one
+
+    Threads are worth using only where they can run at the same time, and
+    only in the master process. A spawned or loky worker re-imports this
+    module with no default set, and a thread backend there would describe
+    that worker as rank 0 and as the master, which it is not.
+    """
+    if _gil_enabled() or _in_worker_process():
+        return "multiprocess"
+    return "threads"
 
 
 def _make_backend(backend: BackendType) -> Parallel:
@@ -468,20 +523,35 @@ def set_parallel_backend(
     backend
         a ``Parallel`` instance, a string literal
         (``"multiprocess"``, ``"threads"``, ``"loky"``, or ``"mpi"``),
-        or ``None`` to reset to the default.
+        or ``None`` to choose again according to the interpreter.
+
+    Notes
+    -----
+    A choice made here is honoured until it is changed, which is how to opt
+    out of the thread backend on a free-threaded build. It applies to this
+    process alone, since a worker process does not inherit it.
     """
-    global _default_backend  # noqa: PLW0603
+    global _default_backend, _auto_selected  # noqa: PLW0603
 
     if backend is None or isinstance(backend, Parallel):
-        _default_backend = backend
+        chosen = backend
     elif backend in BACKEND_TYPES:
-        _default_backend = _make_backend(backend)
+        chosen = _make_backend(backend)
     else:
         msg = (
             f"unknown backend {backend!r}, expected 'multiprocess',"
             " 'threads', 'loky', 'mpi', or a Parallel instance"
         )
         raise ValueError(msg)
+
+    # the backend is built before the lock is taken, so that a refused name
+    # or a missing package leaves the current choice alone, and so that no
+    # import runs while the lock is held. the pair is then written together,
+    # or a caller reading between the two stores would see this choice as
+    # one to replace on the next look at the GIL
+    with _default_backend_lock:
+        _default_backend = chosen
+        _auto_selected = False
 
 
 def get_parallel_backend(backend: BackendType | None = None) -> Parallel:
@@ -497,16 +567,32 @@ def get_parallel_backend(backend: BackendType | None = None) -> Parallel:
 
     Returns
     -------
-    `MultiprocessBackend`` when no backend has been set and
-    ``backend is None``.
+    When no backend has been set and ``backend is None``, a
+    ``ThreadBackend`` if the GIL is not in force and a
+    ``MultiprocessBackend`` otherwise.
+
+    Notes
+    -----
+    Left to choose for itself, this asks about the GIL on every call rather
+    than once. Importing an extension module that does not declare
+    free-threading support re-enables the GIL, and that can happen after
+    the first parallel call, which would otherwise leave threads running
+    one at a time for the rest of the process. A backend passed to
+    ``set_parallel_backend`` is never replaced.
     """
     if backend is not None:
         return _make_backend(backend)
 
-    global _default_backend  # noqa: PLW0603
-    if _default_backend is None:
-        _default_backend = MultiprocessBackend()
-    return _default_backend
+    global _default_backend, _auto_selected  # noqa: PLW0603
+    wanted = _auto_backend_type()
+    with _default_backend_lock:
+        stale = _auto_selected and not isinstance(
+            _default_backend, BACKEND_TYPES[wanted]
+        )
+        if _default_backend is None or stale:
+            _default_backend = _make_backend(wanted)
+            _auto_selected = True
+        return _default_backend
 
 
 def _effective_backend() -> Parallel:

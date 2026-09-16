@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+import sys
 import threading
 import time
 from collections.abc import Generator
@@ -19,6 +20,7 @@ from scinexus.parallel import (
     _clamp_max_workers_local,
     _effective_backend,
     _get_rank_thread,
+    _gil_enabled,
     as_completed,
     get_default_chunksize,
     get_parallel_backend,
@@ -53,6 +55,10 @@ def _double(x):
     return x * 2
 
 
+def _getpid(_):
+    return os.getpid()
+
+
 def test_parallel_backend_abc_cannot_instantiate():
     """Parallel cannot be instantiated directly"""
     with pytest.raises(TypeError):
@@ -82,8 +88,13 @@ def test_set_parallel_backend_loky():
     assert isinstance(get_parallel_backend(), LokyBackend)
 
 
-def test_set_parallel_backend_none_resets():
-    """None resets to default"""
+def test_set_parallel_backend_none_resets(monkeypatch):
+    """None resets to default
+
+    The probe is pinned so this tests the reset rather than which build is
+    running the suite.
+    """
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: True)
     set_parallel_backend("loky")
     set_parallel_backend(None)
     assert isinstance(get_parallel_backend(), MultiprocessBackend)
@@ -131,8 +142,9 @@ def test_set_parallel_backend_mpi_not_available():
         set_parallel_backend("mpi")
 
 
-def test_get_parallel_backend_default():
-    """returns MultiprocessBackend when nothing set"""
+def test_get_parallel_backend_default(monkeypatch):
+    """returns MultiprocessBackend when nothing set and the GIL is in force"""
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: True)
     set_parallel_backend(None)
     assert isinstance(get_parallel_backend(), MultiprocessBackend)
 
@@ -509,6 +521,134 @@ def test_get_rank_thread_unknown_thread():
     assert got == [0]
 
 
+@pytest.mark.free_threaded
+def test_gil_enabled_reports_the_probe(monkeypatch):
+    """the probe reports what sys._is_gil_enabled says
+
+    raising=False because 3.11 and 3.12 have no such attribute to replace.
+    """
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: False, raising=False)
+    assert _gil_enabled() is False
+    monkeypatch.setattr(sys, "_is_gil_enabled", lambda: True, raising=False)
+    assert _gil_enabled() is True
+
+
+@pytest.mark.free_threaded
+def test_gil_enabled_without_the_probe(monkeypatch):
+    """an interpreter with no probe always has the GIL
+
+    sys._is_gil_enabled arrived in 3.13, so its absence is the answer.
+    """
+    monkeypatch.delattr(sys, "_is_gil_enabled", raising=False)
+    assert _gil_enabled() is True
+
+
+@pytest.mark.free_threaded
+def test_default_is_threads_without_the_gil(monkeypatch):
+    """the default is a thread backend when the GIL is off"""
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: False)
+    set_parallel_backend(None)
+    assert isinstance(get_parallel_backend(), ThreadBackend)
+
+
+@pytest.mark.free_threaded
+def test_default_is_processes_with_the_gil(monkeypatch):
+    """the default is a process backend when the GIL is on"""
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: True)
+    set_parallel_backend(None)
+    assert isinstance(get_parallel_backend(), MultiprocessBackend)
+
+
+@pytest.mark.free_threaded
+def test_default_is_processes_in_a_worker_process(monkeypatch):
+    """a worker process does not pick threads
+
+    A spawned worker re-imports this module with no default set. A thread
+    backend there would report the worker as rank 0 and as the master.
+    """
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: False)
+    monkeypatch.setattr(multiprocessing, "parent_process", lambda: object())
+    set_parallel_backend(None)
+    assert isinstance(get_parallel_backend(), MultiprocessBackend)
+
+
+@pytest.mark.free_threaded
+def test_default_follows_the_gil_being_switched_back_on(monkeypatch):
+    """the probe runs on each call, not once
+
+    Importing an extension without free-threading support re-enables the
+    GIL, which can happen after the first parallel call.
+    """
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: False)
+    set_parallel_backend(None)
+    assert isinstance(get_parallel_backend(), ThreadBackend)
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: True)
+    assert isinstance(get_parallel_backend(), MultiprocessBackend)
+
+
+@pytest.mark.free_threaded
+def test_chosen_backend_survives_the_gil_being_switched_on(monkeypatch):
+    """an explicit choice is never replaced by the probe"""
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: False)
+    set_parallel_backend("loky")
+    assert isinstance(get_parallel_backend(), LokyBackend)
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: True)
+    assert isinstance(get_parallel_backend(), LokyBackend)
+
+
+@pytest.mark.free_threaded
+def test_default_matches_this_interpreter():
+    """the unpatched default follows the GIL state of the running build
+
+    Every other test here pins the probe, so this is the only one that
+    fails if the choice is wired to the interpreter the wrong way round.
+    """
+    set_parallel_backend(None)
+    gil_on = getattr(sys, "_is_gil_enabled", None) is None or sys._is_gil_enabled()
+    expected = MultiprocessBackend if gil_on else ThreadBackend
+    assert isinstance(get_parallel_backend(), expected)
+
+
+@pytest.mark.free_threaded
+def test_refused_backend_leaves_the_choice_to_be_made_again(monkeypatch):
+    """a call that raises does not stop the GIL being looked at again
+
+    Clearing the automatic flag before the name is validated would leave a
+    thread backend installed and unreplaceable after the GIL came back.
+    """
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: False)
+    set_parallel_backend(None)
+    assert isinstance(get_parallel_backend(), ThreadBackend)
+
+    with pytest.raises(ValueError, match="unknown backend"):
+        set_parallel_backend("thread")  # type: ignore[arg-type]
+
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: True)
+    assert isinstance(get_parallel_backend(), MultiprocessBackend)
+
+
+@pytest.mark.free_threaded
+def test_locks_are_replaced_after_a_fork():
+    """a child gets its own locks rather than the ones the parent held"""
+    before = (parallel._default_backend_lock, parallel._rank_lock)
+    parallel._replace_locks_after_fork()
+    after = (parallel._default_backend_lock, parallel._rank_lock)
+    assert all(new is not old for new, old in zip(after, before, strict=True))
+    assert not any(lock.locked() for lock in after)
+
+
+@pytest.mark.free_threaded
+def test_module_map_runs_in_one_process_without_the_gil(monkeypatch):
+    """the automatic default really runs the work on threads
+
+    Threads share the interpreter, so every worker reports the caller's pid
+    where a process backend would report its own.
+    """
+    monkeypatch.setattr(parallel, "_gil_enabled", lambda: False)
+    set_parallel_backend(None)
+    assert parallel.map(_getpid, range(4)) == [os.getpid()] * 4
+
+
 def test_loky_imap():
     """LokyBackend.imap returns ordered results"""
     backend = LokyBackend()
@@ -549,6 +689,7 @@ def test_loky_get_size():
 )
 def test_create_processes():
     """Processor pool should create multiple distinct processes"""
+    set_parallel_backend("multiprocess")
     max_worker_count = multiprocessing.cpu_count() - 1
     index = list(range(max_worker_count))
     result = parallel.map(get_process_value, index, max_workers=None)
