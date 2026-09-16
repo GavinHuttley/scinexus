@@ -136,8 +136,8 @@ class ThreadBackend(Parallel):
     ``chunksize`` is accepted and ignored, because a thread pool takes one
     task per item and has no per-item transport cost to amortise.
     ``max_workers`` is validated as it is for the process backends, so
-    ``imap`` refuses a value above the CPU count and ``as_completed`` clamps
-    one.
+    ``imap`` refuses a value above the CPU count, ``as_completed`` clamps
+    one, and both refuse a value below one.
 
     Notes
     -----
@@ -380,10 +380,22 @@ def _assign_rank_thread() -> None:
         _thread_state.rank = next(_rank_counter)
 
 
+def _check_max_workers_local(max_workers: int | None) -> None:
+    """raise unless max_workers is None or an int of at least 1"""
+    # bool is a subclass of int, so True would otherwise ask for one worker
+    if isinstance(max_workers, bool):
+        msg = f"max_workers must be an int or None, got {max_workers!r}"
+        raise TypeError(msg)
+    if max_workers is not None and max_workers < 1:
+        msg = f"max_workers ({max_workers}) must be greater than 0"
+        raise ValueError(msg)
+
+
 def _resolve_max_workers_local(max_workers: int | None) -> int:
     """resolve max_workers for local (non-MPI) backends"""
+    _check_max_workers_local(max_workers)
     cpu = multiprocessing.cpu_count()
-    if not max_workers:
+    if max_workers is None:
         return cpu
     if max_workers > cpu:
         msg = f"max_workers ({max_workers}) must be less than or equal to CPU count ({cpu})"
@@ -392,8 +404,9 @@ def _resolve_max_workers_local(max_workers: int | None) -> int:
 
 
 def _clamp_max_workers_local(max_workers: int | None) -> int:
-    """clamp max_workers for local as_completed (silent, no raise)"""
-    if not max_workers or max_workers > multiprocessing.cpu_count():
+    """clamp max_workers for local as_completed, raising only below one"""
+    _check_max_workers_local(max_workers)
+    if max_workers is None or max_workers > multiprocessing.cpu_count():
         return multiprocessing.cpu_count()
     return max_workers
 
@@ -673,7 +686,8 @@ def imap(
     s
         series of inputs to f
     max_workers
-        maximum number of workers. Defaults to 1-maximum available.
+        maximum number of workers, an int of at least 1. Defaults to None,
+        meaning every available CPU. A bool is refused.
     use_mpi
         use MPI for parallel execution. Temporarily switches to
         ``MPIBackend`` for the duration of the call.

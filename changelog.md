@@ -25,6 +25,7 @@ Changes from the original cogent3 app infrastructure.
 - `StrOrBytes` type alias replaced with `str | bytes` throughout.
 - Inline `assert` statements replaced with explicit `ValueError` / `TypeError` raises.
 - Type-hint-related imports moved under `TYPE_CHECKING` for lighter runtime import overhead.
+- `max_workers` below 1 is refused by the local backends with a message naming the value, where it previously reached the executor and surfaced that library's own error. `max_workers=0` was a silent synonym for `None` and is now an error, and a `bool` raises `TypeError` where `True` previously asked for one worker, so `None` is the only way to ask for one worker per CPU. The MPI backend is unchanged and still reads `0` as one worker.
 - `open_()` takes a bare `"r"` or `"w"` as text for every suffix, matching builtin `open` rather than `gzip`, `bz2` and `lzma`, which take a bare mode as binary. Previously `open_(path, "w")` on a `.gz` gave a binary handle and `open_(path, "r")` raised. Use `"rb"` or `"wb"` for bytes. This also applies to `atomic_write`, whose mode defaults to `"w"`.
 
 ## Deprecated

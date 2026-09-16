@@ -23,6 +23,7 @@ from scinexus.parallel import (
     _get_rank_thread,
     _gil_enabled,
     _resolve_chunksize,
+    _resolve_max_workers_local,
     as_completed,
     get_default_chunksize,
     get_parallel_backend,
@@ -272,6 +273,34 @@ def test_clamp_max_workers_local_too_large():
     cpu = multiprocessing.cpu_count()
     result = _clamp_max_workers_local(cpu + 1)
     assert result == cpu
+
+
+@pytest.mark.parametrize(
+    "resolve", [_resolve_max_workers_local, _clamp_max_workers_local]
+)
+@pytest.mark.parametrize("max_workers", [-1, 0])
+def test_max_workers_below_one_refused(resolve, max_workers):
+    """a worker count below one is named in the message we raise"""
+    with pytest.raises(ValueError, match=rf"max_workers \({max_workers}\)"):
+        resolve(max_workers)
+
+
+@pytest.mark.parametrize(
+    "resolve", [_resolve_max_workers_local, _clamp_max_workers_local]
+)
+def test_max_workers_none_is_the_default(resolve):
+    """None still asks for one worker per cpu"""
+    assert resolve(None) == multiprocessing.cpu_count()
+
+
+@pytest.mark.parametrize(
+    "resolve", [_resolve_max_workers_local, _clamp_max_workers_local]
+)
+@pytest.mark.parametrize("max_workers", [True, False])
+def test_max_workers_bool_refused(resolve, max_workers):
+    """a bool is not a worker count, and None is how to ask for every cpu"""
+    with pytest.raises(TypeError, match="must be an int or None"):
+        resolve(max_workers)
 
 
 @pytest.mark.free_threaded
@@ -780,6 +809,16 @@ def test_module_empty_input(backend_name):
     assert list(parallel.imap(_double, [])) == []
     assert parallel.map(_double, []) == []
     assert list(parallel.as_completed(_double, [])) == []
+
+
+@pytest.mark.parametrize("backend_name", _LOCAL_BACKENDS)
+def test_backend_max_workers_below_one(backend_name):
+    """our message reaches the caller rather than the executor's own"""
+    backend = BACKEND_TYPES[backend_name]()
+    with pytest.raises(ValueError, match=r"max_workers \(-1\)"):
+        list(backend.imap(_double, [1], max_workers=-1))
+    with pytest.raises(ValueError, match=r"max_workers \(-1\)"):
+        list(backend.as_completed(_double, [1], max_workers=-1))
 
 
 def test_picklable_and_callable():
