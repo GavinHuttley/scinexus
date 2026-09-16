@@ -11,6 +11,7 @@ import pytest
 
 from scinexus import parallel
 from scinexus.parallel import (
+    BACKEND_TYPES,
     LokyBackend,
     MPIBackend,
     MultiprocessBackend,
@@ -21,6 +22,8 @@ from scinexus.parallel import (
     _effective_backend,
     _get_rank_thread,
     _gil_enabled,
+    _resolve_chunksize,
+    _resolve_max_workers_local,
     as_completed,
     get_default_chunksize,
     get_parallel_backend,
@@ -272,6 +275,34 @@ def test_clamp_max_workers_local_too_large():
     assert result == cpu
 
 
+@pytest.mark.parametrize(
+    "resolve", [_resolve_max_workers_local, _clamp_max_workers_local]
+)
+@pytest.mark.parametrize("max_workers", [-1, 0])
+def test_max_workers_below_one_refused(resolve, max_workers):
+    """a worker count below one is named in the message we raise"""
+    with pytest.raises(ValueError, match=rf"max_workers \({max_workers}\)"):
+        resolve(max_workers)
+
+
+@pytest.mark.parametrize(
+    "resolve", [_resolve_max_workers_local, _clamp_max_workers_local]
+)
+def test_max_workers_none_is_the_default(resolve):
+    """None still asks for one worker per cpu"""
+    assert resolve(None) == multiprocessing.cpu_count()
+
+
+@pytest.mark.parametrize(
+    "resolve", [_resolve_max_workers_local, _clamp_max_workers_local]
+)
+@pytest.mark.parametrize("max_workers", [True, False])
+def test_max_workers_bool_refused(resolve, max_workers):
+    """a bool is not a worker count, and None is how to ask for every cpu"""
+    with pytest.raises(TypeError, match="must be an int or None"):
+        resolve(max_workers)
+
+
 @pytest.mark.free_threaded
 def test_thread_imap():
     """ThreadBackend.imap returns ordered results"""
@@ -351,14 +382,6 @@ def test_thread_max_workers_limits_the_pool():
 
     ranks = set(backend.imap(blocked, range(20), max_workers=2))
     assert len(ranks) == 2
-
-
-@pytest.mark.free_threaded
-def test_thread_empty_input():
-    """an empty input yields nothing rather than raising"""
-    backend = ThreadBackend()
-    assert list(backend.imap(_double, [])) == []
-    assert list(backend.as_completed(_double, [])) == []
 
 
 @pytest.mark.free_threaded
@@ -751,6 +774,84 @@ def test_get_default_chunksize_exact():
 def test_get_default_chunksize_remainder():
     """chunksize rounds up when there is a remainder"""
     assert get_default_chunksize(range(17), 4) == 2
+
+
+def test_get_default_chunksize_empty():
+    """an empty input gives a chunksize an executor will accept"""
+    assert get_default_chunksize([], 1) == 1
+    assert get_default_chunksize([], 6) == 1
+
+
+def test_resolve_chunksize_empty():
+    """the empty case reaches the executor as 1 rather than 0"""
+    assert _resolve_chunksize([], 6, None) == 1
+
+
+def test_resolve_chunksize_keeps_what_the_caller_asked_for():
+    """a valid explicit chunk size is passed through untouched"""
+    assert _resolve_chunksize([1, 2], 6, 3) == 3
+
+
+@pytest.mark.parametrize("chunksize", [-1, 0])
+def test_chunksize_below_one_refused(chunksize):
+    """a chunk size below one is named in the message we raise"""
+    with pytest.raises(ValueError, match=rf"chunksize \({chunksize}\)"):
+        _resolve_chunksize([1, 2], 6, chunksize)
+
+
+@pytest.mark.parametrize("chunksize", [True, False])
+def test_chunksize_bool_refused(chunksize):
+    """a bool is not a chunk size, and None is how to ask for the default"""
+    with pytest.raises(TypeError, match="must be an int or None"):
+        _resolve_chunksize([1, 2], 6, chunksize)
+
+
+_LOCAL_BACKENDS = [
+    "multiprocess",
+    "loky",
+    pytest.param("threads", marks=pytest.mark.free_threaded),
+]
+
+
+@pytest.mark.parametrize("backend_name", _LOCAL_BACKENDS)
+def test_backend_empty_input(backend_name):
+    """an empty input yields nothing rather than raising"""
+    backend = BACKEND_TYPES[backend_name]()
+    assert list(backend.imap(_double, [])) == []
+    assert list(backend.as_completed(_double, [])) == []
+
+
+@pytest.mark.parametrize("backend_name", _LOCAL_BACKENDS)
+def test_module_empty_input(backend_name):
+    """the module functions take an empty input on every local backend"""
+    set_parallel_backend(backend_name)
+    assert list(parallel.imap(_double, [])) == []
+    assert parallel.map(_double, []) == []
+    assert list(parallel.as_completed(_double, [])) == []
+
+
+@pytest.mark.parametrize("backend_name", _LOCAL_BACKENDS)
+def test_backend_chunksize_below_one(backend_name):
+    """every call that accepts a chunk size refuses a bad one
+
+    Only imap on the process backends chunks the work, but as_completed and
+    the thread backend take the argument, so they check it too.
+    """
+    backend = BACKEND_TYPES[backend_name]()
+    with pytest.raises(ValueError, match=r"chunksize \(-1\)"):
+        list(backend.imap(_double, [1], chunksize=-1))
+    with pytest.raises(ValueError, match=r"chunksize \(-1\)"):
+        list(backend.as_completed(_double, [1], chunksize=-1))
+
+
+@pytest.mark.parametrize("backend_name", _LOCAL_BACKENDS)
+def test_backend_max_workers_below_one(backend_name):
+    """our message reaches the caller rather than the executor's own"""
+    backend = BACKEND_TYPES[backend_name]()
+    with pytest.raises(ValueError, match=r"max_workers \(-1\)"):
+        list(backend.imap(_double, [1], max_workers=-1))
+    with pytest.raises(ValueError, match=r"max_workers \(-1\)"):
+        list(backend.as_completed(_double, [1], max_workers=-1))
 
 
 def test_picklable_and_callable():

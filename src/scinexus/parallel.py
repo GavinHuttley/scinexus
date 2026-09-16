@@ -108,6 +108,7 @@ class MultiprocessBackend(Parallel):
         **kwargs: Any,
     ) -> Generator[R]:
         max_workers = _clamp_max_workers_local(max_workers)
+        _check_chunksize(kwargs.get("chunksize"))
         ctx = multiprocessing.get_context("spawn")
         with concurrentfutures.ProcessPoolExecutor(
             max_workers=max_workers, mp_context=ctx
@@ -133,11 +134,11 @@ class ThreadBackend(Parallel):
     lock, and neither the arguments nor the results are pickled, so closures
     and lambdas are accepted where the process backends refuse them.
 
-    ``chunksize`` is accepted and ignored, because a thread pool takes one
-    task per item and has no per-item transport cost to amortise.
+    ``chunksize`` is checked and then ignored, because a thread pool takes
+    one task per item and has no per-item transport cost to amortise.
     ``max_workers`` is validated as it is for the process backends, so
-    ``imap`` refuses a value above the CPU count and ``as_completed`` clamps
-    one.
+    ``imap`` refuses a value above the CPU count, ``as_completed`` clamps
+    one, and both refuse a value below one.
 
     Notes
     -----
@@ -155,6 +156,7 @@ class ThreadBackend(Parallel):
         **kwargs: Any,
     ) -> Generator[R]:
         max_workers = _resolve_max_workers_local(max_workers)
+        _check_chunksize(kwargs.get("chunksize"))
         with concurrentfutures.ThreadPoolExecutor(
             max_workers=max_workers, initializer=_assign_rank_thread
         ) as executor:
@@ -168,6 +170,7 @@ class ThreadBackend(Parallel):
         **kwargs: Any,
     ) -> Generator[R]:
         max_workers = _clamp_max_workers_local(max_workers)
+        _check_chunksize(kwargs.get("chunksize"))
         with concurrentfutures.ThreadPoolExecutor(
             max_workers=max_workers, initializer=_assign_rank_thread
         ) as executor:
@@ -217,6 +220,7 @@ class LokyBackend(Parallel):
         import loky  # type: ignore[import-untyped,import-not-found]
 
         max_workers = _clamp_max_workers_local(max_workers)
+        _check_chunksize(kwargs.get("chunksize"))
         with loky.get_reusable_executor(max_workers=max_workers) as executor:
             to_do = [executor.submit(f, e) for e in s]
             for result in concurrentfutures.as_completed(to_do):
@@ -380,10 +384,22 @@ def _assign_rank_thread() -> None:
         _thread_state.rank = next(_rank_counter)
 
 
+def _check_max_workers_local(max_workers: int | None) -> None:
+    """raise unless max_workers is None or an int of at least 1"""
+    # bool is a subclass of int, so True would otherwise ask for one worker
+    if isinstance(max_workers, bool):
+        msg = f"max_workers must be an int or None, got {max_workers!r}"
+        raise TypeError(msg)
+    if max_workers is not None and max_workers < 1:
+        msg = f"max_workers ({max_workers}) must be greater than 0"
+        raise ValueError(msg)
+
+
 def _resolve_max_workers_local(max_workers: int | None) -> int:
     """resolve max_workers for local (non-MPI) backends"""
+    _check_max_workers_local(max_workers)
     cpu = multiprocessing.cpu_count()
-    if not max_workers:
+    if max_workers is None:
         return cpu
     if max_workers > cpu:
         msg = f"max_workers ({max_workers}) must be less than or equal to CPU count ({cpu})"
@@ -392,8 +408,9 @@ def _resolve_max_workers_local(max_workers: int | None) -> int:
 
 
 def _clamp_max_workers_local(max_workers: int | None) -> int:
-    """clamp max_workers for local as_completed (silent, no raise)"""
-    if not max_workers or max_workers > multiprocessing.cpu_count():
+    """clamp max_workers for local as_completed, raising only below one"""
+    _check_max_workers_local(max_workers)
+    if max_workers is None or max_workers > multiprocessing.cpu_count():
         return multiprocessing.cpu_count()
     return max_workers
 
@@ -404,11 +421,23 @@ def _get_rank_local() -> int:
     return int(process_name.split("-")[-1]) if process_name != "MainProcess" else 0
 
 
+def _check_chunksize(chunksize: int | None) -> None:
+    """raise unless chunksize is None or an int of at least 1"""
+    # bool is a subclass of int, so True would otherwise ask for one item
+    if isinstance(chunksize, bool):
+        msg = f"chunksize must be an int or None, got {chunksize!r}"
+        raise TypeError(msg)
+    if chunksize is not None and chunksize < 1:
+        msg = f"chunksize ({chunksize}) must be greater than 0"
+        raise ValueError(msg)
+
+
 def _resolve_chunksize(
     s: Iterable[Any], max_workers: int, chunksize: int | None
 ) -> int:
     """resolve chunksize, defaulting via get_default_chunksize for Sized inputs"""
-    if not chunksize:
+    _check_chunksize(chunksize)
+    if chunksize is None:
         return get_default_chunksize(s, max_workers) if isinstance(s, Sized) else 1
     return chunksize
 
@@ -437,7 +466,9 @@ def get_default_chunksize(s: Sized, max_workers: int) -> int:
     chunksize, remainder = divmod(len(s), max_workers * 4)
     if remainder:
         chunksize += 1
-    return chunksize
+    # an empty input divides to 0 with no remainder, and the executors that
+    # receive this refuse a chunk size of 0
+    return max(chunksize, 1)
 
 
 _default_backend: Parallel | None = None
@@ -671,7 +702,8 @@ def imap(
     s
         series of inputs to f
     max_workers
-        maximum number of workers. Defaults to 1-maximum available.
+        maximum number of workers, an int of at least 1. Defaults to None,
+        meaning every available CPU. A bool is refused.
     use_mpi
         use MPI for parallel execution. Temporarily switches to
         ``MPIBackend`` for the duration of the call.
@@ -679,8 +711,10 @@ def imap(
         action to take if conditions will result in serial execution. Valid
         values are 'raise', 'ignore', 'warn'. Defaults to 'raise'.
     chunksize
-        Size of data chunks executed by worker processes. Defaults to None
-        where stable chunksize is determined by get_default_chunksize()
+        Size of data chunks executed by worker processes, an int of at least
+        1. Defaults to None, where a stable chunksize is determined by
+        get_default_chunksize(). Checked wherever it is accepted, but only
+        imap on the process and MPI backends chunks the work by it.
 
     Returns
     -------
