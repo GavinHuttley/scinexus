@@ -72,6 +72,13 @@ def open_sqlite_db_rw(path: str | Path) -> sqlite3.Connection:
     -------
     Handle to a sqlite3 session
     """
+    db = _connect_sqlite_db_rw(path)
+    _create_schema(db)
+    return db
+
+
+def _connect_sqlite_db_rw(path: str | Path) -> sqlite3.Connection:
+    """connect for read/write without creating the schema"""
     db = sqlite3.connect(
         path,
         isolation_level=None,
@@ -79,6 +86,11 @@ def open_sqlite_db_rw(path: str | Path) -> sqlite3.Connection:
         check_same_thread=False,
     )
     db.row_factory = sqlite3.Row
+    return db
+
+
+def _create_schema(db: sqlite3.Connection) -> None:
+    """add the store's tables to db, leaving any that are already there"""
     create_template = "CREATE TABLE IF NOT EXISTS {};"
     # note it is essential to use INTEGER for the autoincrement of primary key to work
     creates = [
@@ -89,7 +101,6 @@ def open_sqlite_db_rw(path: str | Path) -> sqlite3.Connection:
     ]
     for table in creates:
         db.execute(create_template.format(table))
-    return db
 
 
 def open_sqlite_db_ro(path: str | Path) -> sqlite3.Connection:
@@ -142,7 +153,8 @@ def has_valid_schema(db: sqlite3.Connection) -> bool:
 class DataStoreSqlite(DataStoreABC):
     """data store backed by a SQLite database
 
-    A store is opened and written by one session and read from any thread.
+    A store is created by the master process, opened and written by one
+    session, and read from any thread.
     It runs its statements one at a time on a single connection, so
     concurrent readers get their own rows back. A caller that takes the
     connection from :attr:`db` and uses it itself is outside that.
@@ -244,11 +256,12 @@ class DataStoreSqlite(DataStoreABC):
         try:
             _ = self.db
         except OSError as refused:
-            # a lock is the only OSError reachable from here: the store
-            # cannot yet be closed, and sqlite's own failures are not
-            # OSError. raising would make the message's own advice
-            # impossible to follow, since it is this store that has to
-            # carry out the release
+            # a lock is the only OSError reachable from the one call site,
+            # which is gated on the master: the store cannot yet be closed,
+            # a worker's refusal to create cannot arise here, and sqlite's
+            # own failures are not OSError. raising would make the message's
+            # own advice impossible to follow, since it is this store that
+            # has to carry out the release
             if warn:
                 warnings.warn(str(refused), UserWarning, stacklevel=2)
 
@@ -269,6 +282,40 @@ class DataStoreSqlite(DataStoreABC):
         )
         raise OSError(msg)
 
+    def _open_rw(self) -> sqlite3.Connection:
+        """open for writing, where only the master process creates the store
+
+        An in-memory store is exempt, having no file to race over.
+        """
+        if self._source == _MEMORY or is_master_process():
+            return open_sqlite_db_rw(self.source)
+
+        # sqlite3.connect creates the file, so this comes before the connect
+        if not Path(self.source).exists():
+            msg = (
+                f"data store {str(self.source)!r} does not exist, and only "
+                "the master process creates one"
+            )
+            raise OSError(msg)
+
+        db = _connect_sqlite_db_rw(self.source)
+        try:
+            # a file that is not a database raises here rather than
+            # answering, and the connection has to go either way
+            valid = has_valid_schema(db)
+        except BaseException:
+            db.close()
+            raise
+        if valid:
+            return db
+
+        db.close()
+        msg = (
+            f"data store {str(self.source)!r} has no schema, and only "
+            "the master process creates one"
+        )
+        raise OSError(msg)
+
     def _connection(self) -> sqlite3.Connection:
         """the connection, opened if it is not already, taking no lock"""
         # the open is under the same lock as every use of what it returns.
@@ -278,10 +325,11 @@ class DataStoreSqlite(DataStoreABC):
         with self._cache_lock:
             self._check_open()
             if self._db is None:
-                db_func = (
-                    open_sqlite_db_ro if self.mode is READONLY else open_sqlite_db_rw
+                self._db = (
+                    open_sqlite_db_ro(self.source)
+                    if self.mode is READONLY
+                    else self._open_rw()
                 )
-                self._db = db_func(self.source)
 
             if self._db is None:
                 msg = "database connection is unexpectedly None"

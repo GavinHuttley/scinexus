@@ -1605,6 +1605,87 @@ def test_a_store_built_off_the_master_claims_nothing_as_it_opens(tmp_dir, monkey
     dstore.close()
 
 
+def _off_the_master(monkeypatch):
+    """report every caller as a worker, as a pool worker would be"""
+    monkeypatch.setattr("scinexus.sqlite_data_store.is_master_process", lambda: False)
+
+
+def test_a_worker_does_not_create_a_store(tmp_dir, monkeypatch):
+    """only the master process creates a store, as for a directory store"""
+    path = tmp_dir / "workermade.sqlitedb"
+    _off_the_master(monkeypatch)
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+
+    with pytest.raises(OSError, match="only the master process"):
+        dstore.write(unique_id="r1", data="d1")
+
+    assert not path.exists()
+
+
+def test_a_worker_does_not_add_a_schema_to_an_empty_file(tmp_dir, monkeypatch):
+    """an empty file is a database with no tables, and stays one"""
+    path = tmp_dir / "noschema.sqlitedb"
+    path.write_text("")
+    _off_the_master(monkeypatch)
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+
+    with pytest.raises(OSError, match="only the master process"):
+        dstore.write(unique_id="r1", data="d1")
+
+
+def test_a_worker_refused_a_file_that_is_no_database_drops_its_connection(
+    tmp_dir, monkeypatch
+):
+    """the schema question raises rather than answering, and still closes"""
+    path = tmp_dir / "notadatabase.sqlitedb"
+    path.write_bytes(b"not a database" * 100)
+    _off_the_master(monkeypatch)
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    opened = []
+    real_connect = sqlite3.connect
+
+    def spy(*args, **kwargs):
+        db = real_connect(*args, **kwargs)
+        opened.append(db)
+        return db
+
+    monkeypatch.setattr(sqlite3, "connect", spy)
+
+    with pytest.raises(sqlite3.DatabaseError):
+        dstore.write(unique_id="r1", data="d1")
+
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError, match="[Cc]losed"):
+        opened[0].execute("SELECT 1")
+
+
+def test_a_worker_writes_to_a_store_the_master_made(tmp_dir, monkeypatch):
+    """the refusal is about creating, not about using"""
+    path = tmp_dir / "mastermade.sqlitedb"
+    seed = DataStoreSqlite(path, mode=OVERWRITE)
+    seed.write(unique_id="r1", data="d1")
+    seed.close()
+    _off_the_master(monkeypatch)
+    dstore = DataStoreSqlite(path, mode=APPEND)
+
+    dstore.write(unique_id="r2", data="d2")
+
+    assert dstore.read("r1") == "d1"
+    assert dstore.read("r2") == "d2"
+    dstore.close()
+
+
+def test_a_worker_creates_an_in_memory_store(monkeypatch):
+    """an in-memory store is reachable from nowhere else, so it is exempt"""
+    _off_the_master(monkeypatch)
+    dstore = DataStoreSqlite(":memory:", mode=OVERWRITE)
+
+    dstore.write(unique_id="r1", data="d1")
+
+    assert dstore.read("r1") == "d1"
+    dstore.close()
+
+
 def test_close_reports_a_lock_it_cannot_release(tmp_dir):
     """a store going away says so if its lock stays behind"""
     # the lock outlives the store that took it, so silence here leaves the
