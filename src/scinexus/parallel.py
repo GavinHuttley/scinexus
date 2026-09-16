@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures as concurrentfutures
 import itertools
 import multiprocessing
+import numbers
 import os
 import sys
 import threading
@@ -386,11 +387,10 @@ def _assign_rank_thread() -> None:
 
 def _check_max_workers_local(max_workers: int | None) -> None:
     """raise unless max_workers is None or an int of at least 1"""
-    # bool is a subclass of int, so True would otherwise ask for one worker
-    if isinstance(max_workers, bool):
-        msg = f"max_workers must be an int or None, got {max_workers!r}"
-        raise TypeError(msg)
-    if max_workers is not None and max_workers < 1:
+    if max_workers is None:
+        return
+    _check_integral(max_workers, "max_workers")
+    if max_workers < 1:
         msg = f"max_workers ({max_workers}) must be greater than 0"
         raise ValueError(msg)
 
@@ -404,7 +404,7 @@ def _resolve_max_workers_local(max_workers: int | None) -> int:
     if max_workers > cpu:
         msg = f"max_workers ({max_workers}) must be less than or equal to CPU count ({cpu})"
         raise ValueError(msg)
-    return max_workers
+    return int(max_workers)
 
 
 def _clamp_max_workers_local(max_workers: int | None) -> int:
@@ -412,7 +412,7 @@ def _clamp_max_workers_local(max_workers: int | None) -> int:
     _check_max_workers_local(max_workers)
     if max_workers is None or max_workers > multiprocessing.cpu_count():
         return multiprocessing.cpu_count()
-    return max_workers
+    return int(max_workers)
 
 
 def _get_rank_local() -> int:
@@ -421,13 +421,21 @@ def _get_rank_local() -> int:
     return int(process_name.split("-")[-1]) if process_name != "MainProcess" else 0
 
 
+def _check_integral(value: object, name: str) -> None:
+    """raise unless value is of an integer type and is not a bool"""
+    # bool is Integral and numpy.bool_ is neither a bool nor Integral, so
+    # one test alone lets one of them through
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        msg = f"{name} must be an int or None, got {value!r}"
+        raise TypeError(msg)
+
+
 def _check_chunksize(chunksize: int | None) -> None:
     """raise unless chunksize is None or an int of at least 1"""
-    # bool is a subclass of int, so True would otherwise ask for one item
-    if isinstance(chunksize, bool):
-        msg = f"chunksize must be an int or None, got {chunksize!r}"
-        raise TypeError(msg)
-    if chunksize is not None and chunksize < 1:
+    if chunksize is None:
+        return
+    _check_integral(chunksize, "chunksize")
+    if chunksize < 1:
         msg = f"chunksize ({chunksize}) must be greater than 0"
         raise ValueError(msg)
 
@@ -439,7 +447,7 @@ def _resolve_chunksize(
     _check_chunksize(chunksize)
     if chunksize is None:
         return get_default_chunksize(s, max_workers) if isinstance(s, Sized) else 1
-    return chunksize
+    return int(chunksize)
 
 
 def _validate_if_serial(
@@ -703,7 +711,8 @@ def imap(
         series of inputs to f
     max_workers
         maximum number of workers, an int of at least 1. Defaults to None,
-        meaning every available CPU. A bool is refused.
+        meaning every available CPU. A bool, and anything else that is not
+        of an integer type, is refused.
     use_mpi
         use MPI for parallel execution. Temporarily switches to
         ``MPIBackend`` for the duration of the call.

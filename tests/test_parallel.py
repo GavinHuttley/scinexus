@@ -303,6 +303,26 @@ def test_max_workers_bool_refused(resolve, max_workers):
         resolve(max_workers)
 
 
+@pytest.mark.parametrize(
+    "resolve", [_resolve_max_workers_local, _clamp_max_workers_local]
+)
+@pytest.mark.parametrize("max_workers", [numpy.True_, numpy.False_, 2.5])
+def test_max_workers_non_integer_refused(resolve, max_workers):
+    """what is not a whole number is refused as a type, not as a range"""
+    with pytest.raises(TypeError, match="must be an int or None"):
+        resolve(max_workers)
+
+
+@pytest.mark.parametrize(
+    "resolve", [_resolve_max_workers_local, _clamp_max_workers_local]
+)
+def test_max_workers_numpy_integer_accepted(resolve):
+    """a numpy integer is a worker count, and reaches the executor as an int"""
+    got = resolve(numpy.int64(1))
+    assert got == 1
+    assert type(got) is int
+
+
 @pytest.mark.free_threaded
 def test_thread_imap():
     """ThreadBackend.imap returns ordered results"""
@@ -804,6 +824,20 @@ def test_chunksize_bool_refused(chunksize):
     """a bool is not a chunk size, and None is how to ask for the default"""
     with pytest.raises(TypeError, match="must be an int or None"):
         _resolve_chunksize([1, 2], 6, chunksize)
+
+
+@pytest.mark.parametrize("chunksize", [numpy.True_, numpy.False_, 2.5])
+def test_chunksize_non_integer_refused(chunksize):
+    """what is not a whole number is refused as a type, not as a range"""
+    with pytest.raises(TypeError, match="must be an int or None"):
+        _resolve_chunksize([1, 2], 6, chunksize)
+
+
+def test_chunksize_numpy_integer_accepted():
+    """a numpy integer is a chunk size, and reaches the executor as an int"""
+    got = _resolve_chunksize([1, 2], 6, numpy.int64(3))
+    assert got == 3
+    assert type(got) is int
 
 
 _LOCAL_BACKENDS = [
