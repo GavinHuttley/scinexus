@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import concurrent.futures as concurrentfutures
+import itertools
 import multiprocessing
 import os
 import sys
+import threading
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Sized
@@ -38,7 +40,7 @@ P = ParamSpec("P")
 R = TypeVar("R")
 T = TypeVar("T")
 
-BackendType = Literal["multiprocess", "loky", "mpi"]
+BackendType = Literal["multiprocess", "threads", "loky", "mpi"]
 
 
 class Parallel(ABC):
@@ -119,6 +121,65 @@ class MultiprocessBackend(Parallel):
 
     def get_rank(self) -> int:
         return _get_rank_local()
+
+    def get_size(self) -> int:
+        return multiprocessing.cpu_count()
+
+
+class ThreadBackend(Parallel):
+    """parallel backend using the stdlib ``concurrent.futures.ThreadPoolExecutor``
+
+    On a free-threaded build the workers run without contending for a global
+    lock, and neither the arguments nor the results are pickled, so closures
+    and lambdas are accepted where the process backends refuse them.
+
+    ``chunksize`` is accepted and ignored, because a thread pool takes one
+    task per item and has no per-item transport cost to amortise.
+    ``max_workers`` is validated as it is for the process backends, so
+    ``imap`` refuses a value above the CPU count and ``as_completed`` clamps
+    one.
+
+    Notes
+    -----
+    Workers share the app instance and everything reachable from it. A
+    ``main`` that mutates ``self``, or that writes module-level state such as
+    the ``numpy.random`` global generator, is a race here where it was
+    harmless under the process backends.
+    """
+
+    def imap(
+        self,
+        f: Callable[[T], R],
+        s: Iterable[T],
+        max_workers: int | None = None,
+        **kwargs: Any,
+    ) -> Generator[R]:
+        max_workers = _resolve_max_workers_local(max_workers)
+        with concurrentfutures.ThreadPoolExecutor(
+            max_workers=max_workers, initializer=_assign_rank_thread
+        ) as executor:
+            yield from executor.map(f, s)
+
+    def as_completed(
+        self,
+        f: Callable[[T], R],
+        s: Iterable[T],
+        max_workers: int | None = None,
+        **kwargs: Any,
+    ) -> Generator[R]:
+        max_workers = _clamp_max_workers_local(max_workers)
+        with concurrentfutures.ThreadPoolExecutor(
+            max_workers=max_workers, initializer=_assign_rank_thread
+        ) as executor:
+            to_do = [executor.submit(f, e) for e in s]
+            for result in concurrentfutures.as_completed(to_do):
+                yield result.result()
+
+    def is_master_process(self) -> bool:
+        return multiprocessing.parent_process() is None and _get_rank_thread() == 0
+
+    def get_rank(self) -> int:
+        return _get_rank_thread()
 
     def get_size(self) -> int:
         return multiprocessing.cpu_count()
@@ -278,10 +339,45 @@ class PicklableAndCallable(Generic[P, R]):
 BACKEND_TYPES: MappingProxyType[BackendType, type[Parallel]] = MappingProxyType(
     {
         "multiprocess": MultiprocessBackend,
+        "threads": ThreadBackend,
         "loky": LokyBackend,
         "mpi": MPIBackend,
     }
 )
+
+_THREAD_BACKEND = ThreadBackend()
+
+_thread_state = threading.local()
+_rank_lock = threading.Lock()
+_rank_counter = itertools.count(1)
+
+
+def _get_rank_thread() -> int:
+    """return the rank of the current thread, 0 for any thread not in a pool
+
+    Rank 0 meaning "not one of our workers" is what lets
+    ``ThreadBackend.is_master_process`` keep reporting master for a thread
+    the caller created, such as a web request handler or a GUI worker. A
+    thread that a worker itself starts is in that group too, so it reports
+    master where the equivalent thread inside a worker process does not.
+    """
+    return int(getattr(_thread_state, "rank", 0))
+
+
+def _assign_rank_thread() -> None:
+    """give the calling thread a rank no other live worker holds
+
+    Used as a ``ThreadPoolExecutor`` initializer. The count runs across
+    pools rather than restarting within each, so nested and concurrent
+    pools cannot hand one rank to two threads that are alive at once, and
+    successive pools number their workers the way successive process pools
+    do: ``multiprocessing`` names them ``SpawnProcess-2``, ``-4``, ``-8``
+    and never returns to 1. The lock keeps the increment atomic without
+    relying on ``itertools.count``, whose atomicity is an implementation
+    detail of CPython rather than a guarantee of the language.
+    """
+    with _rank_lock:
+        _thread_state.rank = next(_rank_counter)
 
 
 def _resolve_max_workers_local(max_workers: int | None) -> int:
@@ -371,8 +467,8 @@ def set_parallel_backend(
     ----------
     backend
         a ``Parallel`` instance, a string literal
-        (``"multiprocess"``, ``"loky"``, or ``"mpi"``),
-        or ``None`` to reset to the default (``MultiprocessBackend``).
+        (``"multiprocess"``, ``"threads"``, ``"loky"``, or ``"mpi"``),
+        or ``None`` to reset to the default.
     """
     global _default_backend  # noqa: PLW0603
 
@@ -383,7 +479,7 @@ def set_parallel_backend(
     else:
         msg = (
             f"unknown backend {backend!r}, expected 'multiprocess',"
-            " 'loky', 'mpi', or a Parallel instance"
+            " 'threads', 'loky', 'mpi', or a Parallel instance"
         )
         raise ValueError(msg)
 
@@ -420,12 +516,21 @@ def _effective_backend() -> Parallel:
     default -- MPI worker processes don't inherit the parent's backend
     setting, and introspection functions like ``get_rank()`` must use the
     MPI communicator to report correctly.
+
+    A thread one of this module's pools started is described by
+    ``ThreadBackend`` for the same reason, whatever the default is. The
+    default records what the caller asked for, not what is running the
+    current thread, so consulting it would have a worker report itself as
+    the master and as rank 0 whenever the pool came from anywhere other
+    than ``set_parallel_backend``.
     """
     global _mpi_backend  # noqa: PLW0603
     if USING_MPI:
         if _mpi_backend is None:
             _mpi_backend = MPIBackend()
         return _mpi_backend
+    if _get_rank_thread():
+        return _THREAD_BACKEND
     return get_parallel_backend()
 
 
@@ -456,6 +561,10 @@ def is_master_process() -> bool:
     In case of Multiprocessing checks if generated
     process name included "ForkProcess" for Windows
     or "SpawnProcess" for POSIX
+
+    In case of threads, a thread the pool created is not the master, and any
+    other thread is. Callers gate the creation of shared resources on this,
+    so a caller's own thread has to keep reporting master.
     """
     return _effective_backend().is_master_process()
 

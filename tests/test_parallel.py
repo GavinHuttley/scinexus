@@ -1,5 +1,6 @@
 import multiprocessing
 import os
+import threading
 import time
 from collections.abc import Generator
 from unittest.mock import patch
@@ -14,8 +15,10 @@ from scinexus.parallel import (
     MultiprocessBackend,
     Parallel,
     PicklableAndCallable,
+    ThreadBackend,
     _clamp_max_workers_local,
     _effective_backend,
+    _get_rank_thread,
     as_completed,
     get_default_chunksize,
     get_parallel_backend,
@@ -255,6 +258,255 @@ def test_clamp_max_workers_local_too_large():
     cpu = multiprocessing.cpu_count()
     result = _clamp_max_workers_local(cpu + 1)
     assert result == cpu
+
+
+@pytest.mark.free_threaded
+def test_thread_imap():
+    """ThreadBackend.imap returns ordered results"""
+    backend = ThreadBackend()
+    data = list(range(10))
+    result = list(backend.imap(_double, data, max_workers=2))
+    assert result == [x * 2 for x in data]
+
+
+@pytest.mark.free_threaded
+def test_thread_as_completed():
+    """ThreadBackend.as_completed returns all results"""
+    backend = ThreadBackend()
+    data = list(range(10))
+    result = sorted(backend.as_completed(_double, data))
+    assert result == sorted(x * 2 for x in data)
+
+
+@pytest.mark.free_threaded
+def test_thread_accepts_closure():
+    """a closure is callable on threads, where pickling would refuse it"""
+    factor = 3
+
+    def scale(x):
+        return x * factor
+
+    backend = ThreadBackend()
+    assert list(backend.imap(scale, [1, 2, 3], max_workers=2)) == [3, 6, 9]
+
+
+@pytest.mark.free_threaded
+def test_thread_max_workers_too_large():
+    """max_workers above cpu_count raises, as it does for processes"""
+    backend = ThreadBackend()
+    n = multiprocessing.cpu_count() + 1
+    with pytest.raises(ValueError, match="must be less than or equal to"):
+        list(backend.imap(_double, [1], max_workers=n))
+
+
+@pytest.mark.free_threaded
+def test_thread_as_completed_max_workers_clamped():
+    """large max_workers makes no more workers than there are cpus
+
+    The pool starts a thread per submitted task until it reaches its limit,
+    so the number of distinct ranks over more tasks than cpus reports what
+    the limit actually was.
+    """
+    backend = ThreadBackend()
+    cpu = multiprocessing.cpu_count()
+    barrier = threading.Barrier(cpu, timeout=30)
+
+    def blocked(_):
+        barrier.wait()
+        return parallel.get_rank()
+
+    ranks = set(backend.as_completed(blocked, range(cpu * 3), max_workers=9999))
+    assert len(ranks) == cpu
+
+
+@pytest.mark.free_threaded
+@pytest.mark.skipif(
+    multiprocessing.cpu_count() < 2, reason="requires at least 2 CPU cores"
+)
+def test_thread_max_workers_limits_the_pool():
+    """max_workers reaches the executor rather than only being validated
+
+    Without it the executor uses its own default, which is larger, so the
+    number of distinct ranks over many tasks would exceed what was asked
+    for.
+    """
+    backend = ThreadBackend()
+    barrier = threading.Barrier(2, timeout=30)
+
+    def blocked(_):
+        barrier.wait()
+        return parallel.get_rank()
+
+    ranks = set(backend.imap(blocked, range(20), max_workers=2))
+    assert len(ranks) == 2
+
+
+@pytest.mark.free_threaded
+def test_thread_empty_input():
+    """an empty input yields nothing rather than raising"""
+    backend = ThreadBackend()
+    assert list(backend.imap(_double, [])) == []
+    assert list(backend.as_completed(_double, [])) == []
+
+
+@pytest.mark.free_threaded
+def test_thread_non_sized_iterable():
+    """a generator input works, having no length to chunk by"""
+    backend = ThreadBackend()
+
+    def gen():
+        yield from range(5)
+
+    result = list(backend.imap(_double, gen(), max_workers=2))
+    assert result == [x * 2 for x in range(5)]
+
+
+@pytest.mark.free_threaded
+def test_thread_get_size():
+    """ThreadBackend.get_size returns cpu_count"""
+    backend = ThreadBackend()
+    assert backend.get_size() == multiprocessing.cpu_count()
+
+
+@pytest.mark.free_threaded
+def test_thread_get_rank_main_thread():
+    """the main thread is rank 0, as the master is for the process backends"""
+    backend = ThreadBackend()
+    assert backend.get_rank() == 0
+
+
+@pytest.mark.free_threaded
+def test_thread_is_master_process_main_thread():
+    """the main thread reports master"""
+    backend = ThreadBackend()
+    assert backend.is_master_process()
+
+
+@pytest.mark.free_threaded
+def test_thread_is_master_process_foreign_thread():
+    """a thread scinexus did not create still reports master
+
+    Someone driving scinexus from a web request handler or a GUI worker is
+    the master, so anything gated on this must keep happening for them.
+    """
+    backend = ThreadBackend()
+    got = []
+    thread = threading.Thread(target=lambda: got.append(backend.is_master_process()))
+    thread.start()
+    thread.join()
+    assert got == [True]
+
+
+@pytest.mark.free_threaded
+@pytest.mark.skipif(
+    multiprocessing.cpu_count() < 2, reason="requires at least 2 CPU cores"
+)
+def test_thread_workers_have_distinct_ranks():
+    """concurrent workers report distinct ranks above 0"""
+    backend = ThreadBackend()
+    barrier = threading.Barrier(2, timeout=30)
+
+    def blocked(_):
+        barrier.wait()
+        return parallel.get_rank()
+
+    ranks = set(backend.imap(blocked, [1, 2], max_workers=2))
+    assert len(ranks) == 2
+    assert min(ranks) > 0
+
+
+@pytest.mark.free_threaded
+@pytest.mark.skipif(
+    multiprocessing.cpu_count() < 2, reason="requires at least 2 CPU cores"
+)
+def test_thread_ranks_are_not_reused_by_a_later_pool():
+    """a second pool's workers hold ranks the first pool's did not
+
+    Two pools can be alive at once, nested or side by side, so a rank
+    restarting at 1 for each pool would be held by two live threads. The
+    process backends never return to 1 either.
+    """
+    backend = ThreadBackend()
+
+    def collect():
+        barrier = threading.Barrier(2, timeout=30)
+
+        def blocked(_):
+            barrier.wait()
+            return parallel.get_rank()
+
+        return set(backend.imap(blocked, [1, 2], max_workers=2))
+
+    first = collect()
+    second = collect()
+    assert len(first) == len(second) == 2
+    assert not (first & second)
+
+
+@pytest.mark.free_threaded
+@pytest.mark.skipif(
+    multiprocessing.cpu_count() < 4, reason="requires at least 4 CPU cores"
+)
+def test_thread_nested_pool_ranks_differ_from_the_outer_worker():
+    """a pool started inside a worker does not reuse the outer rank"""
+    backend = ThreadBackend()
+
+    def inner(_):
+        return parallel.get_rank()
+
+    def outer(_):
+        return (parallel.get_rank(), set(backend.imap(inner, [1, 2], max_workers=2)))
+
+    for outer_rank, inner_ranks in backend.imap(outer, [1, 2], max_workers=2):
+        assert outer_rank not in inner_ranks
+
+
+@pytest.mark.free_threaded
+@pytest.mark.skipif(
+    multiprocessing.cpu_count() < 2, reason="requires at least 2 CPU cores"
+)
+def test_thread_workers_are_not_master():
+    """a worker thread does not report master, so it creates nothing
+
+    The default is left at the process backend on purpose. What describes a
+    worker is the pool that started it, not what the caller registered.
+    """
+    set_parallel_backend("multiprocess")
+    backend = ThreadBackend()
+    barrier = threading.Barrier(2, timeout=30)
+
+    def blocked(_):
+        barrier.wait()
+        return (parallel.is_master_process(), parallel.get_rank())
+
+    got = list(backend.imap(blocked, [1, 2], max_workers=2))
+    assert [is_master for is_master, _ in got] == [False, False]
+    assert all(rank > 0 for _, rank in got)
+
+
+@pytest.mark.free_threaded
+def test_set_parallel_backend_threads():
+    """setting 'threads' returns ThreadBackend"""
+    set_parallel_backend("threads")
+    assert isinstance(get_parallel_backend(), ThreadBackend)
+
+
+@pytest.mark.free_threaded
+def test_get_parallel_backend_with_backend_threads():
+    """returns a ThreadBackend when backend='threads' without changing default"""
+    set_parallel_backend("multiprocess")
+    assert isinstance(get_parallel_backend(backend="threads"), ThreadBackend)
+    assert isinstance(get_parallel_backend(), MultiprocessBackend)
+
+
+@pytest.mark.free_threaded
+def test_get_rank_thread_unknown_thread():
+    """a thread with no rank assigned to it reports 0"""
+    got = []
+    thread = threading.Thread(target=lambda: got.append(_get_rank_thread()))
+    thread.start()
+    thread.join()
+    assert got == [0]
 
 
 def test_loky_imap():
