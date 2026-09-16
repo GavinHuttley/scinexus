@@ -787,6 +787,25 @@ def test_resolve_chunksize_empty():
     assert _resolve_chunksize([], 6, None) == 1
 
 
+def test_resolve_chunksize_keeps_what_the_caller_asked_for():
+    """a valid explicit chunk size is passed through untouched"""
+    assert _resolve_chunksize([1, 2], 6, 3) == 3
+
+
+@pytest.mark.parametrize("chunksize", [-1, 0])
+def test_chunksize_below_one_refused(chunksize):
+    """a chunk size below one is named in the message we raise"""
+    with pytest.raises(ValueError, match=rf"chunksize \({chunksize}\)"):
+        _resolve_chunksize([1, 2], 6, chunksize)
+
+
+@pytest.mark.parametrize("chunksize", [True, False])
+def test_chunksize_bool_refused(chunksize):
+    """a bool is not a chunk size, and None is how to ask for the default"""
+    with pytest.raises(TypeError, match="must be an int or None"):
+        _resolve_chunksize([1, 2], 6, chunksize)
+
+
 _LOCAL_BACKENDS = [
     "multiprocess",
     "loky",
@@ -809,6 +828,20 @@ def test_module_empty_input(backend_name):
     assert list(parallel.imap(_double, [])) == []
     assert parallel.map(_double, []) == []
     assert list(parallel.as_completed(_double, [])) == []
+
+
+@pytest.mark.parametrize("backend_name", _LOCAL_BACKENDS)
+def test_backend_chunksize_below_one(backend_name):
+    """every call that accepts a chunk size refuses a bad one
+
+    Only imap on the process backends chunks the work, but as_completed and
+    the thread backend take the argument, so they check it too.
+    """
+    backend = BACKEND_TYPES[backend_name]()
+    with pytest.raises(ValueError, match=r"chunksize \(-1\)"):
+        list(backend.imap(_double, [1], chunksize=-1))
+    with pytest.raises(ValueError, match=r"chunksize \(-1\)"):
+        list(backend.as_completed(_double, [1], chunksize=-1))
 
 
 @pytest.mark.parametrize("backend_name", _LOCAL_BACKENDS)

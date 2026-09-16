@@ -26,6 +26,7 @@ Changes from the original cogent3 app infrastructure.
 - Inline `assert` statements replaced with explicit `ValueError` / `TypeError` raises.
 - Type-hint-related imports moved under `TYPE_CHECKING` for lighter runtime import overhead.
 - `max_workers` below 1 is refused by the local backends with a message naming the value, where it previously reached the executor and surfaced that library's own error. `max_workers=0` was a silent synonym for `None` and is now an error, and a `bool` raises `TypeError` where `True` previously asked for one worker, so `None` is the only way to ask for one worker per CPU. The MPI backend is unchanged and still reads `0` as one worker.
+- `chunksize` follows the same rule as `max_workers`: below 1 raises `ValueError` and a `bool` raises `TypeError`, where `0` and `False` previously meant "no preference" and `True` asked for one item per chunk. Every call that accepts the argument now checks it, including the ones that go on to ignore it — only `imap` on the process and MPI backends chunks the work by it, since `as_completed` submits one task per item and a thread pool has no per-item transport cost to amortise.
 - `open_()` takes a bare `"r"` or `"w"` as text for every suffix, matching builtin `open` rather than `gzip`, `bz2` and `lzma`, which take a bare mode as binary. Previously `open_(path, "w")` on a `.gz` gave a binary handle and `open_(path, "r")` raised. Use `"rb"` or `"wb"` for bytes. This also applies to `atomic_write`, whose mode defaults to `"w"`.
 
 ## Deprecated
