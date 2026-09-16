@@ -81,9 +81,13 @@ def test_imap_mpi_with_chunksize():
 
 @pytest.mark.mpi
 def test_imap_mpi_max_workers_warning():
-    """max_workers exceeding SIZE should emit a warning"""
+    """a worker count the job cannot change says so and still runs
+
+    mpiexec -n fixed the pool before the program started, so the request
+    cannot be met and the work runs on the pool regardless.
+    """
     data = list(range(10))
-    with pytest.warns(UserWarning, match="max_workers too large"):
+    with pytest.warns(UserWarning, match="this request is not used"):
         result = list(imap(_double, data, use_mpi=True, max_workers=SIZE + 10))
     assert result == [x * 2 for x in data]
 
@@ -143,7 +147,7 @@ def test_imap_mpi_if_serial_raise_size_1():
 
 @pytest.mark.mpi
 def test_imap_mpi_if_serial_warn_size_1():
-    """if_serial='warn' with SIZE==1 warns and the work still runs"""
+    """if_serial='warn' with SIZE==1 warns, and _size alone selects it"""
     backend = parallel.MPIBackend()
     backend._size = 1
     with pytest.warns(UserWarning, match="Execution in serial"):
@@ -172,7 +176,7 @@ def test_as_completed_mpi_invalid_if_serial():
 def test_as_completed_mpi_max_workers_warning():
     """max_workers > SIZE emits warning in _as_completed_mpi"""
     data = list(range(10))
-    with pytest.warns(UserWarning, match="max_workers too large"):
+    with pytest.warns(UserWarning, match="this request is not used"):
         result = sorted(
             as_completed(_double, data, use_mpi=True, max_workers=SIZE + 10)
         )
@@ -269,9 +273,17 @@ def test_as_completed_mpi_non_sized_iterable():
 
 @pytest.mark.mpi
 def test_mpi_get_size():
-    """MPIBackend.get_size returns UNIVERSE_SIZE"""
+    """MPIBackend.get_size returns the module-level SIZE"""
     backend = parallel.MPIBackend()
     assert backend.get_size() == SIZE
+
+
+@pytest.mark.mpi
+def test_mpi_get_size_is_the_pool_the_job_has():
+    """get_size agrees with mpi4py's num_workers, the ground truth here"""
+    backend = parallel.MPIBackend()
+    with backend._futures.MPIPoolExecutor() as executor:
+        assert backend.get_size() == executor.num_workers
 
 
 @pytest.mark.mpi

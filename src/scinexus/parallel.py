@@ -254,7 +254,11 @@ class MPIBackend(Parallel):
         self._mpi = MPI
         self._comm = COMM
         self._futures = MPIfutures
+        # the universe decides whether this is a serial run, the budget
+        # decides how much work can be handed out, and they differ: a job of
+        # 4 ranks on a 6 slot machine has 3 workers
         self._size: int = _universe_size(self._comm, self._mpi)
+        self._workers: int = _worker_budget(self._comm.Get_size())
 
     def imap(
         self,
@@ -268,7 +272,7 @@ class MPIBackend(Parallel):
             kwargs.get("if_serial", "raise"),
         )
         self._check_serial(if_serial)
-        max_workers = _resolve_max_workers_mpi(max_workers, self._size)
+        max_workers = _resolve_max_workers_mpi(max_workers, self._workers)
         chunksize = _resolve_chunksize(s, max_workers, kwargs.get("chunksize"))
         with self._futures.MPIPoolExecutor(max_workers=max_workers) as executor:
             yield from executor.map(f, s, chunksize=chunksize)
@@ -286,7 +290,7 @@ class MPIBackend(Parallel):
         )
         self._check_serial(if_serial)
         pickled_f: Callable[[T], R] = PicklableAndCallable(f)
-        max_workers = _resolve_max_workers_mpi(max_workers, self._size)
+        max_workers = _resolve_max_workers_mpi(max_workers, self._workers)
         _check_chunksize(kwargs.get("chunksize"))
         with self._futures.MPIPoolExecutor(max_workers=max_workers) as executor:
             to_do = [executor.submit(pickled_f, e) for e in s]
@@ -302,7 +306,7 @@ class MPIBackend(Parallel):
         return self._comm.Get_rank()
 
     def get_size(self) -> int:
-        return self._size
+        return self._workers
 
     def _check_serial(self, if_serial: Literal["raise", "ignore", "warn"]) -> None:
         if self._size == 1:
@@ -408,26 +412,31 @@ def _universe_size(comm: Any, mpi: Any) -> int:
     return int(universe_size)
 
 
-def _resolve_max_workers_mpi(max_workers: int | None, universe_size: int) -> int:
-    """resolve max_workers against UNIVERSE_SIZE, the slots the job may use
+def _worker_budget(world_size: int) -> int:
+    """return the number of workers an MPI job has
 
-    None asks for as many workers as there is room for.
+    Rank 0 is the master and hands out the work rather than doing any, so
+    the pool is the rest of the ranks, floored at one.
+    """
+    return max(world_size - 1, 1)
+
+
+def _resolve_max_workers_mpi(max_workers: int | None, budget: int) -> int:
+    """return the budget, reporting a max_workers that disagrees with it
+
+    The count comes from the ranks that were launched, so a request for
+    more workers or for fewer cannot be obeyed.
     """
     _check_max_workers(max_workers)
-    # the master holds one slot, so the rest bound what can be spawned. a
-    # universe with nothing left still asks for one worker rather than none,
-    # which divided by zero when the chunk size was worked out
-    available = max(int(universe_size) - 1, 1)
-    if max_workers is None:
-        return available
-    if max_workers > available:
+    if max_workers is not None and max_workers != budget:
         warnings.warn(
-            f"max_workers too large, reducing to {available}",
+            f"max_workers ({max_workers}) is not the {budget} workers this"
+            " job has. scinexus takes the count from the ranks launched by"
+            " mpiexec -n, so this request is not used.",
             UserWarning,
             stacklevel=3,
         )
-        return available
-    return int(max_workers)
+    return budget
 
 
 def _get_rank_local() -> int:
@@ -701,7 +710,7 @@ def get_size() -> int:
 
 
 SIZE = (
-    _universe_size(COMM, MPI)  # type: ignore[possibly-undefined]
+    _worker_budget(COMM.Get_size())  # type: ignore[possibly-undefined]
     if USING_MPI
     else multiprocessing.cpu_count()
 )

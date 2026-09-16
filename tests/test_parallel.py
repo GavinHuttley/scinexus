@@ -26,6 +26,7 @@ from scinexus.parallel import (
     _resolve_max_workers_local,
     _resolve_max_workers_mpi,
     _universe_size,
+    _worker_budget,
     as_completed,
     get_default_chunksize,
     get_parallel_backend,
@@ -325,27 +326,32 @@ def test_max_workers_numpy_integer_accepted(resolve):
     assert type(got) is int
 
 
-def test_resolve_max_workers_mpi_none_fills_the_universe():
-    """None asks for every slot but the master's, as it does locally"""
-    assert _resolve_max_workers_mpi(None, 8) == 7
+@pytest.mark.parametrize(("world_size", "expect"), [(4, 3), (8, 7), (2, 1), (1, 1)])
+def test_worker_budget(world_size, expect):
+    """the budget is the ranks launched, less the master
+
+    These values come from mpi4py's own num_workers, which this test does
+    not consult. test_mpi_get_size_is_the_pool_the_job_has does.
+    """
+    assert _worker_budget(world_size) == expect
 
 
-def test_resolve_max_workers_mpi_single_slot_asks_for_one_worker():
-    """a universe with no room to spare still asks for one worker"""
+def test_resolve_max_workers_mpi_none_takes_the_pool():
+    """None accepts the pool the job was launched with"""
+    assert _resolve_max_workers_mpi(None, 7) == 7
     assert _resolve_max_workers_mpi(None, 1) == 1
-    with pytest.warns(UserWarning, match="max_workers too large"):
-        assert _resolve_max_workers_mpi(4, 1) == 1
 
 
-def test_resolve_max_workers_mpi_keeps_what_fits():
-    """a request within the universe is passed through untouched"""
-    assert _resolve_max_workers_mpi(3, 8) == 3
+def test_resolve_max_workers_mpi_matching_request_is_quiet():
+    """asking for exactly what the job has is not worth a warning"""
+    assert _resolve_max_workers_mpi(7, 7) == 7
 
 
-def test_resolve_max_workers_mpi_warns_at_the_universe_size():
-    """asking for one worker per slot is one more than there is room for"""
-    with pytest.warns(UserWarning, match="max_workers too large"):
-        assert _resolve_max_workers_mpi(8, 8) == 7
+@pytest.mark.parametrize("max_workers", [3, 8])
+def test_resolve_max_workers_mpi_reports_a_request_it_cannot_meet(max_workers):
+    """a count that is not the pool size is reported, above or below it"""
+    with pytest.warns(UserWarning, match="this request is not used"):
+        assert _resolve_max_workers_mpi(max_workers, 7) == 7
 
 
 @pytest.mark.parametrize("max_workers", [-1, 0])
@@ -362,11 +368,11 @@ def test_resolve_max_workers_mpi_non_integer_refused(max_workers):
         _resolve_max_workers_mpi(max_workers, 8)
 
 
-def test_resolve_max_workers_mpi_returns_an_int():
-    """a numpy count reaches the executor as an int"""
-    got = _resolve_max_workers_mpi(numpy.int64(3), 8)
-    assert got == 3
-    assert type(got) is int
+def test_resolve_max_workers_mpi_accepts_a_numpy_count():
+    """a numpy integer equal to the pool size is a matching request"""
+    # numpy.int64(8) != 8 is numpy.False_, which must be falsy rather than
+    # merely not True for the warning to stay quiet
+    assert _resolve_max_workers_mpi(numpy.int64(8), 8) == 8
 
 
 def _fake_comm(universe_size, world_size):
