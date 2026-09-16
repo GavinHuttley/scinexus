@@ -24,6 +24,7 @@ from scinexus.data_store import (
     _check_identifier,
 )
 from scinexus.misc import extend_docstring_from
+from scinexus.parallel import is_master_process
 
 if TYPE_CHECKING:  # pragma: no cover
     from citeable import CitationBase
@@ -177,6 +178,12 @@ class DataStoreSqlite(DataStoreABC):
         self._db: sqlite3.Connection | None = None
         self._closed = False
         self._log_id: int | None = None
+        self._opened_by = _owner_token()
+        if self._mode is not READONLY and is_master_process():
+            # opening a store for writing is not writing to it: it may be
+            # opened to read, or to release a lock left behind. so a lock
+            # this cannot take is left for the write that meets it to raise
+            self._open_and_claim(warn=False)
 
     def __getstate__(self) -> dict[str, object]:
         return {**self._init_vals}
@@ -227,12 +234,43 @@ class DataStoreSqlite(DataStoreABC):
             msg = f"data store {str(self.source)!r} is closed"
             raise OSError(msg)
 
-    def _connection(self) -> sqlite3.Connection:
-        """the connection, opened if it is not already, taking no lock
+    def _open_and_claim(self, warn: bool = True) -> None:
+        """open the database and take its lock for this session
 
-        Reading who holds the lock, and releasing one, both have to work on
-        a store this session may not write to.
+        A lock another session holds leaves a store that reads but refuses
+        every write until ``unlock(force=True)`` releases it. Reported as a
+        warning unless *warn* is false.
         """
+        try:
+            _ = self.db
+        except OSError as refused:
+            # a lock is the only OSError reachable from here: the store
+            # cannot yet be closed, and sqlite's own failures are not
+            # OSError. raising would make the message's own advice
+            # impossible to follow, since it is this store that has to
+            # carry out the release
+            if warn:
+                warnings.warn(str(refused), UserWarning, stacklevel=2)
+
+    def _check_writing_session(self) -> None:
+        """raise unless this is the session that opened the store
+
+        Reading is open to any thread.
+        """
+        # a write from elsewhere lands on a database this session holds the
+        # lock on, under a log entry it did not open
+        if _owner_token() == self._opened_by:
+            return
+
+        msg = (
+            f"data store {str(self.source)!r} was opened by {self._opened_by}, "
+            f"which is the only session that may write to it. This is "
+            f"{_owner_token()}."
+        )
+        raise OSError(msg)
+
+    def _connection(self) -> sqlite3.Connection:
+        """the connection, opened if it is not already, taking no lock"""
         # the open is under the same lock as every use of what it returns.
         # threads racing this check-then-set each open a database only one
         # of them goes on to use, and every other is orphaned: a descriptor
@@ -257,8 +295,12 @@ class DataStoreSqlite(DataStoreABC):
             # taking the lock is a separate step from opening, and is
             # retried until it succeeds. a refusal that left a connection
             # behind would be taken as proof of a lock by every access
-            # after it
-            if not self._holds_lock:
+            # after it.
+
+            # ownership is thread scoped, so a worker reading a store whose
+            # lock is free must not take one here: the opening session
+            # could then neither write behind it nor release it
+            if not self._holds_lock and _owner_token() == self._opened_by:
                 self.lock()
             return db
 
@@ -329,7 +371,9 @@ class DataStoreSqlite(DataStoreABC):
     def close(self) -> None:
         """release the lock and the connection, ending the store's life
 
-        Waits for any statement another thread has in flight.
+        Waits for any statement another thread has in flight. Warns if the
+        lock is one this session may not release, since the store is going
+        and nothing after it will report the lock left behind.
         """
         with self._cache_lock:
             db: sqlite3.Connection | None = getattr(self, "_db", None)
@@ -341,6 +385,17 @@ class DataStoreSqlite(DataStoreABC):
                 # lock, so one still set marks a store whose session ended
                 # another way
                 self.unlock()
+                # a lock taken by another thread is not this one's to
+                # release, and the store is going, so nothing else will
+                # report it
+                held = self._lock_id if self._holds_lock else None
+                if held is not None and self._source != _MEMORY:
+                    warnings.warn(
+                        f"data store {str(self.source)!r} is still locked by "
+                        f"{held}, call unlock(force=True) before closing to clear it",
+                        UserWarning,
+                        stacklevel=2,
+                    )
             finally:
                 # in a finally so a store whose lock could not be released
                 # is still shut, rather than left usable by the failure
@@ -449,7 +504,11 @@ class DataStoreSqlite(DataStoreABC):
         ------
         ValueError
             if unique_id does not name a record
+        OSError
+            if called from a session other than the one that opened the
+            store
         """
+        self._check_writing_session()
         _check_identifier(unique_id)
         if self._log_id is None:
             self._init_log()
@@ -479,7 +538,14 @@ class DataStoreSqlite(DataStoreABC):
         unique_id
             if provided, only drop the record with this identifier,
             otherwise drop all not-completed records
+
+        Raises
+        ------
+        OSError
+            if called from a session other than the one that opened the
+            store
         """
+        self._check_writing_session()
         vals: tuple[int] | tuple[int, str]
         if not unique_id:
             cmnd = f"DELETE FROM {RESULT_TABLE} WHERE is_completed=?"
@@ -492,16 +558,7 @@ class DataStoreSqlite(DataStoreABC):
 
     @property
     def _lock_id(self) -> int | str | None:
-        """returns lock_pid: an owner token, or a bare pid from an older version
-
-        Notes
-        -----
-        The first lock recorded, not the first row. A version that claimed
-        the store as two statements rather than one transaction inserted a
-        row per session, so a database written by it can carry a lock below
-        a row holding none. ``IS NOT NULL`` rather than a truth test,
-        because a lock recorded as 0 is a lock.
-        """
+        """returns lock_pid: an owner token, or a bare pid from an older version"""
         result = self._fetchone(
             "SELECT lock_pid FROM state WHERE lock_pid IS NOT NULL "
             "ORDER BY state_id LIMIT 1",
@@ -511,26 +568,11 @@ class DataStoreSqlite(DataStoreABC):
 
     @property
     def locked(self) -> bool:
-        """returns if lock_pid is NULL or doesn't exist.
-
-        Notes
-        -----
-        This reports whether the store is locked at all, not whether the
-        caller is the one holding it. Compare ``_lock_id`` against
-        ``_owner_token()`` for that.
-        """
+        """returns if the store is locked at all"""
         return self._lock_id is not None
 
     def lock(self) -> None:
-        """if writable, and not locked, locks the database to this session
-
-        Notes
-        -----
-        Any lock already recorded is refused, whoever holds it, so a store
-        is claimed by one session at a time whether the other is a thread
-        of this process or another process entirely. Ownership is recorded
-        as ``_owner_token()`` and decides only who may release it.
-        """
+        """if writable, and not locked, locks the database to this session"""
         with self._cache_lock:
             self._check_open()
             if self.mode is READONLY:
@@ -561,18 +603,7 @@ class DataStoreSqlite(DataStoreABC):
             self._holds_lock = True
 
     def _claim(self) -> int | str | None:
-        """record this session as the owner, or report who already is
-
-        Notes
-        -----
-        The read and the write are one transaction. As two statements on a
-        connection in autocommit, sessions starting together each read an
-        unlocked store and each wrote itself in. IMMEDIATE takes the write
-        lock when the transaction opens rather than at its first write, so
-        a second session waits there and then reads what the first
-        committed. The statements are literal because ``isolation_level``
-        is None, which leaves the DB-API transaction methods out of it.
-        """
+        """record this session as the owner, or report who already is"""
         # the whole transaction is one region rather than a statement at a
         # time: a thread reading between the BEGIN and the COMMIT reads
         # inside a transaction it knows nothing of. so a BEGIN waiting out
@@ -621,20 +652,7 @@ class DataStoreSqlite(DataStoreABC):
             return locked
 
     def unlock(self, force: bool = False) -> None:
-        """remove a lock this session took. If force, remove any. ignored if mode is READONLY
-
-        Notes
-        -----
-        The owner recorded names a thread as well as a process, so a lock
-        another thread of this process took is not this one's to release
-        without *force*. Nor is one recorded by a version that wrote only a
-        pid, which names a session this one cannot claim to be.
-
-        Every lock recorded is cleared, not merely the one reported. A
-        database written by the two-statement version can hold a lock in
-        more than one row, and clearing them one call at a time leaves the
-        store still refusing after the user has forced it open.
-        """
+        """remove a lock this session took. If force, remove any. ignored if mode is READONLY"""
         with self._cache_lock:
             self._check_open()
             if self.mode is READONLY:
@@ -724,6 +742,7 @@ class DataStoreSqlite(DataStoreABC):
     def write_citations(self, *, data: tuple[CitationBase, ...]) -> None:
         if not data:
             return
+        self._check_writing_session()
         if not self._has_citations_table():
             self._execute(
                 "CREATE TABLE IF NOT EXISTS citations"
@@ -778,6 +797,7 @@ class DataStoreSqlite(DataStoreABC):
     def record_type(self, obj: object) -> None:
         from scinexus.misc import get_object_provenance
 
+        self._check_writing_session()
         rt = self.record_type
         if self.mode is OVERWRITE and rt:
             msg = f"cannot overwrite existing record_type {rt}"

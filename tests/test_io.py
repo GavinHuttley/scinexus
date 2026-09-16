@@ -164,6 +164,8 @@ def test_open_data_store_sqlitedb(tmp_dir):
     path = tmp_dir / "test.sqlitedb"
     dstore = open_data_store(path, mode="w")
     assert isinstance(dstore, DataStoreSqlite)
+    # a writable store holds the lock from the moment it is opened
+    dstore.close()
 
 
 # Tests for top-level scinexus.open_data_store
@@ -180,6 +182,7 @@ def test_toplevel_open_data_store_sqlitedb(tmp_dir):
     path = tmp_dir / "test_toplevel.sqlitedb"
     dstore = scinexus.open_data_store(path, mode="w")
     assert isinstance(dstore, DataStoreSqlite)
+    dstore.close()
 
 
 # Tests for set_summary_display / get_summary_display
