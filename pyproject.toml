@@ -74,6 +74,7 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "mpi: marks tests requiring MPI (run with nox -s testmpi)",
     "internet: marks tests requiring internet access",
+    "free_threaded: marks tests of thread-based parallelism, which run on any build (select with '-m free_threaded')",
 ]
 testpaths = ["tests"]
 

@@ -24,6 +24,7 @@ from scinexus.data_store import (
     _check_identifier,
 )
 from scinexus.misc import extend_docstring_from
+from scinexus.parallel import is_master_process
 
 if TYPE_CHECKING:  # pragma: no cover
     from citeable import CitationBase
@@ -56,6 +57,9 @@ sqlite3.register_converter("timestamp", _datetime_from_iso)
 def open_sqlite_db_rw(path: str | Path) -> sqlite3.Connection:
     """creates a new sqlitedb for read/write at path, can be an in-memory db
 
+    The connection may be used from any thread, so a caller that shares one
+    between threads must serialise its use.
+
     Notes
     -----
     This function embeds the schema. There are three tables:
@@ -72,6 +76,7 @@ def open_sqlite_db_rw(path: str | Path) -> sqlite3.Connection:
         path,
         isolation_level=None,
         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
+        check_same_thread=False,
     )
     db.row_factory = sqlite3.Row
     create_template = "CREATE TABLE IF NOT EXISTS {};"
@@ -89,6 +94,10 @@ def open_sqlite_db_rw(path: str | Path) -> sqlite3.Connection:
 
 def open_sqlite_db_ro(path: str | Path) -> sqlite3.Connection:
     """returns db opened as read only
+
+    The connection may be used from any thread, so a caller that shares one
+    between threads must serialise its use.
+
     Returns
     -------
     Handle to a sqlite3 session
@@ -98,6 +107,7 @@ def open_sqlite_db_ro(path: str | Path) -> sqlite3.Connection:
         isolation_level=None,
         detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES,
         uri=True,
+        check_same_thread=False,
     )
     db.row_factory = sqlite3.Row
     if not has_valid_schema(db):
@@ -130,7 +140,13 @@ def has_valid_schema(db: sqlite3.Connection) -> bool:
 
 
 class DataStoreSqlite(DataStoreABC):
-    """data store backed by a SQLite database"""
+    """data store backed by a SQLite database
+
+    A store is opened and written by one session and read from any thread.
+    It runs its statements one at a time on a single connection, so
+    concurrent readers get their own rows back. A caller that takes the
+    connection from :attr:`db` and uses it itself is outside that.
+    """
 
     store_suffix = "sqlitedb"
 
@@ -162,6 +178,12 @@ class DataStoreSqlite(DataStoreABC):
         self._db: sqlite3.Connection | None = None
         self._closed = False
         self._log_id: int | None = None
+        self._opened_by = _owner_token()
+        if self._mode is not READONLY and is_master_process():
+            # opening a store for writing is not writing to it: it may be
+            # opened to read, or to release a lock left behind. so a lock
+            # this cannot take is left for the write that meets it to raise
+            self._open_and_claim(warn=False)
 
     def __getstate__(self) -> dict[str, object]:
         return {**self._init_vals}
@@ -212,60 +234,178 @@ class DataStoreSqlite(DataStoreABC):
             msg = f"data store {str(self.source)!r} is closed"
             raise OSError(msg)
 
-    def _connection(self) -> sqlite3.Connection:
-        """the connection, opened if it is not already, taking no lock
+    def _open_and_claim(self, warn: bool = True) -> None:
+        """open the database and take its lock for this session
 
-        Reading who holds the lock, and releasing one, both have to work on
-        a store this session may not write to.
+        A lock another session holds leaves a store that reads but refuses
+        every write until ``unlock(force=True)`` releases it. Reported as a
+        warning unless *warn* is false.
         """
-        self._check_open()
-        if self._db is None:
-            db_func = open_sqlite_db_ro if self.mode is READONLY else open_sqlite_db_rw
-            self._db = db_func(self.source)
+        try:
+            _ = self.db
+        except OSError as refused:
+            # a lock is the only OSError reachable from here: the store
+            # cannot yet be closed, and sqlite's own failures are not
+            # OSError. raising would make the message's own advice
+            # impossible to follow, since it is this store that has to
+            # carry out the release
+            if warn:
+                warnings.warn(str(refused), UserWarning, stacklevel=2)
 
-        if self._db is None:
-            msg = "database connection is unexpectedly None"
-            raise ValueError(msg)
-        return self._db
+    def _check_writing_session(self) -> None:
+        """raise unless this is the session that opened the store
+
+        Reading is open to any thread.
+        """
+        # a write from elsewhere lands on a database this session holds the
+        # lock on, under a log entry it did not open
+        if _owner_token() == self._opened_by:
+            return
+
+        msg = (
+            f"data store {str(self.source)!r} was opened by {self._opened_by}, "
+            f"which is the only session that may write to it. This is "
+            f"{_owner_token()}."
+        )
+        raise OSError(msg)
+
+    def _connection(self) -> sqlite3.Connection:
+        """the connection, opened if it is not already, taking no lock"""
+        # the open is under the same lock as every use of what it returns.
+        # threads racing this check-then-set each open a database only one
+        # of them goes on to use, and every other is orphaned: a descriptor
+        # and a page cache nothing will close
+        with self._cache_lock:
+            self._check_open()
+            if self._db is None:
+                db_func = (
+                    open_sqlite_db_ro if self.mode is READONLY else open_sqlite_db_rw
+                )
+                self._db = db_func(self.source)
+
+            if self._db is None:
+                msg = "database connection is unexpectedly None"
+                raise ValueError(msg)
+            return self._db
 
     @property
     def db(self) -> sqlite3.Connection:
-        db = self._connection()
-        # taking the lock is a separate step from opening, and is retried
-        # until it succeeds. a refusal that left a connection behind would
-        # be taken as proof of a lock by every access after it
-        if not self._holds_lock:
-            self.lock()
-        return db
+        with self._cache_lock:
+            db = self._connection()
+            # taking the lock is a separate step from opening, and is
+            # retried until it succeeds. a refusal that left a connection
+            # behind would be taken as proof of a lock by every access
+            # after it.
+
+            # ownership is thread scoped, so a worker reading a store whose
+            # lock is free must not take one here: the opening session
+            # could then neither write behind it nor release it
+            if not self._holds_lock and _owner_token() == self._opened_by:
+                self.lock()
+            return db
+
+    def _db_for(self, *, claim: bool) -> sqlite3.Connection:
+        """the connection, claiming the store's lock unless told not to
+
+        ``claim=False`` reaches a store this session may not write to.
+        """
+        return self.db if claim else self._connection()
+
+    def _execute(
+        self,
+        sql: str,
+        params: tuple[Any, ...] = (),
+        *,
+        claim: bool = True,
+    ) -> None:
+        """run a statement on the store's connection"""
+        # a connection carries a statement cache that CPython keys by the
+        # text of the statement and shares between threads without
+        # protection, so two threads running one SELECT with different
+        # parameters bind the same statement and read each other's rows.
+        # every statement here and in _claim is taken under this lock
+        with self._cache_lock:
+            self._db_for(claim=claim).execute(sql, params)
+
+    def _fetchone(
+        self,
+        sql: str,
+        params: tuple[Any, ...] = (),
+        *,
+        claim: bool = True,
+    ) -> Any:  # noqa: ANN401
+        """the first row of a statement, or None if it produced none"""
+        with self._cache_lock:
+            cursor = self._db_for(claim=claim).execute(sql, params)
+            try:
+                return cursor.fetchone()
+            finally:
+                # a statement left part way through a scan is still checked
+                # out of the cache, which is the state another thread trips
+                # over, so the cursor goes before the lock does
+                cursor.close()
+
+    def _fetchall(
+        self,
+        sql: str,
+        params: tuple[Any, ...] = (),
+        *,
+        claim: bool = True,
+    ) -> list[Any]:
+        """every row of a statement"""
+        with self._cache_lock:
+            cursor = self._db_for(claim=claim).execute(sql, params)
+            try:
+                return cursor.fetchall()
+            finally:
+                cursor.close()
 
     def _init_log(self) -> None:
         timestamp = datetime.datetime.now(tz=datetime.UTC)
-        self.db.execute(f"INSERT INTO {LOG_TABLE}(date) VALUES (?)", (timestamp,))
-        self._log_id = self.db.execute(
+        self._execute(f"INSERT INTO {LOG_TABLE}(date) VALUES (?)", (timestamp,))
+        self._log_id = self._fetchone(
             f"SELECT log_id FROM {LOG_TABLE} where date = ?",
             (timestamp,),
-        ).fetchone()["log_id"]
+        )["log_id"]
 
     def close(self) -> None:
-        """release the lock and the connection, ending the store's life"""
-        db: sqlite3.Connection | None = getattr(self, "_db", None)
-        if db is None:
-            self._closed = True
-            return
-        try:
-            # an explicit close is the only thing that releases the lock, so
-            # one still set marks a store whose session ended another way
-            self.unlock()
-        finally:
-            # in a finally so a store whose lock could not be released is
-            # still shut, rather than left usable by the failure
-            self._db = None
-            self._closed = True
-            # all three describe the connection that is going
-            self._log_id = None
-            self._completed = []
-            self._not_completed = []
-            db.close()
+        """release the lock and the connection, ending the store's life
+
+        Waits for any statement another thread has in flight. Warns if the
+        lock is one this session may not release, since the store is going
+        and nothing after it will report the lock left behind.
+        """
+        with self._cache_lock:
+            db: sqlite3.Connection | None = getattr(self, "_db", None)
+            if db is None:
+                self._closed = True
+                return
+            try:
+                # an explicit close is the only thing that releases the
+                # lock, so one still set marks a store whose session ended
+                # another way
+                self.unlock()
+                # a lock taken by another thread is not this one's to
+                # release, and the store is going, so nothing else will
+                # report it
+                held = self._lock_id if self._holds_lock else None
+                if held is not None and self._source != _MEMORY:
+                    warnings.warn(
+                        f"data store {str(self.source)!r} is still locked by "
+                        f"{held}, call unlock(force=True) before closing to clear it",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+            finally:
+                # in a finally so a store whose lock could not be released
+                # is still shut, rather than left usable by the failure
+                self._db = None
+                self._closed = True
+                # all three describe the connection that is going
+                self._log_id = None
+                self._completed = []
+                self._not_completed = []
+                db.close()
 
     def read(self, unique_id: str) -> str | bytes:
         """
@@ -282,32 +422,36 @@ class DataStoreSqlite(DataStoreABC):
 
         if table_name != LOG_TABLE:
             cmnd = f"SELECT * FROM {RESULT_TABLE} WHERE record_id = ?"
-            result = self.db.execute(cmnd, (uid_path.name,)).fetchone()
+            result = self._fetchone(cmnd, (uid_path.name,))
             return result["data"]
 
         cmnd = f"SELECT * FROM {LOG_TABLE} WHERE log_name = ?"
-        result = self.db.execute(cmnd, (uid_path.name,)).fetchone()
+        result = self._fetchone(cmnd, (uid_path.name,))
 
         return result["data"]
 
     @property
     def completed(self) -> list[DataMemberABC]:
-        if not self._completed:
-            self._completed = self._select_members(
-                table_name=RESULT_TABLE,
-                is_completed=True,
-            )
-        return self._completed
+        # the lock spans check, scan and publish, so concurrent readers make
+        # one scan between them rather than one each
+        with self._cache_lock:
+            if not self._completed:
+                self._completed = self._select_members(
+                    table_name=RESULT_TABLE,
+                    is_completed=True,
+                )
+            return self._completed
 
     @property
     def not_completed(self) -> list[DataMemberABC]:
         """returns database records of type NotCompleted"""
-        if not self._not_completed:
-            self._not_completed = self._select_members(
-                table_name=RESULT_TABLE,
-                is_completed=False,
-            )
-        return self._not_completed
+        with self._cache_lock:
+            if not self._not_completed:
+                self._not_completed = self._select_members(
+                    table_name=RESULT_TABLE,
+                    is_completed=False,
+                )
+            return self._not_completed
 
     def _select_members(
         self,
@@ -316,22 +460,19 @@ class DataStoreSqlite(DataStoreABC):
         is_completed: bool,
     ) -> list[DataMemberABC]:
         limit = f"LIMIT {self.limit}" if self.limit else ""
-        cmnd = self.db.execute(
+        rows = self._fetchall(
             f"SELECT record_id FROM {table_name} WHERE is_completed=? {limit}",
             (is_completed,),
         )
-        return [
-            DataMember(data_store=self, unique_id=r["record_id"])
-            for r in cmnd.fetchall()
-        ]
+        return [DataMember(data_store=self, unique_id=r["record_id"]) for r in rows]
 
     @property
     def logs(self) -> list[DataMemberABC]:
         """returns all log records"""
-        cmnd = self.db.execute(f"SELECT log_name FROM {LOG_TABLE}")
+        rows = self._fetchall(f"SELECT log_name FROM {LOG_TABLE}")
         return [
             DataMember(data_store=self, unique_id=Path(LOG_TABLE) / r["log_name"])
-            for r in cmnd.fetchall()
+            for r in rows
             if r["log_name"]
         ]
 
@@ -363,7 +504,11 @@ class DataStoreSqlite(DataStoreABC):
         ------
         ValueError
             if unique_id does not name a record
+        OSError
+            if called from a session other than the one that opened the
+            store
         """
+        self._check_writing_session()
         _check_identifier(unique_id)
         if self._log_id is None:
             self._init_log()
@@ -371,17 +516,17 @@ class DataStoreSqlite(DataStoreABC):
         if table_name == LOG_TABLE:
             # TODO how to evaluate whether writing a new log?
             cmnd = f"UPDATE {table_name} SET data =?, log_name =? WHERE log_id=?"
-            self.db.execute(cmnd, (data, unique_id, self._log_id))
+            self._execute(cmnd, (data, unique_id, self._log_id))
             return None
 
         md5 = get_text_hexdigest(data)
 
         if unique_id in self and self.mode is not APPEND:
             cmnd = f"UPDATE {table_name} SET data= ?, log_id=?, md5=? WHERE record_id=?"
-            self.db.execute(cmnd, (data, self._log_id, md5, unique_id))
+            self._execute(cmnd, (data, self._log_id, md5, unique_id))
         else:
             cmnd = f"INSERT INTO {table_name} (record_id,data,log_id,md5,is_completed) VALUES (?,?,?,?,?)"
-            self.db.execute(cmnd, (unique_id, data, self._log_id, md5, is_completed))
+            self._execute(cmnd, (unique_id, data, self._log_id, md5, is_completed))
 
         return DataMember(data_store=self, unique_id=unique_id)
 
@@ -393,7 +538,14 @@ class DataStoreSqlite(DataStoreABC):
         unique_id
             if provided, only drop the record with this identifier,
             otherwise drop all not-completed records
+
+        Raises
+        ------
+        OSError
+            if called from a session other than the one that opened the
+            store
         """
+        self._check_writing_session()
         vals: tuple[int] | tuple[int, str]
         if not unique_id:
             cmnd = f"DELETE FROM {RESULT_TABLE} WHERE is_completed=?"
@@ -401,165 +553,121 @@ class DataStoreSqlite(DataStoreABC):
         else:
             cmnd = f"DELETE FROM {RESULT_TABLE} WHERE is_completed=? AND record_id=?"
             vals = (0, unique_id)
-        self.db.execute(cmnd, vals)
+        self._execute(cmnd, vals)
         self._not_completed = []
 
     @property
     def _lock_id(self) -> int | str | None:
-        """returns lock_pid: an owner token, or a bare pid from an older version
-
-        Notes
-        -----
-        The first lock recorded, not the first row. A version that claimed
-        the store as two statements rather than one transaction inserted a
-        row per session, so a database written by it can carry a lock below
-        a row holding none. ``IS NOT NULL`` rather than a truth test,
-        because a lock recorded as 0 is a lock.
-        """
-        result = (
-            self._connection()
-            .execute(
-                "SELECT lock_pid FROM state WHERE lock_pid IS NOT NULL "
-                "ORDER BY state_id LIMIT 1",
-            )
-            .fetchone()
+        """returns lock_pid: an owner token, or a bare pid from an older version"""
+        result = self._fetchone(
+            "SELECT lock_pid FROM state WHERE lock_pid IS NOT NULL "
+            "ORDER BY state_id LIMIT 1",
+            claim=False,
         )
         return result[0] if result else None
 
     @property
     def locked(self) -> bool:
-        """returns if lock_pid is NULL or doesn't exist.
-
-        Notes
-        -----
-        This reports whether the store is locked at all, not whether the
-        caller is the one holding it. Compare ``_lock_id`` against
-        ``_owner_token()`` for that.
-        """
+        """returns if the store is locked at all"""
         return self._lock_id is not None
 
     def lock(self) -> None:
-        """if writable, and not locked, locks the database to this session
+        """if writable, and not locked, locks the database to this session"""
+        with self._cache_lock:
+            self._check_open()
+            if self.mode is READONLY:
+                return
+            if self._db is None:
+                msg = "database connection is unexpectedly None"
+                raise RuntimeError(msg)
+            # a store already locked is answered from this read, which needs
+            # only a shared lock. claiming takes the write lock, so going
+            # straight there would make a refusal wait out the busy timeout
+            # behind any writer and then fail as OperationalError
+            locked = self._lock_id
+            if locked is None:
+                locked = self._claim()
 
-        Notes
-        -----
-        Any lock already recorded is refused, whoever holds it, so a store
-        is claimed by one session at a time whether the other is a thread
-        of this process or another process entirely. Ownership is recorded
-        as ``_owner_token()`` and decides only who may release it.
-        """
-        self._check_open()
-        if self.mode is READONLY:
-            return
-        if self._db is None:
-            msg = "database connection is unexpectedly None"
-            raise RuntimeError(msg)
-        # a store already locked is answered from this read, which needs
-        # only a shared lock. claiming takes the write lock, so going
-        # straight there would make a refusal wait out the busy timeout
-        # behind any writer and then fail as OperationalError
-        locked = self._lock_id
-        if locked is None:
-            locked = self._claim(self._db)
-
-        # a lock marks a store whose session did not end through close(), so
-        # its records were never confirmed complete. no mode that writes may
-        # build on that without being told to
-        if locked is not None:
-            msg = (
-                f"You are trying to open {str(self.source)!r} for writing but "
-                f"it is locked by {locked}. Call unlock(force=True) on a "
-                "writable store to release it."
-            )
-            raise OSError(
-                msg,
-            )
-        self._holds_lock = True
-
-    def _claim(self, db: sqlite3.Connection) -> int | str | None:
-        """record this session as the owner, or report who already is
-
-        Notes
-        -----
-        The read and the write are one transaction. As two statements on a
-        connection in autocommit, sessions starting together each read an
-        unlocked store and each wrote itself in. IMMEDIATE takes the write
-        lock when the transaction opens rather than at its first write, so
-        a second session waits there and then reads what the first
-        committed. The statements are literal because ``isolation_level``
-        is None, which leaves the DB-API transaction methods out of it.
-        """
-        db.execute("BEGIN IMMEDIATE")
-        try:
-            result = db.execute(
-                "SELECT state_id,lock_pid FROM state ORDER BY state_id",
-            ).fetchall()
-            # is not None rather than truthy: a lock recorded as 0 is a lock
-            locked = next(
-                (r["lock_pid"] for r in result if r["lock_pid"] is not None),
-                None,
-            )
-            if locked is None and result:
-                # we will update an existing
-                state_id = result[0]["state_id"]
-                db.execute(
-                    "UPDATE state SET lock_pid=? WHERE state_id=?",
-                    (_owner_token(), state_id),
+            # a lock marks a store whose session did not end through
+            # close(), so its records were never confirmed complete. no
+            # mode that writes may build on that without being told to
+            if locked is not None:
+                msg = (
+                    f"You are trying to open {str(self.source)!r} for writing but "
+                    f"it is locked by {locked}. Call unlock(force=True) on a "
+                    "writable store to release it."
                 )
-                if len(result) > 1:
-                    # rows the two-statement version left behind. reaching
-                    # here means none of them holds a lock, and only the
-                    # first carries a record_type, so they record nothing
-                    db.execute("DELETE FROM state WHERE state_id>?", (state_id,))
-            elif locked is None:
-                db.execute(
-                    "INSERT INTO state(lock_pid) VALUES (?)",
-                    (_owner_token(),),
+                raise OSError(
+                    msg,
                 )
-            # inside the try: a commit wants an exclusive lock where the
-            # begin wanted a reserved one, so it is the statement here most
-            # likely to be refused, and one left unended strands the
-            # connection in a transaction it can never start another after
-            db.execute("COMMIT")
-        except BaseException:
-            # sqlite ends the transaction itself on some errors, and asking
-            # again then raises over the real failure
-            if db.in_transaction:
-                db.execute("ROLLBACK")
-            raise
-        return locked
+            self._holds_lock = True
+
+    def _claim(self) -> int | str | None:
+        """record this session as the owner, or report who already is"""
+        # the whole transaction is one region rather than a statement at a
+        # time: a thread reading between the BEGIN and the COMMIT reads
+        # inside a transaction it knows nothing of. so a BEGIN waiting out
+        # the busy timeout behind a competing process holds up every reader
+        # of this store, not just this one
+        with self._cache_lock:
+            db = self._connection()
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                result = db.execute(
+                    "SELECT state_id,lock_pid FROM state ORDER BY state_id",
+                ).fetchall()
+                # is not None rather than truthy: a lock recorded as 0 is a lock
+                locked = next(
+                    (r["lock_pid"] for r in result if r["lock_pid"] is not None),
+                    None,
+                )
+                if locked is None and result:
+                    # we will update an existing
+                    state_id = result[0]["state_id"]
+                    db.execute(
+                        "UPDATE state SET lock_pid=? WHERE state_id=?",
+                        (_owner_token(), state_id),
+                    )
+                    if len(result) > 1:
+                        # rows the two-statement version left behind. reaching
+                        # here means none of them holds a lock, and only the
+                        # first carries a record_type, so they record nothing
+                        db.execute("DELETE FROM state WHERE state_id>?", (state_id,))
+                elif locked is None:
+                    db.execute(
+                        "INSERT INTO state(lock_pid) VALUES (?)",
+                        (_owner_token(),),
+                    )
+                # inside the try: a commit wants an exclusive lock where the
+                # begin wanted a reserved one, so it is the statement here most
+                # likely to be refused, and one left unended strands the
+                # connection in a transaction it can never start another after
+                db.execute("COMMIT")
+            except BaseException:
+                # sqlite ends the transaction itself on some errors, and asking
+                # again then raises over the real failure
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise
+            return locked
 
     def unlock(self, force: bool = False) -> None:
-        """remove a lock this session took. If force, remove any. ignored if mode is READONLY
+        """remove a lock this session took. If force, remove any. ignored if mode is READONLY"""
+        with self._cache_lock:
+            self._check_open()
+            if self.mode is READONLY:
+                return
 
-        Notes
-        -----
-        The owner recorded names a thread as well as a process, so a lock
-        another thread of this process took is not this one's to release
-        without *force*. Nor is one recorded by a version that wrote only a
-        pid, which names a session this one cannot claim to be.
+            lock_id = self._lock_id
+            if lock_id is None:
+                return
 
-        Every lock recorded is cleared, not merely the one reported. A
-        database written by the two-statement version can hold a lock in
-        more than one row, and clearing them one call at a time leaves the
-        store still refusing after the user has forced it open.
-        """
-        self._check_open()
-        if self.mode is READONLY:
-            return
-
-        db = self._connection()
-        lock_id = self._lock_id
-        if lock_id is None:
-            return
-
-        # a lock recorded by an older version names only a process, which
-        # this session cannot claim to be, so clearing one takes force
-        if lock_id == _owner_token() or force:
-            db.execute("UPDATE state SET lock_pid=NULL")
-            self._holds_lock = False
-
-        return
+            # a lock recorded by an older version names only a process,
+            # which this session cannot claim to be, so clearing one takes
+            # force
+            if lock_id == _owner_token() or force:
+                self._execute("UPDATE state SET lock_pid=NULL", claim=False)
+                self._holds_lock = False
 
     @extend_docstring_from(DataStoreDirectory.write)
     def write(self, *, unique_id: str, data: str | bytes) -> DataMemberABC:  # type: ignore[override]
@@ -627,41 +735,42 @@ class DataStoreSqlite(DataStoreABC):
         md5 checksum for the member, if available, None otherwise
         """
         cmnd = f"SELECT * FROM {RESULT_TABLE} WHERE record_id = ?"
-        result = self.db.execute(cmnd, (unique_id,)).fetchone()
+        result = self._fetchone(cmnd, (unique_id,))
 
         return result["md5"] if result else None
 
     def write_citations(self, *, data: tuple[CitationBase, ...]) -> None:
         if not data:
             return
+        self._check_writing_session()
         if not self._has_citations_table():
-            self.db.execute(
+            self._execute(
                 "CREATE TABLE IF NOT EXISTS citations"
                 "(citation_id INTEGER PRIMARY KEY, data TEXT)",
             )
         from citeable import to_jsons
 
         json_data = to_jsons(data)
-        if existing := self.db.execute("SELECT citation_id FROM citations").fetchone():
-            self.db.execute(
+        if existing := self._fetchone("SELECT citation_id FROM citations"):
+            self._execute(
                 "UPDATE citations SET data=? WHERE citation_id=?",
                 (json_data, existing["citation_id"]),
             )
         else:
-            self.db.execute("INSERT INTO citations(data) VALUES (?)", (json_data,))
+            self._execute("INSERT INTO citations(data) VALUES (?)", (json_data,))
 
     def _load_citations(self) -> list[CitationBase]:
         from citeable import from_jsons
 
         if not self._has_citations_table():
             return []
-        result = self.db.execute("SELECT data FROM citations").fetchone()
+        result = self._fetchone("SELECT data FROM citations")
         return from_jsons(result["data"]) if result else []
 
     def _has_citations_table(self) -> bool:
-        result = self.db.execute(
+        result = self._fetchone(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='citations'",
-        ).fetchone()
+        )
         return result is not None
 
     def _describe(self) -> dict[str, object]:
@@ -681,20 +790,21 @@ class DataStoreSqlite(DataStoreABC):
     @property
     def record_type(self) -> str:
         """class name of completed results"""
-        result = self.db.execute("SELECT record_type FROM state").fetchone()
+        result = self._fetchone("SELECT record_type FROM state")
         return result["record_type"]
 
     @record_type.setter
     def record_type(self, obj: object) -> None:
         from scinexus.misc import get_object_provenance
 
+        self._check_writing_session()
         rt = self.record_type
         if self.mode is OVERWRITE and rt:
             msg = f"cannot overwrite existing record_type {rt}"
             raise OSError(msg)
 
         n = get_object_provenance(obj)
-        self.db.execute("UPDATE state SET record_type=? WHERE state_id=1", (n,))
+        self._execute("UPDATE state SET record_type=? WHERE state_id=1", (n,))
 
     def _summary_not_completed(self) -> list[dict]:
         """returns a list of dicts summarising not completed results"""
