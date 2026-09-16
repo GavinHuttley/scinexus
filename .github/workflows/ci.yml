@@ -15,8 +15,8 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     strategy:
-      # without this a failure on the exploratory 3.14t build cancels the
-      # supported cells, which then never upload coverage
+      # without this a failure on an exploratory free-threaded build cancels
+      # the supported cells, which then never upload coverage
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
