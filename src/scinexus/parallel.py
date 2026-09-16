@@ -287,11 +287,8 @@ class MPIBackend(Parallel):
         self._check_serial(if_serial)
         pickled_f: Callable[[T], R] = PicklableAndCallable(f)
         max_workers = _resolve_max_workers_mpi(max_workers, self._size)
-        chunksize = _resolve_chunksize(s, max_workers, kwargs.get("chunksize"))
-        with self._futures.MPIPoolExecutor(
-            max_workers=max_workers,
-            chunksize=chunksize,
-        ) as executor:
+        _check_chunksize(kwargs.get("chunksize"))
+        with self._futures.MPIPoolExecutor(max_workers=max_workers) as executor:
             to_do = [executor.submit(pickled_f, e) for e in s]
             for result in concurrentfutures.as_completed(to_do):
                 yield result.result()

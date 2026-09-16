@@ -215,8 +215,50 @@ def test_as_completed_mpi_not_using_mpi():
 
 
 @pytest.mark.mpi
+def test_as_completed_mpi_works_out_no_chunk_size(monkeypatch):
+    """as_completed submits one item at a time, so there is nothing to chunk"""
+
+    def fail(*args, **kwargs):
+        msg = "as_completed has no use for a chunk size"
+        raise AssertionError(msg)
+
+    monkeypatch.setattr(parallel, "get_default_chunksize", fail)
+    assert sorted(as_completed(_double, list(range(4)), use_mpi=True)) == [0, 2, 4, 6]
+
+
+@pytest.mark.mpi
+@pytest.mark.parametrize("chunksize", [None, 5])
+def test_as_completed_mpi_sends_no_chunk_size(monkeypatch, chunksize):
+    """nothing reaches the executor under a name it has no parameter for"""
+    # MPIPoolExecutor keeps unrecognised keywords in _options rather than
+    # refusing them, so passing one is invisible without looking there
+    seen = []
+    real_executor = parallel.MPIfutures.MPIPoolExecutor
+
+    class Spy(real_executor):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            seen.append(self._options)
+
+    monkeypatch.setattr(parallel.MPIfutures, "MPIPoolExecutor", Spy)
+    got = sorted(
+        as_completed(_double, list(range(4)), use_mpi=True, chunksize=chunksize)
+    )
+    assert got == [0, 2, 4, 6]
+    assert seen
+    assert all("chunksize" not in options for options in seen)
+
+
+@pytest.mark.mpi
+def test_as_completed_mpi_chunksize_still_checked():
+    """a bad chunk size is refused even though a good one is ignored"""
+    with pytest.raises(ValueError, match=r"chunksize \(-1\)"):
+        list(as_completed(_double, [1], use_mpi=True, chunksize=-1))
+
+
+@pytest.mark.mpi
 def test_as_completed_mpi_non_sized_iterable():
-    """_as_completed_mpi with generator defaults chunksize to 1"""
+    """_as_completed_mpi takes a generator, having no length to ask for"""
 
     def gen():
         yield from range(4)
