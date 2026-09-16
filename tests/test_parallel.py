@@ -802,6 +802,27 @@ def test_get_default_chunksize_empty():
     assert get_default_chunksize([], 6) == 1
 
 
+@pytest.mark.parametrize("max_workers", [-1, 0])
+def test_get_default_chunksize_below_one_refused(max_workers):
+    """a worker count below one is named rather than divided by"""
+    with pytest.raises(ValueError, match=rf"max_workers \({max_workers}\)"):
+        get_default_chunksize(range(16), max_workers)
+
+
+@pytest.mark.parametrize("max_workers", [True, numpy.True_, 2.5, None])
+def test_get_default_chunksize_non_integer_refused(max_workers):
+    """the public helper refuses what the resolvers refuse, None included"""
+    with pytest.raises(TypeError, match=r"max_workers must be an int, got"):
+        get_default_chunksize(range(16), max_workers)
+
+
+def test_get_default_chunksize_numpy_integer_accepted():
+    """a numpy worker count does not make a numpy chunk size"""
+    got = get_default_chunksize(range(16), numpy.int64(2))
+    assert got == 2
+    assert type(got) is int
+
+
 def test_resolve_chunksize_empty():
     """the empty case reaches the executor as 1 rather than 0"""
     assert _resolve_chunksize([], 6, None) == 1

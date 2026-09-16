@@ -389,10 +389,7 @@ def _check_max_workers_local(max_workers: int | None) -> None:
     """raise unless max_workers is None or an int of at least 1"""
     if max_workers is None:
         return
-    _check_integral(max_workers, "max_workers")
-    if max_workers < 1:
-        msg = f"max_workers ({max_workers}) must be greater than 0"
-        raise ValueError(msg)
+    _check_positive_int(max_workers, "max_workers", "an int or None")
 
 
 def _resolve_max_workers_local(max_workers: int | None) -> int:
@@ -421,23 +418,31 @@ def _get_rank_local() -> int:
     return int(process_name.split("-")[-1]) if process_name != "MainProcess" else 0
 
 
-def _check_integral(value: object, name: str) -> None:
-    """raise unless value is of an integer type and is not a bool"""
+def _check_integral(value: object, name: str, expected: str = "an int") -> None:
+    """raise unless value is of an integer type and is not a bool
+
+    ``expected`` names what this caller accepts, since only some take None.
+    """
     # bool is Integral and numpy.bool_ is neither a bool nor Integral, so
     # one test alone lets one of them through
     if isinstance(value, bool) or not isinstance(value, numbers.Integral):
-        msg = f"{name} must be an int or None, got {value!r}"
+        msg = f"{name} must be {expected}, got {value!r}"
         raise TypeError(msg)
+
+
+def _check_positive_int(value: object, name: str, expected: str = "an int") -> None:
+    """raise unless value is of an integer type and is at least 1"""
+    _check_integral(value, name, expected)
+    if cast("numbers.Integral", value) < 1:
+        msg = f"{name} ({value}) must be greater than 0"
+        raise ValueError(msg)
 
 
 def _check_chunksize(chunksize: int | None) -> None:
     """raise unless chunksize is None or an int of at least 1"""
     if chunksize is None:
         return
-    _check_integral(chunksize, "chunksize")
-    if chunksize < 1:
-        msg = f"chunksize ({chunksize}) must be greater than 0"
-        raise ValueError(msg)
+    _check_positive_int(chunksize, "chunksize", "an int or None")
 
 
 def _resolve_chunksize(
@@ -469,14 +474,22 @@ def get_default_chunksize(s: Sized, max_workers: int) -> int:
     s
         a sized collection of work items
     max_workers
-        number of worker processes
+        number of worker processes, an int of at least 1
+
+    Raises
+    ------
+    TypeError
+        if max_workers is not of an integer type
+    ValueError
+        if max_workers is below 1
     """
+    _check_positive_int(max_workers, "max_workers")
     chunksize, remainder = divmod(len(s), max_workers * 4)
     if remainder:
         chunksize += 1
     # an empty input divides to 0 with no remainder, and the executors that
     # receive this refuse a chunk size of 0
-    return max(chunksize, 1)
+    return int(max(chunksize, 1))
 
 
 _default_backend: Parallel | None = None

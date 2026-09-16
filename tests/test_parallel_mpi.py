@@ -122,11 +122,11 @@ def test_imap_mpi_if_serial_raise_size_1():
 
 @pytest.mark.mpi
 def test_imap_mpi_if_serial_warn_size_1():
-    """if_serial='warn' with SIZE==1 emits warning"""
+    """if_serial='warn' with SIZE==1 warns, then the 0 workers is refused"""
     backend = parallel.MPIBackend()
     backend._size = 1
     with pytest.warns(UserWarning, match="Execution in serial"):
-        with pytest.raises(ZeroDivisionError):
+        with pytest.raises(ValueError, match=r"max_workers \(0\)"):
             list(backend.imap(_double, [1], if_serial="warn"))
 
 
@@ -174,7 +174,7 @@ def test_as_completed_mpi_if_serial_warn_size_1():
     backend = parallel.MPIBackend()
     backend._size = 1
     with pytest.warns(UserWarning, match="Execution in serial"):
-        with pytest.raises(ZeroDivisionError):
+        with pytest.raises(ValueError, match=r"max_workers \(0\)"):
             list(backend.as_completed(_double, list(range(4)), if_serial="warn"))
 
 
@@ -183,7 +183,7 @@ def test_as_completed_mpi_if_serial_ignore_size_1():
     """_as_completed_mpi with SIZE==1 and if_serial='ignore' does not raise serial error"""
     backend = parallel.MPIBackend()
     backend._size = 1
-    with pytest.raises(ZeroDivisionError):
+    with pytest.raises(ValueError, match=r"max_workers \(0\)"):
         list(backend.as_completed(_double, list(range(4)), if_serial="ignore"))
 
 
