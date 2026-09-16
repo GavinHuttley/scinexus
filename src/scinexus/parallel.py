@@ -437,7 +437,9 @@ def get_default_chunksize(s: Sized, max_workers: int) -> int:
     chunksize, remainder = divmod(len(s), max_workers * 4)
     if remainder:
         chunksize += 1
-    return chunksize
+    # an empty input divides to 0 with no remainder, and the executors that
+    # receive this refuse a chunk size of 0
+    return max(chunksize, 1)
 
 
 _default_backend: Parallel | None = None

@@ -11,6 +11,7 @@ import pytest
 
 from scinexus import parallel
 from scinexus.parallel import (
+    BACKEND_TYPES,
     LokyBackend,
     MPIBackend,
     MultiprocessBackend,
@@ -21,6 +22,7 @@ from scinexus.parallel import (
     _effective_backend,
     _get_rank_thread,
     _gil_enabled,
+    _resolve_chunksize,
     as_completed,
     get_default_chunksize,
     get_parallel_backend,
@@ -351,14 +353,6 @@ def test_thread_max_workers_limits_the_pool():
 
     ranks = set(backend.imap(blocked, range(20), max_workers=2))
     assert len(ranks) == 2
-
-
-@pytest.mark.free_threaded
-def test_thread_empty_input():
-    """an empty input yields nothing rather than raising"""
-    backend = ThreadBackend()
-    assert list(backend.imap(_double, [])) == []
-    assert list(backend.as_completed(_double, [])) == []
 
 
 @pytest.mark.free_threaded
@@ -751,6 +745,41 @@ def test_get_default_chunksize_exact():
 def test_get_default_chunksize_remainder():
     """chunksize rounds up when there is a remainder"""
     assert get_default_chunksize(range(17), 4) == 2
+
+
+def test_get_default_chunksize_empty():
+    """an empty input gives a chunksize an executor will accept"""
+    assert get_default_chunksize([], 1) == 1
+    assert get_default_chunksize([], 6) == 1
+
+
+def test_resolve_chunksize_empty():
+    """the empty case reaches the executor as 1 rather than 0"""
+    assert _resolve_chunksize([], 6, None) == 1
+
+
+_LOCAL_BACKENDS = [
+    "multiprocess",
+    "loky",
+    pytest.param("threads", marks=pytest.mark.free_threaded),
+]
+
+
+@pytest.mark.parametrize("backend_name", _LOCAL_BACKENDS)
+def test_backend_empty_input(backend_name):
+    """an empty input yields nothing rather than raising"""
+    backend = BACKEND_TYPES[backend_name]()
+    assert list(backend.imap(_double, [])) == []
+    assert list(backend.as_completed(_double, [])) == []
+
+
+@pytest.mark.parametrize("backend_name", _LOCAL_BACKENDS)
+def test_module_empty_input(backend_name):
+    """the module functions take an empty input on every local backend"""
+    set_parallel_backend(backend_name)
+    assert list(parallel.imap(_double, [])) == []
+    assert parallel.map(_double, []) == []
+    assert list(parallel.as_completed(_double, [])) == []
 
 
 def test_picklable_and_callable():
