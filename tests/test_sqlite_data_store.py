@@ -11,7 +11,13 @@ import pytest
 from citeable import Software
 from scitrack import get_text_hexdigest
 
-from scinexus.composable import NotCompleted, NotCompletedType
+from scinexus.composable import (
+    LOADER,
+    NotCompleted,
+    NotCompletedType,
+    define_app,
+    source_proxy,
+)
 from scinexus.data_store import (
     APPEND,
     OVERWRITE,
@@ -19,6 +25,7 @@ from scinexus.data_store import (
     DataMemberABC,
     DataStoreDirectory,
 )
+from scinexus.parallel import set_parallel_backend
 from scinexus.sqlite_data_store import (
     _MEMORY,
     LOG_TABLE,
@@ -1318,4 +1325,185 @@ def test_write_citations_no_table(tmp_dir, sample_citations):
     assert dstore._has_citations_table()
     loaded = dstore._load_citations()
     assert len(loaded) == 2
+    dstore.close()
+
+
+_RECORDS = 400
+_READERS = 12
+_OPEN_RACERS = 4
+_OPEN_RACE_ROUNDS = 20
+
+
+@define_app(app_type=LOADER)
+class read_member:
+    """loader naming each record alongside what it holds"""
+
+    def main(self, member: DataMemberABC) -> str:
+        return f"{member.unique_id}={member.read()}"
+
+
+def _expected_records():
+    """identifier to contents, each naming the other"""
+    return {f"k{i:05d}": f"v{i:05d}" for i in range(_RECORDS)}
+
+
+@pytest.fixture
+def many_record_store(tmp_dir):
+    """path to a closed store holding _RECORDS records"""
+    path = tmp_dir / "many.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    for unique_id, data in _expected_records().items():
+        dstore.write(unique_id=unique_id, data=data)
+    dstore.close()
+    return path
+
+
+def _run_on_threads(target, num_threads):
+    """call target() on num_threads threads that start together
+
+    Raises if any of them is still running afterwards.
+    """
+    barrier = threading.Barrier(num_threads, timeout=_LOCK_TIMEOUT)
+
+    def run():
+        barrier.wait(timeout=_LOCK_TIMEOUT)
+        target()
+
+    threads = [threading.Thread(target=run) for _ in range(num_threads)]
+    # on a build with the GIL this makes the interleaving a check-then-set
+    # races on happen within a few hundred instructions. on a free-threaded
+    # one it does nothing, because the threads are already running at once
+    old_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=_LOCK_TIMEOUT)
+    finally:
+        sys.setswitchinterval(old_interval)
+
+    # a thread wedged on a lock leaves whatever it was counting empty,
+    # which every assertion about "no wrong values" is satisfied by
+    alive = [thread.name for thread in threads if thread.is_alive()]
+    assert alive == [], f"still running after {_LOCK_TIMEOUT}s: {alive}"
+
+
+def _load_through_threads(dstore):
+    """what a loader over dstore produces on the thread backend"""
+    set_parallel_backend("threads")
+    app = read_member()
+    results = app.as_completed(dstore, parallel=True, show_progress=False)
+    return {r.obj if isinstance(r, source_proxy) else r for r in results}
+
+
+@pytest.mark.free_threaded
+def test_concurrent_reads_answer_with_their_own_record(many_record_store):
+    """a record read from any thread is the record that was asked for"""
+    # a connection carries one statement cache, keyed by the text of the
+    # statement and shared between threads without protection, so two
+    # threads running this SELECT with different identifiers otherwise bind
+    # to one statement and read each other's rows. wrong values are counted
+    # rather than only exceptions: an exception is the loudest form of the
+    # damage, not the usual one
+    dstore = DataStoreSqlite(many_record_store, mode=READONLY)
+    expected = _expected_records()
+    right = []
+    wrong = []
+    errors = []
+
+    def read_every_record():
+        try:
+            for unique_id, data in expected.items():
+                got = dstore.read(unique_id)
+                (right if got == data else wrong).append((unique_id, got))
+        except Exception as err:  # noqa: BLE001
+            errors.append(repr(err))
+
+    _run_on_threads(read_every_record, _READERS)
+
+    assert errors == []
+    assert wrong == []
+    # counted, so that threads which never got to read cannot pass this by
+    # leaving the other two empty
+    assert len(right) == _READERS * _RECORDS
+    dstore.close()
+
+
+@pytest.mark.free_threaded
+@pytest.mark.usefixtures("reset_parallel_backend")
+def test_a_loader_reads_a_store_through_the_thread_backend(many_record_store):
+    """a pipeline over a .sqlitedb gets every record back, whole"""
+    dstore = DataStoreSqlite(many_record_store, mode=READONLY)
+
+    got = _load_through_threads(dstore)
+
+    assert got == {f"{k}={v}" for k, v in _expected_records().items()}
+    dstore.close()
+
+
+@pytest.mark.free_threaded
+@pytest.mark.usefixtures("reset_parallel_backend")
+def test_a_loader_reads_an_in_memory_store_through_the_thread_backend():
+    """an in-memory store is read from the pool like any other"""
+    # its database lives inside its one connection, so there is nothing for
+    # a second connection to open and serialising that one is the only
+    # arrangement available to it
+    dstore = DataStoreSqlite(_MEMORY, mode=OVERWRITE)
+    for unique_id, data in _expected_records().items():
+        dstore.write(unique_id=unique_id, data=data)
+
+    got = _load_through_threads(dstore)
+
+    assert got == {f"{k}={v}" for k, v in _expected_records().items()}
+    dstore.close()
+
+
+def _connections_from_racing_threads(dstore, num_threads):
+    """the connection each of several threads got from one store at once"""
+    opened = []
+
+    def open_it():
+        opened.append(dstore._connection())
+
+    _run_on_threads(open_it, num_threads)
+    return opened
+
+
+@pytest.mark.free_threaded
+def test_racing_the_first_access_opens_one_connection(many_record_store):
+    """the database is opened once, however many threads reach it together"""
+    # the open is a check then a set, and every loser's connection is
+    # orphaned: a descriptor and a page cache nothing will ever close
+    for _ in range(_OPEN_RACE_ROUNDS):
+        dstore = DataStoreSqlite(many_record_store, mode=READONLY)
+
+        opened = _connections_from_racing_threads(dstore, _OPEN_RACERS)
+
+        assert len(opened) == _OPEN_RACERS
+        assert len({id(conn) for conn in opened}) == 1
+        dstore.close()
+
+
+@pytest.mark.free_threaded
+def test_concurrent_completed_scans_the_store_once(many_record_store, monkeypatch):
+    """the members are read from the database once, not once per reader"""
+    dstore = DataStoreSqlite(many_record_store, mode=READONLY)
+    scans = []
+    select_members = dstore._select_members
+
+    def counted(**kwargs):
+        scans.append(kwargs["table_name"])
+        return select_members(**kwargs)
+
+    monkeypatch.setattr(dstore, "_select_members", counted)
+    counts = []
+
+    def take_completed():
+        counts.append(len(dstore.completed))
+
+    _run_on_threads(take_completed, _READERS)
+
+    assert counts == [_RECORDS] * _READERS
+    assert scans == [RESULT_TABLE]
     dstore.close()
