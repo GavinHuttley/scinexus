@@ -136,6 +136,12 @@ def _owner_token() -> str:
     than a constraint, so the column takes this without a schema change.
     A value that is still a bare integer was written by a version that
     recorded only the process.
+
+    A thread id names a thread only while that thread is alive. Linux
+    recycles ids, so a token can come to name an unrelated live thread,
+    which would then be allowed to release a lock it never took. Holding
+    the owning ``threading.Thread`` would close that, at the cost of
+    keeping the object alive.
     """
     return f"{os.getpid()}:{threading.get_native_id()}"
 
