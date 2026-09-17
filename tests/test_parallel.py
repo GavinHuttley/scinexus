@@ -24,6 +24,8 @@ from scinexus.parallel import (
     _gil_enabled,
     _resolve_chunksize,
     _resolve_max_workers_local,
+    _resolve_max_workers_mpi,
+    _worker_budget,
     as_completed,
     get_default_chunksize,
     get_parallel_backend,
@@ -301,6 +303,75 @@ def test_max_workers_bool_refused(resolve, max_workers):
     """a bool is not a worker count, and None is how to ask for every cpu"""
     with pytest.raises(TypeError, match="must be an int or None"):
         resolve(max_workers)
+
+
+@pytest.mark.parametrize(
+    "resolve", [_resolve_max_workers_local, _clamp_max_workers_local]
+)
+@pytest.mark.parametrize("max_workers", [numpy.True_, numpy.False_, 2.5])
+def test_max_workers_non_integer_refused(resolve, max_workers):
+    """what is not a whole number is refused as a type, not as a range"""
+    with pytest.raises(TypeError, match="must be an int or None"):
+        resolve(max_workers)
+
+
+@pytest.mark.parametrize(
+    "resolve", [_resolve_max_workers_local, _clamp_max_workers_local]
+)
+def test_max_workers_numpy_integer_accepted(resolve):
+    """a numpy integer is a worker count, and reaches the executor as an int"""
+    got = resolve(numpy.int64(1))
+    assert got == 1
+    assert type(got) is int
+
+
+@pytest.mark.parametrize(("world_size", "expect"), [(4, 3), (8, 7), (2, 1), (1, 1)])
+def test_worker_budget(world_size, expect):
+    """the budget is the ranks launched, less the master
+
+    These values come from mpi4py's own num_workers, which this test does
+    not consult. test_mpi_get_size_is_the_pool_the_job_has does.
+    """
+    assert _worker_budget(world_size) == expect
+
+
+def test_resolve_max_workers_mpi_none_takes_the_pool():
+    """None accepts the pool the job was launched with"""
+    assert _resolve_max_workers_mpi(None, 7) == 7
+    assert _resolve_max_workers_mpi(None, 1) == 1
+
+
+def test_resolve_max_workers_mpi_matching_request_is_quiet():
+    """asking for exactly what the job has is not worth a warning"""
+    assert _resolve_max_workers_mpi(7, 7) == 7
+
+
+@pytest.mark.parametrize("max_workers", [3, 8])
+def test_resolve_max_workers_mpi_reports_a_request_it_cannot_meet(max_workers):
+    """a count that is not the pool size is reported, above or below it"""
+    with pytest.warns(UserWarning, match="this request is not used"):
+        assert _resolve_max_workers_mpi(max_workers, 7) == 7
+
+
+@pytest.mark.parametrize("max_workers", [-1, 0])
+def test_resolve_max_workers_mpi_below_one_refused(max_workers):
+    """MPI refuses a worker count below one, as the local backends do"""
+    with pytest.raises(ValueError, match=rf"max_workers \({max_workers}\)"):
+        _resolve_max_workers_mpi(max_workers, 8)
+
+
+@pytest.mark.parametrize("max_workers", [True, numpy.True_, 2.5])
+def test_resolve_max_workers_mpi_non_integer_refused(max_workers):
+    """MPI refuses what is not a worker count, as the local backends do"""
+    with pytest.raises(TypeError, match="max_workers must be an int or None"):
+        _resolve_max_workers_mpi(max_workers, 8)
+
+
+def test_resolve_max_workers_mpi_accepts_a_numpy_count():
+    """a numpy integer equal to the pool size is a matching request"""
+    # numpy.int64(8) != 8 is numpy.False_, which must be falsy rather than
+    # merely not True for the warning to stay quiet
+    assert _resolve_max_workers_mpi(numpy.int64(8), 8) == 8
 
 
 @pytest.mark.free_threaded
@@ -782,6 +853,27 @@ def test_get_default_chunksize_empty():
     assert get_default_chunksize([], 6) == 1
 
 
+@pytest.mark.parametrize("max_workers", [-1, 0])
+def test_get_default_chunksize_below_one_refused(max_workers):
+    """a worker count below one is named rather than divided by"""
+    with pytest.raises(ValueError, match=rf"max_workers \({max_workers}\)"):
+        get_default_chunksize(range(16), max_workers)
+
+
+@pytest.mark.parametrize("max_workers", [True, numpy.True_, 2.5, None])
+def test_get_default_chunksize_non_integer_refused(max_workers):
+    """the public helper refuses what the resolvers refuse, None included"""
+    with pytest.raises(TypeError, match=r"max_workers must be an int, got"):
+        get_default_chunksize(range(16), max_workers)
+
+
+def test_get_default_chunksize_numpy_integer_accepted():
+    """a numpy worker count does not make a numpy chunk size"""
+    got = get_default_chunksize(range(16), numpy.int64(2))
+    assert got == 2
+    assert type(got) is int
+
+
 def test_resolve_chunksize_empty():
     """the empty case reaches the executor as 1 rather than 0"""
     assert _resolve_chunksize([], 6, None) == 1
@@ -804,6 +896,20 @@ def test_chunksize_bool_refused(chunksize):
     """a bool is not a chunk size, and None is how to ask for the default"""
     with pytest.raises(TypeError, match="must be an int or None"):
         _resolve_chunksize([1, 2], 6, chunksize)
+
+
+@pytest.mark.parametrize("chunksize", [numpy.True_, numpy.False_, 2.5])
+def test_chunksize_non_integer_refused(chunksize):
+    """what is not a whole number is refused as a type, not as a range"""
+    with pytest.raises(TypeError, match="must be an int or None"):
+        _resolve_chunksize([1, 2], 6, chunksize)
+
+
+def test_chunksize_numpy_integer_accepted():
+    """a numpy integer is a chunk size, and reaches the executor as an int"""
+    got = _resolve_chunksize([1, 2], 6, numpy.int64(3))
+    assert got == 3
+    assert type(got) is int
 
 
 _LOCAL_BACKENDS = [

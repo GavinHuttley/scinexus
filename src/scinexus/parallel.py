@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures as concurrentfutures
 import itertools
 import multiprocessing
+import numbers
 import os
 import sys
 import threading
@@ -253,7 +254,7 @@ class MPIBackend(Parallel):
         self._mpi = MPI
         self._comm = COMM
         self._futures = MPIfutures
-        self._size: int = self._comm.Get_attr(self._mpi.UNIVERSE_SIZE)
+        self._workers: int = _worker_budget(self._comm.Get_size())
 
     def imap(
         self,
@@ -267,8 +268,7 @@ class MPIBackend(Parallel):
             kwargs.get("if_serial", "raise"),
         )
         self._check_serial(if_serial)
-        max_workers = max_workers or 1
-        max_workers = self._clamp_workers(max_workers)
+        max_workers = _resolve_max_workers_mpi(max_workers, self._workers)
         chunksize = _resolve_chunksize(s, max_workers, kwargs.get("chunksize"))
         with self._futures.MPIPoolExecutor(max_workers=max_workers) as executor:
             yield from executor.map(f, s, chunksize=chunksize)
@@ -285,14 +285,10 @@ class MPIBackend(Parallel):
             kwargs.get("if_serial", "raise"),
         )
         self._check_serial(if_serial)
-        max_workers = max_workers or 1
         pickled_f: Callable[[T], R] = PicklableAndCallable(f)
-        max_workers = self._clamp_workers(max_workers)
-        chunksize = _resolve_chunksize(s, max_workers, kwargs.get("chunksize"))
-        with self._futures.MPIPoolExecutor(
-            max_workers=max_workers,
-            chunksize=chunksize,
-        ) as executor:
+        max_workers = _resolve_max_workers_mpi(max_workers, self._workers)
+        _check_chunksize(kwargs.get("chunksize"))
+        with self._futures.MPIPoolExecutor(max_workers=max_workers) as executor:
             to_do = [executor.submit(pickled_f, e) for e in s]
             for result in concurrentfutures.as_completed(to_do):
                 yield result.result()
@@ -306,12 +302,14 @@ class MPIBackend(Parallel):
         return self._comm.Get_rank()
 
     def get_size(self) -> int:
-        return self._size
+        return self._workers
 
     def _check_serial(self, if_serial: Literal["raise", "ignore", "warn"]) -> None:
-        if self._size == 1:
+        if self._workers == 1:
             err_msg = (
-                "Execution in serial. For parallel MPI execution, use:\n"
+                "Execution in serial: this job has one worker. Rank 0 is the"
+                " master and hands out the work rather than doing it, so"
+                " -n 3 is the smallest launch with a second worker:\n"
                 " $ mpiexec -n <number CPUs> python -m mpi4py.futures"
                 " <executable script>"
             )
@@ -319,15 +317,6 @@ class MPIBackend(Parallel):
                 raise RuntimeError(err_msg)
             if if_serial == "warn":
                 warnings.warn(err_msg, UserWarning, stacklevel=4)
-
-    def _clamp_workers(self, max_workers: int) -> int:
-        if max_workers > self._size:
-            warnings.warn(
-                "max_workers too large, reducing to UNIVERSE_SIZE-1",
-                UserWarning,
-                stacklevel=3,
-            )
-        return min(max_workers, self._size - 1)
 
 
 class PicklableAndCallable(Generic[P, R]):
@@ -384,35 +373,58 @@ def _assign_rank_thread() -> None:
         _thread_state.rank = next(_rank_counter)
 
 
-def _check_max_workers_local(max_workers: int | None) -> None:
+def _check_max_workers(max_workers: int | None) -> None:
     """raise unless max_workers is None or an int of at least 1"""
-    # bool is a subclass of int, so True would otherwise ask for one worker
-    if isinstance(max_workers, bool):
-        msg = f"max_workers must be an int or None, got {max_workers!r}"
-        raise TypeError(msg)
-    if max_workers is not None and max_workers < 1:
-        msg = f"max_workers ({max_workers}) must be greater than 0"
-        raise ValueError(msg)
+    if max_workers is None:
+        return
+    _check_positive_int(max_workers, "max_workers", "an int or None")
 
 
 def _resolve_max_workers_local(max_workers: int | None) -> int:
     """resolve max_workers for local (non-MPI) backends"""
-    _check_max_workers_local(max_workers)
+    _check_max_workers(max_workers)
     cpu = multiprocessing.cpu_count()
     if max_workers is None:
         return cpu
     if max_workers > cpu:
         msg = f"max_workers ({max_workers}) must be less than or equal to CPU count ({cpu})"
         raise ValueError(msg)
-    return max_workers
+    return int(max_workers)
 
 
 def _clamp_max_workers_local(max_workers: int | None) -> int:
     """clamp max_workers for local as_completed, raising only below one"""
-    _check_max_workers_local(max_workers)
+    _check_max_workers(max_workers)
     if max_workers is None or max_workers > multiprocessing.cpu_count():
         return multiprocessing.cpu_count()
-    return max_workers
+    return int(max_workers)
+
+
+def _worker_budget(world_size: int) -> int:
+    """return the number of workers an MPI job has
+
+    Rank 0 is the master and hands out the work rather than doing any, so
+    the pool is the rest of the ranks, floored at one.
+    """
+    return max(world_size - 1, 1)
+
+
+def _resolve_max_workers_mpi(max_workers: int | None, budget: int) -> int:
+    """return the budget, reporting a max_workers that disagrees with it
+
+    The count comes from the ranks that were launched, so a request for
+    more workers or for fewer cannot be obeyed.
+    """
+    _check_max_workers(max_workers)
+    if max_workers is not None and max_workers != budget:
+        warnings.warn(
+            f"max_workers ({max_workers}) is not the {budget} workers this"
+            " job has. scinexus takes the count from the ranks launched by"
+            " mpiexec -n, so this request is not used.",
+            UserWarning,
+            stacklevel=3,
+        )
+    return budget
 
 
 def _get_rank_local() -> int:
@@ -421,15 +433,31 @@ def _get_rank_local() -> int:
     return int(process_name.split("-")[-1]) if process_name != "MainProcess" else 0
 
 
+def _check_integral(value: object, name: str, expected: str = "an int") -> None:
+    """raise unless value is of an integer type and is not a bool
+
+    ``expected`` names what this caller accepts, since only some take None.
+    """
+    # bool is Integral and numpy.bool_ is neither a bool nor Integral, so
+    # one test alone lets one of them through
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        msg = f"{name} must be {expected}, got {value!r}"
+        raise TypeError(msg)
+
+
+def _check_positive_int(value: object, name: str, expected: str = "an int") -> None:
+    """raise unless value is of an integer type and is at least 1"""
+    _check_integral(value, name, expected)
+    if cast("numbers.Integral", value) < 1:
+        msg = f"{name} ({value}) must be greater than 0"
+        raise ValueError(msg)
+
+
 def _check_chunksize(chunksize: int | None) -> None:
     """raise unless chunksize is None or an int of at least 1"""
-    # bool is a subclass of int, so True would otherwise ask for one item
-    if isinstance(chunksize, bool):
-        msg = f"chunksize must be an int or None, got {chunksize!r}"
-        raise TypeError(msg)
-    if chunksize is not None and chunksize < 1:
-        msg = f"chunksize ({chunksize}) must be greater than 0"
-        raise ValueError(msg)
+    if chunksize is None:
+        return
+    _check_positive_int(chunksize, "chunksize", "an int or None")
 
 
 def _resolve_chunksize(
@@ -439,7 +467,7 @@ def _resolve_chunksize(
     _check_chunksize(chunksize)
     if chunksize is None:
         return get_default_chunksize(s, max_workers) if isinstance(s, Sized) else 1
-    return chunksize
+    return int(chunksize)
 
 
 def _validate_if_serial(
@@ -461,14 +489,22 @@ def get_default_chunksize(s: Sized, max_workers: int) -> int:
     s
         a sized collection of work items
     max_workers
-        number of worker processes
+        number of worker processes, an int of at least 1
+
+    Raises
+    ------
+    TypeError
+        if max_workers is not of an integer type
+    ValueError
+        if max_workers is below 1
     """
+    _check_positive_int(max_workers, "max_workers")
     chunksize, remainder = divmod(len(s), max_workers * 4)
     if remainder:
         chunksize += 1
     # an empty input divides to 0 with no remainder, and the executors that
     # receive this refuse a chunk size of 0
-    return max(chunksize, 1)
+    return int(max(chunksize, 1))
 
 
 _default_backend: Parallel | None = None
@@ -662,7 +698,7 @@ def get_size() -> int:
 
 
 SIZE = (
-    COMM.Get_attr(MPI.UNIVERSE_SIZE)  # type: ignore[possibly-undefined]
+    _worker_budget(COMM.Get_size())  # type: ignore[possibly-undefined]
     if USING_MPI
     else multiprocessing.cpu_count()
 )
@@ -703,7 +739,8 @@ def imap(
         series of inputs to f
     max_workers
         maximum number of workers, an int of at least 1. Defaults to None,
-        meaning every available CPU. A bool is refused.
+        meaning every available CPU. A bool, and anything else that is not
+        of an integer type, is refused.
     use_mpi
         use MPI for parallel execution. Temporarily switches to
         ``MPIBackend`` for the duration of the call.

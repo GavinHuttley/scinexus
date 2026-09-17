@@ -57,6 +57,7 @@ nav = [
         "explanation/source-tracking.md",
         "explanation/customisation-hooks.md",
         "explanation/data-store-model.md",
+        "explanation/mpi-backend.md",
     ] },
     { "How-to guides" = [
         "howto/index.md",

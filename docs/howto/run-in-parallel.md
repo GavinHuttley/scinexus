@@ -82,7 +82,7 @@ The first argument is the function to call, the second is the iterable of inputs
 
 !!! note
 
-    If you don't specify `max_workers`, all available CPUs are used.
+    If you don't specify `max_workers`, all available CPUs are used. Under MPI it instead means the workers the job was launched with, which is not something `max_workers` can change.
 
 #### `parallel.imap` -- preserving input order (generator)
 
@@ -160,13 +160,13 @@ Or pass `use_mpi=True` to any of the parallel functions:
 ```python { notest }
 from scinexus import parallel
 
-results = parallel.map(is_prime, PRIMES, use_mpi=True, max_workers=PBS_NCPUS)
+results = parallel.map(is_prime, PRIMES, use_mpi=True)
 ```
 
 Or with app pipelines:
 
 ```python { notest }
-result = app.apply_to(dstore, parallel=True, par_kw=dict(use_mpi=True, max_workers=4))
+result = app.apply_to(dstore, parallel=True, par_kw=dict(use_mpi=True))
 ```
 
 To run an MPI script, invoke it via `mpiexec`:
@@ -174,6 +174,10 @@ To run an MPI script, invoke it via `mpiexec`:
 ```bash
 mpiexec -n $PBS_NCPUS python3 -m mpi4py.futures my_script.py
 ```
+
+!!! warning "Do not set `max_workers` under MPI"
+
+    Note that `max_workers` is absent from the calls above. The worker count is fixed by `mpiexec -n` before your program starts, so `max_workers` cannot change it and passing one that disagrees only earns a warning. Rank 0 is the master and does no work, so `-n $PBS_NCPUS` gives you `$PBS_NCPUS - 1` workers. See [How the MPI backend differs](../explanation/mpi-backend.md).
 
 !!! note
 
@@ -184,17 +188,14 @@ mpiexec -n $PBS_NCPUS python3 -m mpi4py.futures my_script.py
 MPI scripts must guard the main logic behind `if __name__ == "__main__":`:
 
 ```python { notest }
-import os
 from scinexus import parallel
-
-PBS_NCPUS = int(os.environ["PBS_NCPUS"])
 
 
 def process(data): ...
 
 
 if __name__ == "__main__":
-    results = parallel.map(process, my_data, use_mpi=True, max_workers=PBS_NCPUS)
+    results = parallel.map(process, my_data, use_mpi=True)
 ```
 
 ## Custom backends
