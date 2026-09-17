@@ -4,11 +4,11 @@
 
     Why MPI is not simply a fourth process pool: the worker count is decided outside Python by `mpiexec`, rank 0 is the master and does no work, `max_workers` cannot change any of it, and `UNIVERSE_SIZE` counts slots rather than ranks.
 
-The `"multiprocess"`, `"threads"` and `"loky"` backends all share one assumption: the running process decides how much parallelism to use, and it decides by looking at the machine it is on. `max_workers=4` means four workers, and leaving it out means one per CPU.
+The `"multiprocess"`, `"threads"` and `"loky"` backends all assume the running process decides how much parallelism to use by looking at the machine it is on. `max_workers=4` means four workers, and leaving it out means one per CPU.
 
 MPI breaks that assumption. The processes were created before Python started, by `mpiexec` or by a cluster scheduler, and nothing inside the program can add to them or give them back. Almost everything else on this page follows from that.
 
-## The launcher decides, not the program
+## The launcher decides
 
 With a local backend the chain is short. You ask for workers, and the pool starts them:
 
@@ -24,27 +24,33 @@ Under MPI that same argument is a request about an allocation that already exist
 mpiexec -n 8 python -m mpi4py.futures my_script.py
 ```
 
-So under MPI, leave `max_workers` out and let `mpiexec -n` be the single place the worker count is set.
+So under MPI, `mpiexec -n` is the single place the worker count is in Python set so set `use_mpi=True` but leave `max_workers` out.
 
 ## Rank 0 is the master and does no work
 
 Every MPI process is a *rank*. Rank 0 is the master: it holds the data, hands out tasks and collects results, and does not process items itself. A job of 8 ranks therefore has **7 workers**, not 8.
 
-This has no equivalent in the local backends, where a pool of 4 workers on a 4 core machine puts all 4 to work while the parent simply waits. It is also why `max_workers=$PBS_NCPUS` is the wrong instinct on a cluster: it asks for one more worker than the job can ever contain.
+This has no equivalent in the local backends, where a pool of 4 workers on a 4 core machine puts all 4 to work while the parent simply waits. Setting `max_workers=$PBS_NCPUS` on a cluster is wrong because it asks for one more worker than the job can ever contain.
+
+It also means `-n 2` leaves you with a single worker, which is serial execution but using two processes. With `if_serial` defaulting to `"raise"`, `scinexus` will kill a job with one worker You can override this by setting `if_serial="ignore"`. 
+
+!!! info
+    `-n 3` is the smallest launch with more than one worker.
 
 ## Why the ranks must exist before the program starts
 
-`scinexus` drives every backend through `concurrent.futures`, and for MPI that means the ranks are launched up front and then handed to the executor. This is what `-m mpi4py.futures` does:
+`scinexus` drives every backend through `concurrent.futures`, and for MPI that means you MUST launch your script using:
 
 ```bash
 mpiexec -n 4 python -m mpi4py.futures my_script.py
 ```
 
-Without `-m mpi4py.futures`, `mpi4py` can instead spawn workers on demand while the program runs. `scinexus` is not written for that arrangement and is not tested against it, so treat the invocation above as the supported one.
+!!! warning
+    `scinexus` is not written for the any other pattern, such as using `mpi4py` itself to spawn workers on demand while the program runs.
 
 ## `max_workers` cannot change the worker count
 
-Because the pool is fixed before your code runs, `max_workers` has no way to grow or shrink it. Asking for more does not start more, and asking for fewer does not leave any idle. Measured on a 4 rank job, worker counts of 1, 2, 99 and `None` all put work on the same three ranks.
+Because the pool is fixed before your code runs, `max_workers` has no way to grow or shrink it.
 
 `scinexus` therefore treats the argument as a statement about an allocation rather than a request for one:
 
@@ -65,7 +71,7 @@ The two numbers are independent, and neither is the worker count. Measured on a 
 | `mpiexec --oversubscribe -n 8 -m mpi4py.futures` | 6 | 8 | 7 |
 | `mpiexec -n 1 -m mpi4py.futures` | 6 | 1 | 1 |
 
-Running more ranks than there are slots is **oversubscription**, which `mpiexec --oversubscribe` permits deliberately. It is a legitimate thing to do, for testing on a small machine or for work that spends its time waiting rather than computing, and the third row shows the other end: a single rank serves as its own worker rather than leaving none.
+Running more ranks than there are slots is **oversubscription**, which `mpiexec --oversubscribe` permits deliberately. It is a legitimate thing to do, for testing on a small machine or for work that spends its time waiting rather than computing. The third row is the other end, and it is a launch that will stop rather than run: one worker is serial, so `if_serial` refuses it by default.
 
 !!! note
 

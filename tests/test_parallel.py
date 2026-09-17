@@ -25,7 +25,6 @@ from scinexus.parallel import (
     _resolve_chunksize,
     _resolve_max_workers_local,
     _resolve_max_workers_mpi,
-    _universe_size,
     _worker_budget,
     as_completed,
     get_default_chunksize,
@@ -373,31 +372,6 @@ def test_resolve_max_workers_mpi_accepts_a_numpy_count():
     # numpy.int64(8) != 8 is numpy.False_, which must be falsy rather than
     # merely not True for the warning to stay quiet
     assert _resolve_max_workers_mpi(numpy.int64(8), 8) == 8
-
-
-def _fake_comm(universe_size, world_size):
-    return type(
-        "FakeComm",
-        (),
-        {
-            "Get_attr": lambda self, _attr: universe_size,
-            "Get_size": lambda self: world_size,
-        },
-    )()
-
-
-def test_universe_size_reads_the_attribute():
-    """UNIVERSE_SIZE is the answer where it is set"""
-    assert (
-        _universe_size(_fake_comm(6, 4), type("FakeMPI", (), {"UNIVERSE_SIZE": 0})) == 6
-    )
-
-
-def test_universe_size_falls_back_to_the_ranks_launched():
-    """an MPI that leaves UNIVERSE_SIZE unset gives a size, not None"""
-    got = _universe_size(_fake_comm(None, 4), type("FakeMPI", (), {"UNIVERSE_SIZE": 0}))
-    assert got == 4
-    assert type(got) is int
 
 
 @pytest.mark.free_threaded

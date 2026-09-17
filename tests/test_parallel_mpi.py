@@ -138,18 +138,18 @@ def test_imap_mpi_invalid_if_serial():
 
 @pytest.mark.mpi
 def test_imap_mpi_if_serial_raise_size_1():
-    """if_serial='raise' with SIZE==1 raises RuntimeError"""
+    """if_serial='raise' with one worker raises RuntimeError"""
     backend = parallel.MPIBackend()
-    backend._size = 1
+    backend._workers = 1
     with pytest.raises(RuntimeError, match="Execution in serial"):
         list(backend.imap(_double, [1], if_serial="raise"))
 
 
 @pytest.mark.mpi
 def test_imap_mpi_if_serial_warn_size_1():
-    """if_serial='warn' with SIZE==1 warns, and _size alone selects it"""
+    """if_serial='warn' with one worker warns and the work still runs"""
     backend = parallel.MPIBackend()
-    backend._size = 1
+    backend._workers = 1
     with pytest.warns(UserWarning, match="Execution in serial"):
         assert list(backend.imap(_double, [1], if_serial="warn")) == [2]
 
@@ -185,18 +185,18 @@ def test_as_completed_mpi_max_workers_warning():
 
 @pytest.mark.mpi
 def test_as_completed_mpi_if_serial_raise_size_1():
-    """_as_completed_mpi with SIZE==1 and if_serial='raise' raises RuntimeError"""
+    """_as_completed_mpi with one worker and if_serial='raise' raises"""
     backend = parallel.MPIBackend()
-    backend._size = 1
+    backend._workers = 1
     with pytest.raises(RuntimeError, match="Execution in serial"):
         list(backend.as_completed(_double, [1], if_serial="raise"))
 
 
 @pytest.mark.mpi
 def test_as_completed_mpi_if_serial_warn_size_1():
-    """_as_completed_mpi with SIZE==1 and if_serial='warn' emits warning"""
+    """_as_completed_mpi with one worker and if_serial='warn' warns"""
     backend = parallel.MPIBackend()
-    backend._size = 1
+    backend._workers = 1
     with pytest.warns(UserWarning, match="Execution in serial"):
         got = sorted(backend.as_completed(_double, list(range(4)), if_serial="warn"))
     assert got == [0, 2, 4, 6]
@@ -204,9 +204,9 @@ def test_as_completed_mpi_if_serial_warn_size_1():
 
 @pytest.mark.mpi
 def test_as_completed_mpi_if_serial_ignore_size_1():
-    """_as_completed_mpi with SIZE==1 and if_serial='ignore' does not raise serial error"""
+    """_as_completed_mpi with one worker and if_serial='ignore' runs on"""
     backend = parallel.MPIBackend()
-    backend._size = 1
+    backend._workers = 1
     got = sorted(backend.as_completed(_double, list(range(4)), if_serial="ignore"))
     assert got == [0, 2, 4, 6]
 

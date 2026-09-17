@@ -254,10 +254,6 @@ class MPIBackend(Parallel):
         self._mpi = MPI
         self._comm = COMM
         self._futures = MPIfutures
-        # the universe decides whether this is a serial run, the budget
-        # decides how much work can be handed out, and they differ: a job of
-        # 4 ranks on a 6 slot machine has 3 workers
-        self._size: int = _universe_size(self._comm, self._mpi)
         self._workers: int = _worker_budget(self._comm.Get_size())
 
     def imap(
@@ -309,9 +305,11 @@ class MPIBackend(Parallel):
         return self._workers
 
     def _check_serial(self, if_serial: Literal["raise", "ignore", "warn"]) -> None:
-        if self._size == 1:
+        if self._workers == 1:
             err_msg = (
-                "Execution in serial. For parallel MPI execution, use:\n"
+                "Execution in serial: this job has one worker. Rank 0 is the"
+                " master and hands out the work rather than doing it, so"
+                " -n 3 is the smallest launch with a second worker:\n"
                 " $ mpiexec -n <number CPUs> python -m mpi4py.futures"
                 " <executable script>"
             )
@@ -400,16 +398,6 @@ def _clamp_max_workers_local(max_workers: int | None) -> int:
     if max_workers is None or max_workers > multiprocessing.cpu_count():
         return multiprocessing.cpu_count()
     return int(max_workers)
-
-
-def _universe_size(comm: Any, mpi: Any) -> int:
-    """return the slots available to this job, or the ranks if it is unset"""
-    # Get_attr answers None for an attribute nobody set, and 1 there would
-    # tell a job of any size that it is running in serial
-    universe_size = comm.Get_attr(mpi.UNIVERSE_SIZE)
-    if universe_size is None:
-        universe_size = comm.Get_size()
-    return int(universe_size)
 
 
 def _worker_budget(world_size: int) -> int:
