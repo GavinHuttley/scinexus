@@ -1981,6 +1981,103 @@ def test_apply_to_skip_existing(tmp_path):
     assert len(result) == 3
 
 
+def test_apply_to_str_pipeline_uses_input_identifiers(tmp_path):
+    """output ids come from the input, not from the str the pipeline returns"""
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(3):
+        (src / f"item_{i}.txt").write_text(f"data {i}")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class shout:
+        def main(self, text: str) -> str:
+            return text.upper()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + shout() + writer(data_store=out_dstore)
+    result = process.apply_to(dstore, logger=False, show_progress=False)
+    assert sorted(m.unique_id for m in result.completed) == [
+        "item_0.txt",
+        "item_1.txt",
+        "item_2.txt",
+    ]
+
+
+def test_apply_to_append_mode_rerun_skips_completed(tmp_path):
+    """a rerun against an append-mode store skips records already written"""
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(2):
+        (src / f"item_{i}.txt").write_text(f"data {i}")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    out = tmp_path / "out"
+    first = DataStoreDirectory(out, mode=Mode.w, suffix="txt")
+    (reader() + writer(data_store=first)).apply_to(
+        dstore, logger=False, show_progress=False
+    )
+
+    second = DataStoreDirectory(out, mode=Mode.a, suffix="txt")
+    result = (reader() + writer(data_store=second)).apply_to(
+        dstore, logger=False, show_progress=False
+    )
+    assert sorted(m.unique_id for m in result.completed) == [
+        "item_0.txt",
+        "item_1.txt",
+    ]
+
+
+def test_not_completed_without_source_gets_input_identity(tmp_path):
+    """a NotCompleted carrying no source is attributed to the input"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class reject:
+        def main(self, text: str) -> str:
+            return NotCompleted("FAIL", self, "no good")
+
+    got = list((reader() + reject()).as_completed(dstore))
+    assert len(got) == 1
+    assert got[0].source == "item_0"
+    construction = got[0].to_rich_dict()["not_completed_construction"]
+    assert construction["kwargs"]["source"] == "item_0"
+
+
 def test_apply_to_with_logging(tmp_path):
     from scinexus.data_store import DataMember
 

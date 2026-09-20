@@ -311,12 +311,21 @@ def _proxy_input(dstore: Iterable[Any]) -> list[source_proxy[Any]]:
 GetIdFuncType = typing.Callable[[source_proxy[Any] | snx_typing.HasSource], str | None]
 
 
+def _has_source(result: typing.Any) -> bool:
+    """whether result carries a reference to its own origin"""
+    if isinstance(result, dict):
+        info = result.get("info")
+        val = info.get("source") if isinstance(info, dict) else None
+        return (val or result.get("source")) is not None
+    return getattr(result, "source", None) is not None
+
+
 class propagate_source:
     """retains result association with source
 
     Notes
     -----
-    Returns the unwrapped result if it has a .source attribute,
+    Returns the unwrapped result if it tracks its own source,
     otherwise returns the original source_proxy with the .obj
     updated with result.
     """
@@ -332,11 +341,20 @@ class propagate_source:
             return self.app(value)
 
         result = self.app(value.obj)
-        if self.id_from_source(result):
-            return result
+        if isinstance(result, NotCompleted) and not _has_source(result):
+            # rebuilt rather than assigned to, so to_rich_dict() reports the
+            # same source as the instance does
+            result = NotCompleted(
+                result.type,
+                result.origin,
+                result.message,
+                source=self.id_from_source(value),
+            )
+        elif not _has_source(result):
+            value.set_obj(result)
+            return value
 
-        value.set_obj(result)
-        return value
+        return result
 
 
 # Forbidden methods per app kind
