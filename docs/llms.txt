@@ -114,15 +114,18 @@ pipeline.apply_to(input_dstore, parallel=True, show_progress=True)
 
 ## Parallel Execution
 
-Three backends are available:
+Four backends are available:
 
 ```python
 from scinexus import set_parallel_backend, get_parallel_backend
 
-set_parallel_backend("multiprocess")  # default, uses multiprocessing
+set_parallel_backend("multiprocess")  # stdlib multiprocessing
+set_parallel_backend("threads")       # stdlib ThreadPoolExecutor
 set_parallel_backend("loky")          # recommended for Jupyter
 set_parallel_backend("mpi")           # for HPC clusters via mpi4py
 ```
+
+With no call to `set_parallel_backend`, the backend is `"threads"` when the GIL is not in force and the caller is not itself a pool worker, and `"multiprocess"` otherwise. The process backends pickle the app and its arguments, giving each worker its own copy. The `"threads"` backend shares the app instance between workers instead, so a `main()` that mutates `self` or module-level state is a data race there.
 
 Use `parallel=True` in `apply_to()` or `as_completed()` to enable parallel execution. Configure workers via `par_kw={"max_workers": 4}`.
 

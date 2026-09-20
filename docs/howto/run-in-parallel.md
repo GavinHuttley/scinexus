@@ -6,21 +6,22 @@
 
 ## Data level parallelism
 
-`scinexus` supports parallel computation for the common case where the same calculation needs to be applied to many independent data items. A master process splits the work among available CPU cores, each worker processes its share, and results are collected.
+`scinexus` supports parallel computation for the common case where the same calculation needs to be applied to many independent data items. The master splits the work among available CPU cores, each worker processes its share, and results are collected. Whether a worker is a process or a thread depends on the backend, and on a free-threaded build the default is threads.
 
 !!! warning
 
-    Parallelism is not always faster. You should see a performance gain when the computation time per task significantly exceeds the overhead of distributing work. If individual tasks are very fast, the overhead of inter-process communication can dominate.
+    Parallelism is not always faster. You should see a performance gain when the computation time per task significantly exceeds the overhead of distributing work. If individual tasks are very fast, the overhead of distributing them can dominate — for the process backends that overhead includes pickling every argument and result and sending it between processes.
 
     If individual output files are small, storing results in a single file (e.g. a `.sqlitedb` database) is more efficient than writing many small files.
 
 ## Choosing a parallel backend
 
-`scinexus` supports three parallel backends. The default uses only the Python standard library and requires no extra installs.
+`scinexus` supports four parallel backends. Two of them use only the Python standard library and require no extra installs.
 
 | Backend | Install | Best for |
 |---|---|---|
 | `"multiprocess"` | included | scripts, CI, environments where you control dependencies |
+| `"threads"` | included | free-threaded (no-GIL) builds, where it is the default |
 | `"loky"` | `pip install "scinexus[loky]"` | Jupyter notebooks, interactive sessions, long-running pools |
 | `"mpi"` | `pip install "scinexus[mpi]"` | HPC clusters with multiple nodes |
 
@@ -35,6 +36,34 @@ scinexus.set_parallel_backend("loky")
 !!! note
 
     The `"loky"` backend uses [loky](https://loky.readthedocs.io/) which provides reusable process pools and robust pickling via `cloudpickle`. This makes it the recommended choice for Jupyter notebooks, where the stdlib `ProcessPoolExecutor` can fail to serialise closures and lambda functions.
+
+### If you do not choose, one is chosen for you
+
+With no call to `set_parallel_backend`, the backend is `"threads"` when the GIL is not in force **and** the caller is not itself a pool worker, and `"multiprocess"` in every other case. On a standard CPython build you therefore get processes, and on a free-threaded (no-GIL) build you get threads in the master and processes inside a worker that starts a pool of its own. Threads are worth having only where they can run at the same time, and a thread pool inside a worker would also report that worker as rank 0 and as the master, which it is not.
+
+Two things besides the build can put the GIL back in force: setting `PYTHON_GIL=1`, and importing an extension module that does not declare free-threading support. The second can happen partway through a run, so the choice is revisited on every call to `imap`, `map` or `as_completed` for as long as it stays automatic. A backend you pass to `set_parallel_backend` is not revisited, so pinning one is how you opt out of threads on a free-threaded build.
+
+```python { notest }
+import scinexus
+
+scinexus.set_parallel_backend("multiprocess")  # processes, whatever the build
+```
+
+!!! note "What a pinned backend does not cover"
+
+    The setting applies to this process alone, so a worker does not inherit it and chooses again for itself. Passing `use_mpi=True` to `imap`, `map` or `as_completed` uses MPI for that call whatever you pinned. And `get_rank()`, `get_size()` and `is_master_process()` report on the context actually running the current thread rather than on the default you set, so under MPI, or on a thread from one of these pools, they answer for that.
+
+### What crosses to a worker
+
+The process backends — `"multiprocess"`, `"loky"` and `"mpi"` — pickle the function and its arguments and send them to another process. Each worker gets its own copy of your app, so mutating `self` inside `main()` affects nothing else, and closures and lambdas are refused (`"loky"` is the most forgiving, since it pickles via `cloudpickle`).
+
+The `"threads"` backend sends nothing. Workers share the app instance and everything reachable from it, so closures and lambdas are accepted, but a `main()` that mutates `self` or writes module-level state — the `numpy.random` global generator, say — is a data race here where it was harmless under the process backends.
+
+Because there is nothing to send, there is also no per-item transport cost to amortise, so `"threads"` checks `chunksize` and then ignores it. Only `imap` on the process and MPI backends chunks the work.
+
+!!! warning
+
+    Which of the two you get is not fixed by your code, because the default follows the interpreter. An app written for processes alone can be correct on CPython 3.14 and racy on 3.14t. Either pin the backend with `set_parallel_backend`, or keep `main()` free of mutable shared state so that it is correct under both.
 
 ### Getting a specific backend without changing the default
 
@@ -78,7 +107,7 @@ from scinexus import parallel
 result = list(parallel.as_completed(is_prime, PRIMES, max_workers=4))
 ```
 
-The first argument is the function to call, the second is the iterable of inputs. Each input element is passed as a single argument to the function. The data is broken into chunks across workers automatically.
+The first argument is the function to call, the second is the iterable of inputs. Each input element is passed as a single argument to the function, and `as_completed` submits one task per item on every backend. If you want the work batched, use `imap` on a process or MPI backend, which chunks by `chunksize`.
 
 !!! note
 

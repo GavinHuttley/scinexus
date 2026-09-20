@@ -30,7 +30,7 @@ With `scinexus` apps, you can use a functional programming style when developing
 
 [^1]: Failures are automatically recorded as `NotCompleted` records which get propagated and stored in [data stores](explanation/not-completed-design.md). These records record salient details that help you identify the cause of the failure.
 [^2]: `tqdm` is the default because of its robustness in notebooks, but you can choose `rich`.
-[^3]: The default is Python’s standard library `multiprocessing` module. If you're using Jupyter Notebooks, however, it's recommended that you use `loky`. This is an [installation option](install.md#optional-extras) and [configuration is easy](howto/run-in-parallel.md#choosing-a-parallel-backend).
+[^3]: The default follows the interpreter — Python’s standard library `multiprocessing` module, or its `ThreadPoolExecutor` in the master process on a free-threaded build, where threads can run at the same time. If you're using Jupyter Notebooks, however, it's recommended that you use `loky`. This is an [installation option](install.md#optional-extras) and [configuration is easy](howto/run-in-parallel.md#choosing-a-parallel-backend).
 
 ## Standalone utilities
 
