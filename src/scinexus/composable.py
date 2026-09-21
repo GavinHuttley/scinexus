@@ -301,8 +301,8 @@ def _proxy_input(dstore: Iterable[Any]) -> list[source_proxy[Any]]:
     for e in dstore:
         if not e:
             continue
-        # an input's own .source says nothing about whether the result will
-        # still have one, so the proxy goes on regardless
+        # every input is proxied, retaining any existing .source information
+        # in the proxy
         e = e if isinstance(e, source_proxy) else source_proxy(e)
         inputs.append(e)
 
@@ -359,35 +359,29 @@ class propagate_source:
 
 
 # Forbidden methods per app kind
-_FORBIDDEN_BASE = frozenset(
-    {
-        "__call__",
-        "__repr__",
-        "__str__",
-        "__new__",
-        "__copy__",
-        "__eq__",
-        "_validate_data_type",
-        "as_completed",
-        "check_data_type",
-        "_get_citations",
-        "citations",
-        "bib",
-    }
-)
-_FORBIDDEN_COMPOSABLE = _FORBIDDEN_BASE | frozenset(
-    {
-        "__add__",
-        "disconnect",
-        "input",
-    }
-)
-_FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset(
-    {
-        "apply_to",
-        "set_logger",
-    }
-)
+_FORBIDDEN_BASE = frozenset({
+    "__call__",
+    "__repr__",
+    "__str__",
+    "__new__",
+    "__copy__",
+    "__eq__",
+    "_validate_data_type",
+    "as_completed",
+    "check_data_type",
+    "_get_citations",
+    "citations",
+    "bib",
+})
+_FORBIDDEN_COMPOSABLE = _FORBIDDEN_BASE | frozenset({
+    "__add__",
+    "disconnect",
+    "input",
+})
+_FORBIDDEN_WRITER = _FORBIDDEN_COMPOSABLE | frozenset({
+    "apply_to",
+    "set_logger",
+})
 
 
 def _init_subclass_setup(
@@ -708,7 +702,8 @@ class AppBase(Generic[T, R]):
             dstore = dstore.completed
         mapped = _proxy_input(dstore)
         if not mapped:
-            return iter(())
+            yield from iter(())
+            return
 
         if parallel:
             from scinexus import parallel as snxpar
