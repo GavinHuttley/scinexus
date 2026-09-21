@@ -1421,12 +1421,14 @@ def test_source_proxy_pickle():
 
 
 def test_proxy_input_with_source():
+    """an input knowing its own origin is still proxied, the result may not"""
     item = Mock()
     item.source = "test"
     item.__bool__ = lambda self: True
     result = _proxy_input([item])
     assert len(result) == 1
-    assert result[0] is item
+    assert isinstance(result[0], source_proxy)
+    assert result[0].source is item
 
 
 def test_proxy_input_without_source():
@@ -1979,6 +1981,78 @@ def test_apply_to_skip_existing(tmp_path):
     # run again — existing items should be skipped
     result = process.apply_to(dstore, logger=False, show_progress=False)
     assert len(result) == 3
+
+
+def test_apply_to_input_with_own_source_keeps_identity(tmp_path):
+    """an input carrying .source is named after itself, not after the result"""
+
+    class Record:
+        def __init__(self, payload: str, source: str) -> None:
+            self.payload = payload
+            self.source = source
+
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: Record) -> str:
+            return val.payload
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    process.apply_to(
+        [Record("hello", "in_0.txt"), Record("world", "in_1.txt")],
+        logger=False,
+        show_progress=False,
+    )
+    assert sorted(m.unique_id for m in out_dstore.completed) == [
+        "in_0.txt",
+        "in_1.txt",
+    ]
+
+
+def test_apply_to_cogent3_inputs_keep_identity(tmp_path):
+    """loaded alignments carry .source, which a str result must not displace"""
+    src = tmp_path / "src"
+    src.mkdir()
+    for name, second in (("aln_0", "ACGA"), ("aln_1", "ACGG")):
+        (src / f"{name}.fasta").write_text(f">a\nACGT\n>b\n{second}\n")
+
+    loader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    alignments = [loader(m) for m in DataStoreDirectory(src, suffix="fasta").completed]
+    # without this the inputs would be proxied for the mundane reason that
+    # they have no source, and the test would pass against the old behaviour
+    assert all(a.source for a in alignments)
+
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="fasta")
+
+    @define_app
+    class to_text:
+        def main(self, aln: c3types.AlignedSeqsType) -> str:
+            return aln.to_fasta()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    (to_text() + writer(data_store=out_dstore)).apply_to(
+        alignments, logger=False, show_progress=False
+    )
+    assert sorted(m.unique_id for m in out_dstore.completed) == [
+        "aln_0.fasta",
+        "aln_1.fasta",
+    ]
 
 
 def test_apply_to_str_pipeline_uses_input_identifiers(tmp_path):

@@ -301,8 +301,9 @@ def _proxy_input(dstore: Iterable[Any]) -> list[source_proxy[Any]]:
     for e in dstore:
         if not e:
             continue
-        if not isinstance(e, source_proxy):
-            e = e if hasattr(e, "source") else source_proxy(e)
+        # an input's own .source says nothing about whether the result will
+        # still have one, so the proxy goes on regardless
+        e = e if isinstance(e, source_proxy) else source_proxy(e)
         inputs.append(e)
 
     return inputs
