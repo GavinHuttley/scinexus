@@ -1,0 +1,19 @@
+{
+  "name": "scinexus",
+  "owner": {
+    "name": "The scinexus authors",
+    "url": "https://github.com/cogent3/scinexus"
+  },
+  "description": "The scinexus agent skill, for building applications with scinexus",
+  "plugins": [
+    {
+      "name": "scinexus",
+      "source": "./",
+      "description": "Writing composable, type-checked data pipelines with scinexus: define_app, NotCompleted, data stores, apply_to, parallel backends",
+      "homepage": "https://scinexus.readthedocs.io",
+      "repository": "https://github.com/cogent3/scinexus",
+      "license": "BSD-3-Clause",
+      "keywords": ["scinexus", "pipelines", "scientific-computing"]
+    }
+  ]
+}

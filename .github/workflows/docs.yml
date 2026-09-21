@@ -13,6 +13,8 @@ on:
     paths:
       - 'docs/**'
       - 'overrides/**'
+      - 'skills/**'
+      - 'scripts/publish_skills.py'
       - '.readthedocs.yaml'
       - 'zensical.toml'
       - 'rtd_get_docs.py'
@@ -48,6 +50,9 @@ jobs:
           uv run --group dev nox -s cogdocs
           # build actual docs
           uv run --group dev --group doc zensical build --clean
+          # agent skills, which zensical cannot place: it does not copy a
+          # hidden directory out of docs/
+          uv run python scripts/publish_skills.py site
         working-directory: ${{ github.workspace }}
 
       - name: Upload Documentation Artifact
@@ -55,6 +60,9 @@ jobs:
         with:
           name: scinexus-docs-html
           path: site
+          # without this the .well-known directory is dropped from the
+          # artifact and every published skill URL becomes a 404
+          include-hidden-files: true
 
   trigger_rtd:
     if: github.repository == 'cogent3/SciNexus'
