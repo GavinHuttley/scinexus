@@ -22,6 +22,7 @@ from scinexus.data_store import (
     DataStoreDirectory,
     Mode,
     _check_identifier,
+    _member_id,
 )
 from scinexus.misc import extend_docstring_from
 from scinexus.parallel import is_master_process
@@ -462,8 +463,10 @@ class DataStoreSqlite(DataStoreABC):
                 db.close()
 
     def read(self, unique_id: str) -> str | bytes:
-        """
-        identifier string formed from Path(table_name) / identifier
+        """reads data corresponding to identifier
+
+        A log record is named "logs/<name>", a result by its name alone.
+        Either separator is accepted, since the table is taken with Path.
         """
         uid_path = Path(unique_id)
         table_name = str(uid_path.parent)
@@ -525,7 +528,7 @@ class DataStoreSqlite(DataStoreABC):
         """returns all log records"""
         rows = self._fetchall(f"SELECT log_name FROM {LOG_TABLE}")
         return [
-            DataMember(data_store=self, unique_id=Path(LOG_TABLE) / r["log_name"])
+            DataMember(data_store=self, unique_id=_member_id(LOG_TABLE, r["log_name"]))
             for r in rows
             if r["log_name"]
         ]

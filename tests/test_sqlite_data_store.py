@@ -4,13 +4,14 @@ import os
 import sqlite3
 import sys
 import threading
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from pickle import dumps, loads
 
 import pytest
 from citeable import Software
 from scitrack import get_text_hexdigest
 
+from scinexus import sqlite_data_store
 from scinexus.composable import (
     LOADER,
     NotCompleted,
@@ -185,6 +186,25 @@ def test_logdata(tmp_dir, DATA_DIR):
     assert len(dstore.logs) == 1
     got = dstore.logs[0].read()
     assert got == log_text
+    dstore.close()
+
+
+def test_log_member_ids_are_spelled_the_same_on_every_platform(
+    tmp_dir,
+    monkeypatch,
+):
+    """a sqlite store names its logs the way the other backends do"""
+    # the platform half of this cannot run here, so stand in for it. the
+    # store is built first because PureWindowsPath has no expanduser(),
+    # which __init__ calls. the patch is inert against the code as it
+    # stands, and is here to fail the day an id is joined with Path again
+    path = tmp_dir / "test_log_id.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write_log(unique_id="test.log", data="2024-01-01\tsetup\n")
+    monkeypatch.setattr(sqlite_data_store, "Path", PureWindowsPath)
+
+    assert [m.unique_id for m in dstore.logs] == [f"{LOG_TABLE}/test.log"]
+
     dstore.close()
 
 
