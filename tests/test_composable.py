@@ -2078,6 +2078,149 @@ def test_not_completed_without_source_gets_input_identity(tmp_path):
     assert construction["kwargs"]["source"] == "item_0"
 
 
+def test_raised_failure_attributed_to_input(tmp_path):
+    """an exception past the head of a pipeline names the input, not the data"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class boom:
+        def main(self, text: str) -> str:
+            msg = "no good"
+            raise ValueError(msg)
+
+    got = list((reader() + boom()).as_completed(dstore))
+    assert len(got) == 1
+    assert got[0].source == "item_0"
+
+
+def test_type_failure_past_head_attributed_to_input(tmp_path):
+    """a runtime type mismatch past the head names the input, not the data"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str | int:
+            return val.read()
+
+    @define_app
+    class wants_int:
+        def main(self, n: int) -> int:
+            return n + 1
+
+    got = list((reader() + wants_int()).as_completed(dstore))
+    assert len(got) == 1
+    assert got[0].source == "item_0"
+
+
+def test_apply_to_files_raised_failure_under_input_id(tmp_path):
+    """a raised failure is stored against the input identifier"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class boom:
+        def main(self, text: str) -> str:
+            msg = "no good"
+            raise ValueError(msg)
+
+    @define_app(app_type=WRITER, skip_not_completed=False)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember | None:
+            if isinstance(data, NotCompleted):
+                return self.data_store.write_not_completed(
+                    unique_id=identifier, data=data.to_json()
+                )
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + boom() + writer(data_store=out_dstore)
+    result = process.apply_to(dstore, logger=False, show_progress=False)
+    assert [m.unique_id for m in result.not_completed] == ["not_completed/item_0.json"]
+
+
+def test_direct_call_failure_attributed_to_input(tmp_path):
+    """a failure names the input even with no source_proxy in the path"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class boom:
+        def main(self, text: str) -> str:
+            msg = "no good"
+            raise ValueError(msg)
+
+    app = reader() + boom()
+    assert app(next(iter(dstore))).source == "item_0"
+
+
+def test_apply_to_failure_on_unproxied_input(tmp_path):
+    """inputs already carrying .source are never proxied, so the identity must
+    be taken before the pipeline replaces it"""
+
+    class Rec:
+        def __init__(self, text: str, source: str) -> None:
+            self.text = text
+            self.source = source
+
+    inputs = [Rec("payload one", "one.txt")]
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app
+    class unpack:
+        def main(self, rec: Rec) -> str:
+            return rec.text
+
+    @define_app
+    class boom:
+        def main(self, text: str) -> str:
+            msg = "no good"
+            raise ValueError(msg)
+
+    @define_app(app_type=WRITER, skip_not_completed=False)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember | None:
+            if isinstance(data, NotCompleted):
+                return self.data_store.write_not_completed(
+                    unique_id=identifier, data=data.to_json()
+                )
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = unpack() + boom() + writer(data_store=out_dstore)
+    result = process.apply_to(inputs, logger=False, show_progress=False)
+    assert [m.unique_id for m in result.not_completed] == ["not_completed/one.json"]
+
+
 def test_apply_to_with_logging(tmp_path):
     from scinexus.data_store import DataMember
 

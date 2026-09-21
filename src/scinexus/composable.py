@@ -549,13 +549,16 @@ class AppBase(Generic[T, R]):
         if isinstance(val, NotCompleted) and self._skip_not_completed:
             return val
 
+        # val is rebound to the input app's result below, so the identity a
+        # failure gets attributed to has to be taken before that happens
+        source: Any = val
         if self.app_type is not LOADER and self.input:  # passing to connected app
             val = self.input(val, *args, **kwargs)
             if isinstance(val, NotCompleted) and self._skip_not_completed:
                 return val
 
         if self._check_data_type:
-            type_checked = self._validate_data_type(val)
+            type_checked = self._validate_data_type(val, source=source)
             if not type_checked:
                 return type_checked  # type: ignore[return-value]
 
@@ -563,12 +566,15 @@ class AppBase(Generic[T, R]):
             result = self.main(val, *args, **kwargs)
         except Exception:
             result = NotCompleted(
-                NotCompletedType.ERROR, self, traceback.format_exc(), source=val
+                NotCompletedType.ERROR, self, traceback.format_exc(), source=source
             )
 
         if result is None:
             result = NotCompleted(
-                NotCompletedType.BUG, self, "unexpected output value None", source=val
+                NotCompletedType.BUG,
+                self,
+                "unexpected output value None",
+                source=source,
             )
         return result
 
@@ -591,7 +597,7 @@ class AppBase(Generic[T, R]):
 
     __str__ = __repr__
 
-    def _validate_data_type(self, data: Any) -> bool | NotCompleted:
+    def _validate_data_type(self, data: Any, source: Any = None) -> bool | NotCompleted:
         """checks data type matches defined compatible types using typeguard"""
         if isinstance(data, NotCompleted):
             if self._skip_not_completed:
@@ -604,7 +610,7 @@ class AppBase(Generic[T, R]):
 
         if isinstance(data, _builtin_seqs) and len(data) == 0:
             return NotCompleted(
-                NotCompletedType.ERROR, self, message="empty data", source=data
+                NotCompletedType.ERROR, self, message="empty data", source=source
             )
 
         try:
@@ -614,7 +620,9 @@ class AppBase(Generic[T, R]):
             class_name = data.__class__.__name__
             expected = get_type_display_names(self._input_type)
             msg = f"invalid data type, '{class_name}' not in {', '.join(sorted(expected))}"
-            return NotCompleted(NotCompletedType.ERROR, self, message=msg, source=data)
+            return NotCompleted(
+                NotCompletedType.ERROR, self, message=msg, source=source
+            )
 
     def as_completed(
         self,
