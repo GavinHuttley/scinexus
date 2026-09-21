@@ -1396,6 +1396,20 @@ def test_get_unique_id_none():
     assert got is None
 
 
+@pytest.mark.parametrize(
+    ("name", "expect"),
+    [
+        ("(A:0.1,B:0.2);", "(A:0.1,B:0"),
+        ("result (see fig. 2)", "result (see fig"),
+        ("v1.0 [draft]", "v1"),
+        ("counts.*", "counts"),
+    ],
+)
+def test_get_unique_id_suffix_is_text_not_a_pattern(name, expect):
+    """the trailing suffix is stripped literally, never compiled"""
+    assert get_unique_id(name) == expect
+
+
 def test_set_id_from_source_returns_default_initially(
     reset_id_from_source: None,
 ) -> None:

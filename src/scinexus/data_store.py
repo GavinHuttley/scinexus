@@ -1311,7 +1311,10 @@ def get_unique_id(name: object) -> str | None:
     if (name := get_data_source(name)) is None:
         return None
     suffixes = ".".join(sfx for sfx in get_format_suffixes(name) if sfx)
-    return re.sub(rf"[.]{suffixes}$", "", name)
+    # name is data as often as it is a path, so the suffix can be anything at
+    # all. Interpolating it into a pattern let '(1)' or '.*' compile.
+    tail = f".{suffixes}"
+    return name[: -len(tail)] if suffixes and name.endswith(tail) else name
 
 
 def set_id_from_source(func: Callable[..., Any] | None) -> None:
