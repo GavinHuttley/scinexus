@@ -317,8 +317,8 @@ def _has_source(result: typing.Any) -> bool:
     if isinstance(result, dict):
         info = result.get("info")
         val = info.get("source") if isinstance(info, dict) else None
-        return (val or result.get("source")) is not None
-    return getattr(result, "source", None) is not None
+        return bool(val or result.get("source"))
+    return bool(getattr(result, "source", None))
 
 
 class propagate_source:
@@ -708,7 +708,7 @@ class AppBase(Generic[T, R]):
             dstore = dstore.completed
         mapped = _proxy_input(dstore)
         if not mapped:
-            return (_ for _ in ())
+            return iter(())
 
         if parallel:
             from scinexus import parallel as snxpar
@@ -719,7 +719,11 @@ class AppBase(Generic[T, R]):
             to_do = map(app, mapped)
 
         progress = get_progress(show_progress)
-        return progress(to_do, total=len(mapped))
+        for obj in progress(to_do, total=len(mapped)):
+            if not isinstance(obj, source_proxy):
+                yield obj
+                continue
+            yield obj.obj if _has_source(obj.obj) else obj
 
     def _get_citations(self) -> tuple[Citation, ...]:
         """Return citations for this app and all composed input apps."""
