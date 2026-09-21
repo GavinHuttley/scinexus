@@ -58,6 +58,26 @@ class ChecksumMigration(TypedDict):
     superseded: list[str]
 
 
+def _member_id(subdir: str, name: str) -> str:
+    """the store relative identifier of a record held in subdir
+
+    Parameters
+    ----------
+    subdir
+        directory the record sits in, empty for a completed record
+    name
+        file name the record is stored under
+
+    Notes
+    -----
+    An identifier rather than a path, so it is spelled with "/" wherever it
+    is composed. Joining with Path would spell it with the separator of the
+    platform doing the joining, and a store's members would then read
+    not_completed/nc1.json on POSIX and not_completed\\nc1.json on Windows.
+    """
+    return f"{subdir}/{name}" if subdir else name
+
+
 def _record_stem(unique_id: str) -> str:
     """the identifier with its format and compression suffixes removed"""
     stem = Path(unique_id).name
@@ -717,7 +737,7 @@ class DataStoreDirectory(DataStoreABC):
         target = self._record_name(unique_id, "json")[0] if unique_id else ""
         # members carry the subdirectory, so the comparison below needs the
         # same form. built once: write() drops a twin on every call
-        wanted = str(Path(NOT_COMPLETED_TABLE) / target) if target else ""
+        wanted = _member_id(NOT_COMPLETED_TABLE, target) if target else ""
         nc_dir = self.source / NOT_COMPLETED_TABLE
         md5_dir = self.source / MD5_TABLE
         # the removals and the reset are one region, so a scan cannot run
@@ -767,7 +787,7 @@ class DataStoreDirectory(DataStoreABC):
         log_dir = self.source / LOG_TABLE
         return (
             [
-                DataMember(data_store=self, unique_id=str(Path(LOG_TABLE) / m.name))
+                DataMember(data_store=self, unique_id=_member_id(LOG_TABLE, m.name))
                 for m in log_dir.glob("*")
             ]
             if log_dir.exists()
@@ -806,7 +826,7 @@ class DataStoreDirectory(DataStoreABC):
                     found.append(
                         DataMember(
                             data_store=self,
-                            unique_id=str(Path(NOT_COMPLETED_TABLE) / m.name),
+                            unique_id=_member_id(NOT_COMPLETED_TABLE, m.name),
                         ),
                     )
                     if self.limit and len(found) == self.limit:
@@ -850,7 +870,7 @@ class DataStoreDirectory(DataStoreABC):
     ) -> DataMember | None:
         given = unique_id
         unique_id = self._record_name(unique_id, suffix)[0]
-        member_id = str(Path(subdir) / unique_id)
+        member_id = _member_id(subdir, unique_id)
         # super().write refuses a read only store and an APPEND overwrite,
         # and both are more fundamental than a complaint about the name,
         # so they answer first
@@ -871,13 +891,7 @@ class DataStoreDirectory(DataStoreABC):
 
         if subdir == LOG_TABLE:
             return None
-        if subdir == NOT_COMPLETED_TABLE:
-            member = DataMember(
-                data_store=self,
-                unique_id=str(Path(NOT_COMPLETED_TABLE) / unique_id),
-            )
-        elif not subdir:
-            member = DataMember(data_store=self, unique_id=unique_id)
+        member = DataMember(data_store=self, unique_id=member_id)
 
         md5 = get_text_hexdigest(data)
         # named for the kind as well as the record, so a completed record
@@ -1209,12 +1223,11 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
             if not self._not_completed:
                 found: list[DataMemberABC] = []
                 num_matches = 0
-                nc_dir_path = Path(NOT_COMPLETED_TABLE)
                 for name in self._iter_matches(NOT_COMPLETED_TABLE, "json"):
                     num_matches += 1
                     member = DataMember(
                         data_store=self,
-                        unique_id=str(nc_dir_path / name.name),
+                        unique_id=_member_id(NOT_COMPLETED_TABLE, name.name),
                     )
                     found.append(member)
                     if self.limit and num_matches >= self.limit:
@@ -1226,10 +1239,9 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
 
     @property
     def logs(self) -> list[DataMemberABC]:
-        log_dir = Path(LOG_TABLE)
         logs: list[DataMemberABC] = []
         for name in self._iter_matches(LOG_TABLE, None):
-            m = DataMember(data_store=self, unique_id=str(log_dir / name.name))
+            m = DataMember(data_store=self, unique_id=_member_id(LOG_TABLE, name.name))
             logs.append(m)
         return logs
 
@@ -1245,7 +1257,6 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         md5 checksum for the member, if available, None otherwise
         """
         completed = Path(unique_id).parent.name != NOT_COMPLETED_TABLE
-        md5_dir = Path(MD5_TABLE)
         # the legacy name second: an archive cannot be rewritten, so a
         # store zipped before the kinds were named falls back forever
         candidates = (
@@ -1263,7 +1274,7 @@ class ReadOnlyDataStoreZipped(DataStoreABC):
         for md5_name in candidates:
             if md5_name not in found:
                 continue
-            m = DataMember(data_store=self, unique_id=str(md5_dir / md5_name))
+            m = DataMember(data_store=self, unique_id=_member_id(MD5_TABLE, md5_name))
             result = m.read()
             return result if isinstance(result, str) else result.decode()
         return None
