@@ -105,17 +105,19 @@ class my_standalone_app:
 
 ## Handling `NotCompleted` values
 
-By default, apps skip `NotCompleted` inputs — they propagate through the pipeline without calling `main()`. If your app needs access to `NotCompleted` instances (e.g. you are developing a writer that records failures), set `skip_not_completed=False`:
+By default, apps skip `NotCompleted` inputs — they propagate through the pipeline without calling `main()`. If your app needs access to `NotCompleted` instances, set `skip_not_completed=False`:
 
 ```python
 from scinexus import define_app, NotCompleted
 
 
 @define_app(skip_not_completed=False)
-class my_writer:
+class my_logger:
     def main(self, val: str) -> str:
         if isinstance(val, NotCompleted):
             # handle the failure
             ...
         return val
 ```
+
+A writer does not need the flag — it is forced off, so a writer's `main()` always receives `NotCompleted` values and must handle them. See [Handle failures](handle-failures.md).

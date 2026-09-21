@@ -2221,6 +2221,193 @@ def test_apply_to_failure_on_unproxied_input(tmp_path):
     assert [m.unique_id for m in result.not_completed] == ["not_completed/one.json"]
 
 
+def test_writer_main_without_identifier_is_left_alone(tmp_path):
+    """a writer that names records itself is not handed an identifier"""
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=WRITER)
+    class fixed_name_writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str) -> DataMember:
+            return self.data_store.write(unique_id="fixed", data=data)
+
+    assert fixed_name_writer._main_takes_identifier is False
+    fixed_name_writer(data_store=out_dstore)("payload")
+    assert [m.unique_id for m in out_dstore.completed] == ["fixed.txt"]
+
+
+def test_writer_skip_not_completed_forced_off():
+    """apply_to drives a writer's main directly, so the flag cannot be honoured"""
+
+    @define_app(app_type=WRITER)
+    class default_writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    @define_app(app_type=WRITER, skip_not_completed=True)
+    class explicit_writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    assert default_writer._skip_not_completed is False
+    assert explicit_writer._skip_not_completed is False
+
+
+def test_writer_receives_not_completed_on_direct_call(tmp_path):
+    """a writer sees NotCompleted whichever way the pipeline is invoked"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    seen = []
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class reject:
+        def main(self, text: str) -> str:
+            return NotCompleted("FAIL", self, "not wanted")
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember | None:
+            seen.append(type(data).__name__)
+            if isinstance(data, NotCompleted):
+                return None
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    app = reader() + reject() + writer(data_store=out_dstore)
+    app(next(iter(dstore)))
+    assert seen == ["NotCompleted"]
+
+
+def test_writer_direct_call_matches_apply_to(tmp_path):
+    """a one-off call names the record the way apply_to would"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class shout:
+        def main(self, text: str) -> str:
+            return text.upper()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    direct = DataStoreDirectory(tmp_path / "direct", mode=Mode.w, suffix="txt")
+    (reader() + shout() + writer(data_store=direct))(next(iter(dstore)))
+
+    batched = DataStoreDirectory(tmp_path / "batched", mode=Mode.w, suffix="txt")
+    (reader() + shout() + writer(data_store=batched)).apply_to(
+        dstore, logger=False, show_progress=False
+    )
+
+    assert [m.unique_id for m in direct.completed] == ["item_0.txt"]
+    assert [m.unique_id for m in direct.completed] == [
+        m.unique_id for m in batched.completed
+    ]
+
+
+def test_writer_direct_call_failure_gets_identifier(tmp_path):
+    """a NotCompleted reaching a writer directly is named, not left blank"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    seen = []
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class reject:
+        def main(self, text: str) -> str:
+            return NotCompleted("FAIL", self, "not wanted")
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember | None:
+            seen.append(identifier)
+            return None
+
+    app = reader() + reject() + writer(data_store=out_dstore)
+    app(next(iter(dstore)))
+    assert seen == ["item_0"]
+
+
+def test_writer_direct_call_without_identity_raises(tmp_path):
+    """no identifier and nothing to derive one from is a programming error"""
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=WRITER)
+    class lone_writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: int, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=str(data))
+
+    app = lone_writer(data_store=out_dstore)
+    with pytest.raises(ValueError, match="lone_writer"):
+        app(42)
+
+
+def test_writer_direct_call_explicit_identifier_wins(tmp_path):
+    """a caller supplied identifier is not overridden"""
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=WRITER)
+    class lone_writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: int, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=str(data))
+
+    app = lone_writer(data_store=out_dstore)
+    app(42, identifier="by_keyword")
+    app(7, "by_position")
+    assert sorted(m.unique_id for m in out_dstore.completed) == [
+        "by_keyword.txt",
+        "by_position.txt",
+    ]
+
+
 def test_apply_to_with_logging(tmp_path):
     from scinexus.data_store import DataMember
 
