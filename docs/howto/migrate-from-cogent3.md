@@ -67,7 +67,7 @@ These capabilities are new in `scinexus` and were not available in `cogent3.app`
 
 - **`check_data_type` property** -- toggle runtime input type checking on or off. See [Runtime type checking](../explanation/type-system.md#runtime-type-checking).
 - **Better IDE integration through static typing support** -- `AppBase[T, R]`, `ComposableApp[T, R]`, and `WriterApp[T, R]` can be inherited from directly as an alternative to `@define_app`.
-- **Pluggable parallel backends** -- choose between stdlib multiprocessing, loky, or MPI backends. See [Run in parallel](run-in-parallel.md).
+- **Pluggable parallel backends** -- choose between stdlib multiprocessing, stdlib threads, loky, or MPI backends. See [Run in parallel](run-in-parallel.md).
 - **Pluggable progress bars** -- use `tqdm` or `rich` for progress display. See [Track progress](track-progress.md).
 - **Custom identifier extraction** -- register a custom function for extracting storage identifiers from data via `set_id_from_source()`. See [Customise display and IDs](customise-display-and-ids.md).
 - **Logging can be disabled** -- pass `logger=False` to `apply_to()` to skip log file creation.

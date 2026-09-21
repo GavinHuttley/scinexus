@@ -635,8 +635,8 @@ def get_parallel_backend(backend: BackendType | None = None) -> Parallel:
     Returns
     -------
     When no backend has been set and ``backend is None``, a
-    ``ThreadBackend`` if the GIL is not in force and a
-    ``MultiprocessBackend`` otherwise.
+    ``ThreadBackend`` if the GIL is not in force and this is not itself a
+    pool worker, and a ``MultiprocessBackend`` in every other case.
 
     Notes
     -----

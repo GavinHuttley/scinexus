@@ -301,8 +301,9 @@ def _proxy_input(dstore: Iterable[Any]) -> list[source_proxy[Any]]:
     for e in dstore:
         if not e:
             continue
-        if not isinstance(e, source_proxy):
-            e = e if hasattr(e, "source") else source_proxy(e)
+        # every input is proxied, retaining any existing .source information
+        # in the proxy
+        e = e if isinstance(e, source_proxy) else source_proxy(e)
         inputs.append(e)
 
     return inputs
@@ -311,12 +312,21 @@ def _proxy_input(dstore: Iterable[Any]) -> list[source_proxy[Any]]:
 GetIdFuncType = typing.Callable[[source_proxy[Any] | snx_typing.HasSource], str | None]
 
 
+def _has_source(result: typing.Any) -> bool:
+    """whether result carries a reference to its own origin"""
+    if isinstance(result, dict):
+        info = result.get("info")
+        val = info.get("source") if isinstance(info, dict) else None
+        return bool(val or result.get("source"))
+    return bool(getattr(result, "source", None))
+
+
 class propagate_source:
     """retains result association with source
 
     Notes
     -----
-    Returns the unwrapped result if it has a .source attribute,
+    Returns the unwrapped result if it tracks its own source,
     otherwise returns the original source_proxy with the .obj
     updated with result.
     """
@@ -332,11 +342,20 @@ class propagate_source:
             return self.app(value)
 
         result = self.app(value.obj)
-        if self.id_from_source(result):
-            return result
+        if isinstance(result, NotCompleted) and not _has_source(result):
+            # rebuilt rather than assigned to, so to_rich_dict() reports the
+            # same source as the instance does
+            result = NotCompleted(
+                result.type,
+                result.origin,
+                result.message,
+                source=self.id_from_source(value),
+            )
+        elif not _has_source(result):
+            value.set_obj(result)
+            return value
 
-        value.set_obj(result)
-        return value
+        return result
 
 
 # Forbidden methods per app kind
@@ -414,7 +433,14 @@ def _init_subclass_setup(
     cls._input_type = resolve_type_hint(raw_input, module_globals)
     cls._return_type = resolve_type_hint(raw_return, module_globals)
     cls.app_type = app_type
-    cls._skip_not_completed = skip_not_completed
+    # apply_to drives a writer's main() itself rather than going through
+    # __call__, so a writer receives a NotCompleted no matter what it asks
+    # for. Forcing the flag off keeps a direct call saying the same thing.
+    cls._skip_not_completed = False if app_type is WRITER else skip_not_completed
+    main_params = inspect.signature(cls.main).parameters
+    cls._main_takes_identifier = "identifier" in main_params or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in main_params.values()
+    )
     cls._check_data_type = True
     cls._cite = cite
     cls._source_wrapped = None
@@ -444,6 +470,7 @@ class AppBase(Generic[T, R]):
 
     _is_intermediate_base: bool = False
     _skip_not_completed: bool
+    _main_takes_identifier: bool
     _check_data_type: bool
     _source_wrapped: propagate_source | None
     _cite: Citation | None
@@ -531,26 +558,50 @@ class AppBase(Generic[T, R]):
         if isinstance(val, NotCompleted) and self._skip_not_completed:
             return val
 
+        # val is rebound to the input app's result below, so the identity a
+        # failure gets attributed to has to be taken before that happens
+        source: Any = val
         if self.app_type is not LOADER and self.input:  # passing to connected app
             val = self.input(val, *args, **kwargs)
             if isinstance(val, NotCompleted) and self._skip_not_completed:
                 return val
 
         if self._check_data_type:
-            type_checked = self._validate_data_type(val)
+            type_checked = self._validate_data_type(val, source=source)
             if not type_checked:
                 return type_checked  # type: ignore[return-value]
+
+        if (
+            self.app_type is WRITER
+            and self._main_takes_identifier
+            and not args
+            and "identifier" not in kwargs
+        ):
+            # mirrors apply_to, which names a record after the result when the
+            # result knows its own origin and after the input when it does not
+            named = val if _has_source(val) else source
+            unique_id = get_id_from_source()(named)
+            if not unique_id:
+                msg = (
+                    f"{self.__class__.__name__!r} cannot name a record: "
+                    f"no identifier could be derived from {named!r}"
+                )
+                raise ValueError(msg)
+            kwargs["identifier"] = unique_id
 
         try:
             result = self.main(val, *args, **kwargs)
         except Exception:
             result = NotCompleted(
-                NotCompletedType.ERROR, self, traceback.format_exc(), source=val
+                NotCompletedType.ERROR, self, traceback.format_exc(), source=source
             )
 
         if result is None:
             result = NotCompleted(
-                NotCompletedType.BUG, self, "unexpected output value None", source=val
+                NotCompletedType.BUG,
+                self,
+                "unexpected output value None",
+                source=source,
             )
         return result
 
@@ -573,7 +624,7 @@ class AppBase(Generic[T, R]):
 
     __str__ = __repr__
 
-    def _validate_data_type(self, data: Any) -> bool | NotCompleted:
+    def _validate_data_type(self, data: Any, source: Any = None) -> bool | NotCompleted:
         """checks data type matches defined compatible types using typeguard"""
         if isinstance(data, NotCompleted):
             if self._skip_not_completed:
@@ -586,7 +637,7 @@ class AppBase(Generic[T, R]):
 
         if isinstance(data, _builtin_seqs) and len(data) == 0:
             return NotCompleted(
-                NotCompletedType.ERROR, self, message="empty data", source=data
+                NotCompletedType.ERROR, self, message="empty data", source=source
             )
 
         try:
@@ -596,7 +647,9 @@ class AppBase(Generic[T, R]):
             class_name = data.__class__.__name__
             expected = get_type_display_names(self._input_type)
             msg = f"invalid data type, '{class_name}' not in {', '.join(sorted(expected))}"
-            return NotCompleted(NotCompletedType.ERROR, self, message=msg, source=data)
+            return NotCompleted(
+                NotCompletedType.ERROR, self, message=msg, source=source
+            )
 
     def as_completed(
         self,
@@ -655,7 +708,8 @@ class AppBase(Generic[T, R]):
             dstore = dstore.completed
         mapped = _proxy_input(dstore)
         if not mapped:
-            return (_ for _ in ())
+            yield from iter(())
+            return
 
         if parallel:
             from scinexus import parallel as snxpar
@@ -666,7 +720,11 @@ class AppBase(Generic[T, R]):
             to_do = map(app, mapped)
 
         progress = get_progress(show_progress)
-        return progress(to_do, total=len(mapped))
+        for obj in progress(to_do, total=len(mapped)):
+            if not isinstance(obj, source_proxy):
+                yield obj
+                continue
+            yield obj.obj if _has_source(obj.obj) else obj
 
     def _get_citations(self) -> tuple[Citation, ...]:
         """Return citations for this app and all composed input apps."""
@@ -1099,7 +1157,9 @@ def define_app(
         what type of app, typically you just want GENERIC.
     skip_not_completed
         if True (default), NotCompleted instances are returned without being
-        passed to the app.
+        passed to the app. Ignored for a writer, which always receives them
+        because ``apply_to`` invokes ``main`` directly. A writer's ``main``
+        must handle NotCompleted itself.
     cite
         a Citation instance describing the software or algorithm. If provided,
         its ``.app`` attribute is set to the class name.

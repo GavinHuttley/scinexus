@@ -1421,12 +1421,14 @@ def test_source_proxy_pickle():
 
 
 def test_proxy_input_with_source():
+    """an input knowing its own origin is still proxied, the result may not"""
     item = Mock()
     item.source = "test"
     item.__bool__ = lambda self: True
     result = _proxy_input([item])
     assert len(result) == 1
-    assert result[0] is item
+    assert isinstance(result[0], source_proxy)
+    assert result[0].source is item
 
 
 def test_proxy_input_without_source():
@@ -1979,6 +1981,505 @@ def test_apply_to_skip_existing(tmp_path):
     # run again — existing items should be skipped
     result = process.apply_to(dstore, logger=False, show_progress=False)
     assert len(result) == 3
+
+
+def test_apply_to_input_with_own_source_keeps_identity(tmp_path):
+    """an input carrying .source is named after itself, not after the result"""
+
+    class Record:
+        def __init__(self, payload: str, source: str) -> None:
+            self.payload = payload
+            self.source = source
+
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: Record) -> str:
+            return val.payload
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + writer(data_store=out_dstore)
+    process.apply_to(
+        [Record("hello", "in_0.txt"), Record("world", "in_1.txt")],
+        logger=False,
+        show_progress=False,
+    )
+    assert sorted(m.unique_id for m in out_dstore.completed) == [
+        "in_0.txt",
+        "in_1.txt",
+    ]
+
+
+def test_apply_to_cogent3_inputs_keep_identity(tmp_path):
+    """loaded alignments carry .source, which a str result must not displace"""
+    src = tmp_path / "src"
+    src.mkdir()
+    for name, second in (("aln_0", "ACGA"), ("aln_1", "ACGG")):
+        (src / f"{name}.fasta").write_text(f">a\nACGT\n>b\n{second}\n")
+
+    loader = c3.get_app("load_aligned", format_name="fasta", moltype="dna")
+    alignments = [loader(m) for m in DataStoreDirectory(src, suffix="fasta").completed]
+    # without this the inputs would be proxied for the mundane reason that
+    # they have no source, and the test would pass against the old behaviour
+    assert all(a.source for a in alignments)
+
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="fasta")
+
+    @define_app
+    class to_text:
+        def main(self, aln: c3types.AlignedSeqsType) -> str:
+            return aln.to_fasta()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    (to_text() + writer(data_store=out_dstore)).apply_to(
+        alignments, logger=False, show_progress=False
+    )
+    assert sorted(m.unique_id for m in out_dstore.completed) == [
+        "aln_0.fasta",
+        "aln_1.fasta",
+    ]
+
+
+def test_apply_to_str_pipeline_uses_input_identifiers(tmp_path):
+    """output ids come from the input, not from the str the pipeline returns"""
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(3):
+        (src / f"item_{i}.txt").write_text(f"data {i}")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class shout:
+        def main(self, text: str) -> str:
+            return text.upper()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + shout() + writer(data_store=out_dstore)
+    result = process.apply_to(dstore, logger=False, show_progress=False)
+    assert sorted(m.unique_id for m in result.completed) == [
+        "item_0.txt",
+        "item_1.txt",
+        "item_2.txt",
+    ]
+
+
+def test_apply_to_append_mode_rerun_skips_completed(tmp_path):
+    """a rerun against an append-mode store skips records already written"""
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(2):
+        (src / f"item_{i}.txt").write_text(f"data {i}")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    out = tmp_path / "out"
+    first = DataStoreDirectory(out, mode=Mode.w, suffix="txt")
+    (reader() + writer(data_store=first)).apply_to(
+        dstore, logger=False, show_progress=False
+    )
+
+    second = DataStoreDirectory(out, mode=Mode.a, suffix="txt")
+    result = (reader() + writer(data_store=second)).apply_to(
+        dstore, logger=False, show_progress=False
+    )
+    assert sorted(m.unique_id for m in result.completed) == [
+        "item_0.txt",
+        "item_1.txt",
+    ]
+
+
+def test_not_completed_without_source_gets_input_identity(tmp_path):
+    """a NotCompleted carrying no source is attributed to the input"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class reject:
+        def main(self, text: str) -> str:
+            return NotCompleted("FAIL", self, "no good")
+
+    got = list((reader() + reject()).as_completed(dstore))
+    assert len(got) == 1
+    assert got[0].source == "item_0"
+    construction = got[0].to_rich_dict()["not_completed_construction"]
+    assert construction["kwargs"]["source"] == "item_0"
+
+
+def test_raised_failure_attributed_to_input(tmp_path):
+    """an exception past the head of a pipeline names the input, not the data"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class boom:
+        def main(self, text: str) -> str:
+            msg = "no good"
+            raise ValueError(msg)
+
+    got = list((reader() + boom()).as_completed(dstore))
+    assert len(got) == 1
+    assert got[0].source == "item_0"
+
+
+def test_type_failure_past_head_attributed_to_input(tmp_path):
+    """a runtime type mismatch past the head names the input, not the data"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str | int:
+            return val.read()
+
+    @define_app
+    class wants_int:
+        def main(self, n: int) -> int:
+            return n + 1
+
+    got = list((reader() + wants_int()).as_completed(dstore))
+    assert len(got) == 1
+    assert got[0].source == "item_0"
+
+
+def test_apply_to_files_raised_failure_under_input_id(tmp_path):
+    """a raised failure is stored against the input identifier"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class boom:
+        def main(self, text: str) -> str:
+            msg = "no good"
+            raise ValueError(msg)
+
+    @define_app(app_type=WRITER, skip_not_completed=False)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember | None:
+            if isinstance(data, NotCompleted):
+                return self.data_store.write_not_completed(
+                    unique_id=identifier, data=data.to_json()
+                )
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = reader() + boom() + writer(data_store=out_dstore)
+    result = process.apply_to(dstore, logger=False, show_progress=False)
+    assert [m.unique_id for m in result.not_completed] == ["not_completed/item_0.json"]
+
+
+def test_direct_call_failure_attributed_to_input(tmp_path):
+    """a failure names the input even with no source_proxy in the path"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class boom:
+        def main(self, text: str) -> str:
+            msg = "no good"
+            raise ValueError(msg)
+
+    app = reader() + boom()
+    assert app(next(iter(dstore))).source == "item_0"
+
+
+def test_apply_to_failure_on_unproxied_input(tmp_path):
+    """inputs already carrying .source are never proxied, so the identity must
+    be taken before the pipeline replaces it"""
+
+    class Rec:
+        def __init__(self, text: str, source: str) -> None:
+            self.text = text
+            self.source = source
+
+    inputs = [Rec("payload one", "one.txt")]
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app
+    class unpack:
+        def main(self, rec: Rec) -> str:
+            return rec.text
+
+    @define_app
+    class boom:
+        def main(self, text: str) -> str:
+            msg = "no good"
+            raise ValueError(msg)
+
+    @define_app(app_type=WRITER, skip_not_completed=False)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember | None:
+            if isinstance(data, NotCompleted):
+                return self.data_store.write_not_completed(
+                    unique_id=identifier, data=data.to_json()
+                )
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    process = unpack() + boom() + writer(data_store=out_dstore)
+    result = process.apply_to(inputs, logger=False, show_progress=False)
+    assert [m.unique_id for m in result.not_completed] == ["not_completed/one.json"]
+
+
+def test_writer_main_without_identifier_is_left_alone(tmp_path):
+    """a writer that names records itself is not handed an identifier"""
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=WRITER)
+    class fixed_name_writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str) -> DataMember:
+            return self.data_store.write(unique_id="fixed", data=data)
+
+    assert fixed_name_writer._main_takes_identifier is False
+    fixed_name_writer(data_store=out_dstore)("payload")
+    assert [m.unique_id for m in out_dstore.completed] == ["fixed.txt"]
+
+
+def test_writer_skip_not_completed_forced_off():
+    """apply_to drives a writer's main directly, so the flag cannot be honoured"""
+
+    @define_app(app_type=WRITER)
+    class default_writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    @define_app(app_type=WRITER, skip_not_completed=True)
+    class explicit_writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    assert default_writer._skip_not_completed is False
+    assert explicit_writer._skip_not_completed is False
+
+
+def test_writer_receives_not_completed_on_direct_call(tmp_path):
+    """a writer sees NotCompleted whichever way the pipeline is invoked"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    seen = []
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class reject:
+        def main(self, text: str) -> str:
+            return NotCompleted("FAIL", self, "not wanted")
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember | None:
+            seen.append(type(data).__name__)
+            if isinstance(data, NotCompleted):
+                return None
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    app = reader() + reject() + writer(data_store=out_dstore)
+    app(next(iter(dstore)))
+    assert seen == ["NotCompleted"]
+
+
+def test_writer_direct_call_matches_apply_to(tmp_path):
+    """a one-off call names the record the way apply_to would"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class shout:
+        def main(self, text: str) -> str:
+            return text.upper()
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=data)
+
+    direct = DataStoreDirectory(tmp_path / "direct", mode=Mode.w, suffix="txt")
+    (reader() + shout() + writer(data_store=direct))(next(iter(dstore)))
+
+    batched = DataStoreDirectory(tmp_path / "batched", mode=Mode.w, suffix="txt")
+    (reader() + shout() + writer(data_store=batched)).apply_to(
+        dstore, logger=False, show_progress=False
+    )
+
+    assert [m.unique_id for m in direct.completed] == ["item_0.txt"]
+    assert [m.unique_id for m in direct.completed] == [
+        m.unique_id for m in batched.completed
+    ]
+
+
+def test_writer_direct_call_failure_gets_identifier(tmp_path):
+    """a NotCompleted reaching a writer directly is named, not left blank"""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    seen = []
+
+    @define_app(app_type=LOADER)
+    class reader:
+        def main(self, val: DataMember) -> str:
+            return val.read()
+
+    @define_app
+    class reject:
+        def main(self, text: str) -> str:
+            return NotCompleted("FAIL", self, "not wanted")
+
+    @define_app(app_type=WRITER)
+    class writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: str, identifier: str = "") -> DataMember | None:
+            seen.append(identifier)
+            return None
+
+    app = reader() + reject() + writer(data_store=out_dstore)
+    app(next(iter(dstore)))
+    assert seen == ["item_0"]
+
+
+def test_writer_direct_call_without_identity_raises(tmp_path):
+    """no identifier and nothing to derive one from is a programming error"""
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=WRITER)
+    class lone_writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: int, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=str(data))
+
+    app = lone_writer(data_store=out_dstore)
+    with pytest.raises(ValueError, match="lone_writer"):
+        app(42)
+
+
+def test_writer_direct_call_explicit_identifier_wins(tmp_path):
+    """a caller supplied identifier is not overridden"""
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app(app_type=WRITER)
+    class lone_writer:
+        def __init__(self, data_store):
+            self.data_store = data_store
+
+        def main(self, data: int, identifier: str = "") -> DataMember:
+            return self.data_store.write(unique_id=identifier, data=str(data))
+
+    app = lone_writer(data_store=out_dstore)
+    app(42, identifier="by_keyword")
+    app(7, "by_position")
+    assert sorted(m.unique_id for m in out_dstore.completed) == [
+        "by_keyword.txt",
+        "by_position.txt",
+    ]
 
 
 def test_apply_to_with_logging(tmp_path):

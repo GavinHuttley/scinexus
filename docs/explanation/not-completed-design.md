@@ -78,8 +78,18 @@ print(result)
 <!-- [[[end]]] -->
 
 
+## The one case that still raises
+
+!!! warning "A writer that cannot name a record raises rather than returning `NotCompleted`"
+
+    Everything above describes failures of the *data*, and each one stays traceable to the record that caused it — that is what `.source` is for. A result that cannot be named breaks the guarantee rather than exercising it: there is nothing to attribute it to, so returning a `NotCompleted` would put an entry in the audit trail that no one can tie back to an input. `scinexus` raises `ValueError` instead, at the call that made the mistake.
+
+    This applies to failures too. An unattributable `NotCompleted` reaching a writer raises rather than propagating, for the same reason.
+
+    It happens only on a one-off call, `app(data)`, where neither the input nor the result carries an identity and no `identifier=` was passed. `apply_to()` always derives one from the data store, so it never hits this.
+
 ## Recording failures in data stores
 
-When a pipeline is run via `apply_to()` on a data store, `NotCompleted` results are automatically written to a separate area (the `not_completed/` subdirectory or SQL table). This gives you a complete audit trail: you can inspect which records failed, which app was responsible, and why — all without interrupting the processing of successful records.
+When a pipeline is run via `apply_to()` on a data store, `NotCompleted` results are passed to the writer, which is expected to store them in a separate area (the `not_completed/` subdirectory or SQL table). This gives you a complete audit trail: you can inspect which records failed, which app was responsible, and why — all without interrupting the processing of successful records. A writer's `main()` always receives `NotCompleted` values, so it must handle them — see [Handle failures](../howto/handle-failures.md).
 
 See [Handle failures](../howto/handle-failures.md) for usage examples.

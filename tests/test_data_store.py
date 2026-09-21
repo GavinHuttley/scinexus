@@ -36,6 +36,7 @@ from scinexus.data_store import (
     DataStoreDirectory,
     ReadOnlyDataStoreZipped,
     _is_record,
+    _member_id,
     get_data_source,
     get_id_from_source,
     get_summary_display,
@@ -344,7 +345,7 @@ def test_write_not_completed_twice_caches_one_member(w_dstore):
         "message",
         source="nc1",
     ).to_json()
-    expect = [str(Path(NOT_COMPLETED_TABLE) / "nc1.json")]
+    expect = [f"{NOT_COMPLETED_TABLE}/nc1.json"]
 
     w_dstore.write_not_completed(unique_id="nc1", data=data)
 
@@ -474,7 +475,7 @@ def test_drop_not_completed_without_md5_file(mixed_md5_dstore):
     # the list itself rather than a rebuild of it
     mixed_md5_dstore.drop_not_completed(unique_id="id_1")
 
-    expect = [str(Path(NOT_COMPLETED_TABLE) / "id_0.json")]
+    expect = [f"{NOT_COMPLETED_TABLE}/id_0.json"]
     assert [m.unique_id for m in mixed_md5_dstore.not_completed] == expect
     assert not (source / NOT_COMPLETED_TABLE / "id_1.json").exists()
 
@@ -837,10 +838,10 @@ def test_a_read_only_store_says_so_before_judging_the_identifier(tmp_dir):
 
 def test_contains_matches_a_member_id_across_separators(w_dstore):
     """the separator a member id was composed with is not part of the question"""
-    # a member id is str(Path(NOT_COMPLETED_TABLE) / name), which reads
-    # not_completed\\nc1.json on Windows, and the string comparison meant
-    # only the platform's own spelling matched. PureWindowsPath stands in
-    # for the platform, since the parts are what __contains__ compares
+    # a member id is spelled with "/", but a caller may hand over either
+    # spelling, and a string comparison would match only its own.
+    # PureWindowsPath stands in for the platform, since the parts are what
+    # __contains__ compares
     record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
     member = w_dstore.write_not_completed(unique_id="nc1", data=record.to_json())
 
@@ -849,6 +850,65 @@ def test_contains_matches_a_member_id_across_separators(w_dstore):
     assert PureWindowsPath("not_completed/nc1.json").parts == (
         PureWindowsPath(r"not_completed\nc1.json").parts
     )
+
+
+def test_a_completed_member_id_is_the_file_name_alone():
+    """no subdirectory holds a completed record, so nothing is prefixed"""
+    assert _member_id("", "id_0.fasta") == "id_0.fasta"
+
+
+def test_a_member_id_under_a_subdir_is_joined_with_a_slash():
+    assert _member_id(NOT_COMPLETED_TABLE, "nc1.json") == "not_completed/nc1.json"
+
+
+def test_member_ids_are_spelled_the_same_on_every_platform(
+    w_dstore,
+    write_dir,
+    log_data,
+    monkeypatch,
+):
+    """a member id names a record, so Windows spells it as POSIX does"""
+    # the platform half of this cannot run here, so stand in for it the way
+    # the normcase test above does. both stores are built before the patch:
+    # PureWindowsPath has no exists() or mkdir(), which __init__ needs
+    scan = DataStoreDirectory(write_dir, suffix="fasta", mode=OVERWRITE)
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    monkeypatch.setattr(data_store, "Path", PureWindowsPath)
+
+    written = w_dstore.write_not_completed(unique_id="nc1", data=record.to_json())
+    w_dstore.write_log(unique_id="scitrack.log", data=log_data)
+
+    assert written.unique_id == "not_completed/nc1.json"
+    assert [m.unique_id for m in scan.not_completed] == ["not_completed/nc1.json"]
+    assert [m.unique_id for m in scan.logs] == ["logs/scitrack.log"]
+
+
+def test_dropping_one_not_completed_matches_on_every_platform(w_dstore, monkeypatch):
+    """the id drop compares against is composed the same way the members are"""
+    # it is an exact string comparison, so spelled with the platform
+    # separator it would match nothing on Windows. no exception either:
+    # write() would just stop superseding the not-completed twin
+    record = NotCompleted(NotCompletedType.ERROR, "location", "message", source="nc1")
+    w_dstore.write_not_completed(unique_id="nc1", data=record.to_json())
+    monkeypatch.setattr(data_store, "Path", PureWindowsPath)
+
+    w_dstore.drop_not_completed(unique_id="nc1")
+
+    assert w_dstore._not_completed == []
+    assert not (w_dstore.source / NOT_COMPLETED_TABLE / "nc1.json").exists()
+
+
+def test_zipped_member_ids_are_spelled_the_same_on_every_platform(
+    zipped_full,
+    monkeypatch,
+):
+    """a zipped store names its members as the directory it was made from"""
+    monkeypatch.setattr(data_store, "Path", PureWindowsPath)
+
+    got = sorted(m.unique_id for m in zipped_full.not_completed)
+
+    assert got == [f"not_completed/id_{i}.json" for i in range(3)]
+    assert [m.unique_id for m in zipped_full.logs] == ["logs/scitrack.log"]
 
 
 def test_contains_keeps_the_kinds_and_the_case_apart(w_dstore):
@@ -1394,6 +1454,20 @@ def test_get_unique_id(name):
 def test_get_unique_id_none():
     got = get_unique_id(None)
     assert got is None
+
+
+@pytest.mark.parametrize(
+    ("name", "expect"),
+    [
+        ("(A:0.1,B:0.2);", "(A:0.1,B:0"),
+        ("result (see fig. 2)", "result (see fig"),
+        ("v1.0 [draft]", "v1"),
+        ("counts.*", "counts"),
+    ],
+)
+def test_get_unique_id_suffix_is_text_not_a_pattern(name, expect):
+    """the trailing suffix is stripped literally, never compiled"""
+    assert get_unique_id(name) == expect
 
 
 def test_set_id_from_source_returns_default_initially(
@@ -2324,7 +2398,7 @@ def test_drop_during_a_not_completed_write_leaves_it_somewhere_to_write(write_di
 
         member = writer.result(timeout=_SYNC_TIMEOUT)
 
-    assert member.unique_id == str(Path(NOT_COMPLETED_TABLE) / "nc1.json")
+    assert member.unique_id == f"{NOT_COMPLETED_TABLE}/nc1.json"
     assert (write_dir / NOT_COMPLETED_TABLE / "nc1.json").exists()
 
 

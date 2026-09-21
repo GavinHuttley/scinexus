@@ -210,7 +210,7 @@ def require_min_length(val: str, min_length: int = 10) -> str:
 
 ## Receiving `NotCompleted` with `skip_not_completed=False`
 
-By default, apps skip `NotCompleted` inputs — they propagate without calling `main()`. If your app needs to see `NotCompleted` values (e.g. a writer that records failures), set `skip_not_completed=False`:
+By default, apps skip `NotCompleted` inputs — they propagate without calling `main()`. If your app needs to see `NotCompleted` values, set `skip_not_completed=False`:
 
 <!-- [[[cog
 from cog_utils import exec_codeblock
@@ -241,3 +241,9 @@ def log_failures(val: str) -> str:
     return val
 ```
 <!-- [[[end]]] -->
+
+!!! note "Writer apps get this for free"
+
+    A writer never skips `NotCompleted`, whatever you pass for `skip_not_completed`. `apply_to()` invokes a writer's `main()` directly rather than through the machinery that does the skipping, so the flag could not be honoured there. It is forced off for writers so that a one-off `app(data)` call behaves the same way.
+
+    The practical consequence is that a writer's `main()` must handle `NotCompleted` itself, typically by sending it to `write_not_completed()`. Its first parameter annotation does not constrain what arrives.
