@@ -121,6 +121,11 @@ favicon = "images/logo-bw.png"
 
 language = "en"
 
+# Template overrides live here, relative to this file. The announcement bar
+# has no configuration option, it exists only as a template block.
+# https://zensical.org/docs/customization/
+custom_dir = "overrides"
+
 # Zensical provides a number of feature toggles that change the behavior
 # of the documentation site.
 features = [

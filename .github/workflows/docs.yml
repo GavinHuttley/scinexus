@@ -12,6 +12,7 @@ on:
       - main
     paths:
       - 'docs/**'
+      - 'overrides/**'
       - '.readthedocs.yaml'
       - 'zensical.toml'
       - 'rtd_get_docs.py'

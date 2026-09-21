@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{# The dismiss button keys on a hash of this block's rendered HTML, so a link
+   whose href varies with page depth makes the banner reappear on every
+   directory change. Keep the content identical on every page. #}
+{% block announce %}
+  <strong>scinexus</strong> now runs on free-threaded Python 3.14t &mdash; the
+  parallel backend defaults to threads there. See the &ldquo;Run in
+  parallel&rdquo; how-to.
+{% endblock %}
