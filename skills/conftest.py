@@ -19,7 +19,7 @@ def skill_scratch_dir(tmp_path: Path) -> Iterator[Path]:
     the block free of setup a reader does not need to see.
     """
     (tmp_path / "raw").mkdir()
-    (tmp_path / "raw" / "alpha.txt").write_text("contents of alpha")
+    (tmp_path / "raw" / "alpha.txt").write_text("contents of alpha", encoding="utf-8")
     previous = Path.cwd()
     os.chdir(tmp_path)
     try:

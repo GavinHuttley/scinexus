@@ -35,7 +35,7 @@ _NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 def _skill_text() -> str:
-    return (SKILL_DIR / "SKILL.md").read_text()
+    return (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
 
 
 def _referenced() -> set[str]:
@@ -85,8 +85,10 @@ def test_frontmatter_reads_every_form_the_standard_uses(tmp_dir, text):
 )
 def test_frontmatter_refuses_a_file_it_cannot_read(tmp_dir, text):
     path = tmp_dir / "SKILL.md"
-    path.write_text(text)
-    with pytest.raises(ValueError, match=str(path)):
+    path.write_text(text, encoding="utf-8")
+    # escaped: match takes a pattern, and a Windows path is backslashes, so
+    # C:\Users reaches re.compile as the incomplete escape \U
+    with pytest.raises(ValueError, match=re.escape(str(path))):
         publish_skills.read_frontmatter(path)
 
 
@@ -125,7 +127,7 @@ def test_publish_writes_the_standard_endpoints(tmp_dir):
     assert (tmp_dir / "skill.md").read_bytes() == skill
 
     manifest = tmp_dir / publish_skills.WELL_KNOWN / "index.json"
-    (entry,) = json.loads(manifest.read_text())["skills"]
+    (entry,) = json.loads(manifest.read_text(encoding="utf-8"))["skills"]
     assert entry == entries[0]
     # relative names, so they resolve wherever the site is mounted
     assert not any(name.startswith("/") for name in entry["files"])
@@ -210,7 +212,7 @@ def test_main_publishes_and_reports(tmp_dir, capsys):
 
 def test_the_docs_workflow_publishes_and_keeps_hidden_files():
     """both are silent failures: no skill on the site, or a 404 for every URL"""
-    workflow = WORKFLOW.read_text()
+    workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "scripts/publish_skills.py site" in workflow
     # upload-artifact drops hidden files by default, and .well-known is hidden
     assert "include-hidden-files: true" in workflow
@@ -219,7 +221,7 @@ def test_the_docs_workflow_publishes_and_keeps_hidden_files():
 
 
 def test_marketplace_resolves_to_the_plugin_holding_the_skill():
-    data = json.loads(MARKETPLACE.read_text())
+    data = json.loads(MARKETPLACE.read_text(encoding="utf-8"))
     assert data["name"] == "scinexus"
     assert data["owner"]["name"]
     (entry,) = data["plugins"]
@@ -228,7 +230,7 @@ def test_marketplace_resolves_to_the_plugin_holding_the_skill():
     # the plugin and the published site
     root = (REPO / entry["source"]).resolve()
     assert root == REPO.resolve()
-    plugin = json.loads(PLUGIN.read_text())
+    plugin = json.loads(PLUGIN.read_text(encoding="utf-8"))
     assert plugin["name"] == entry["name"]
     for declared in plugin["skills"]:
         assert (root / declared).is_dir()
@@ -237,4 +239,7 @@ def test_marketplace_resolves_to_the_plugin_holding_the_skill():
 
 def test_plugin_version_tracks_the_package():
     """without it an install lands under an 'unknown' version directory"""
-    assert json.loads(PLUGIN.read_text())["version"] == scinexus.__version__
+    assert (
+        json.loads(PLUGIN.read_text(encoding="utf-8"))["version"]
+        == scinexus.__version__
+    )
