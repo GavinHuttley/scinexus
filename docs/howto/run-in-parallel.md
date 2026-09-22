@@ -39,7 +39,7 @@ scinexus.set_parallel_backend("loky")
 
 ### If you do not choose, one is chosen for you
 
-With no call to `set_parallel_backend`, the backend is `"threads"` when the GIL is not in force **and** the caller is not itself a pool worker, and `"multiprocess"` in every other case. On a standard CPython build you therefore get processes, and on a free-threaded (no-GIL) build you get threads in the master and processes inside a worker that starts a pool of its own. Threads are worth having only where they can run at the same time, and a thread pool inside a worker would also report that worker as rank 0 and as the master, which it is not.
+With no call to `set_parallel_backend`, the backend is `"threads"` when the GIL is not in force **and** the caller is not itself a pool worker, and `"multiprocess"` in every other case. On a standard CPython build you therefore get processes, and on a free-threaded (no-GIL) build you get threads in.
 
 Two things besides the build can put the GIL back in force: setting `PYTHON_GIL=1`, and importing an extension module that does not declare free-threading support. The second can happen partway through a run, so the choice is revisited on every call to `imap`, `map` or `as_completed` for as long as it stays automatic. A backend you pass to `set_parallel_backend` is not revisited, so pinning one is how you opt out of threads on a free-threaded build.
 
@@ -49,13 +49,15 @@ import scinexus
 scinexus.set_parallel_backend("multiprocess")  # processes, whatever the build
 ```
 
-!!! note "What a pinned backend does not cover"
+!!! note "What pinning does not cover"
 
-    The setting applies to this process alone, so a worker does not inherit it and chooses again for itself. Passing `use_mpi=True` to `imap`, `map` or `as_completed` uses MPI for that call whatever you pinned. And `get_rank()`, `get_size()` and `is_master_process()` report on the context actually running the current thread rather than on the default you set, so under MPI, or on a thread from one of these pools, they answer for that.
+    The setting applies to primary process alone, so a worker does not inherit it and chooses again for itself. Passing `use_mpi=True` to `imap`, `map` or `as_completed` uses MPI for that call whatever you pinned. And `get_rank()`, `get_size()` and `is_master_process()` report on the context actually running the current thread rather than on the default you set.
 
 ### What crosses to a worker
 
-The process backends — `"multiprocess"`, `"loky"` and `"mpi"` — pickle the function and its arguments and send them to another process. Each worker gets its own copy of your app, so mutating `self` inside `main()` affects nothing else, and closures and lambdas are refused (`"loky"` is the most forgiving, since it pickles via `cloudpickle`).
+The process backends — `"multiprocess"`, `"loky"` and `"mpi"` — pickle the function and its arguments and send them to another process. Each worker gets its own copy of your app, so mutating `self` inside `main()` does not propagate, and closures and lambdas are refused[^1].
+
+[^1]: `"loky"` is the most forgiving, since it pickles via `cloudpickle`
 
 The `"threads"` backend sends nothing. Workers share the app instance and everything reachable from it, so closures and lambdas are accepted, but a `main()` that mutates `self` or writes module-level state — the `numpy.random` global generator, say — is a data race here where it was harmless under the process backends.
 
@@ -63,7 +65,7 @@ Because there is nothing to send, there is also no per-item transport cost to am
 
 !!! warning
 
-    Which of the two you get is not fixed by your code, because the default follows the interpreter. An app written for processes alone can be correct on CPython 3.14 and racy on 3.14t. Either pin the backend with `set_parallel_backend`, or keep `main()` free of mutable shared state so that it is correct under both.
+    Which of the two you get reflects the interpreter. An app written for processes alone can be correct on CPython 3.14 and racy on 3.14t. Code that keeps `main()` free of mutable shared state is correct under both.
 
 ### Getting a specific backend without changing the default
 
@@ -111,7 +113,7 @@ The first argument is the function to call, the second is the iterable of inputs
 
 !!! note
 
-    If you don't specify `max_workers`, all available CPUs are used. Under MPI it instead means the workers the job was launched with, which is not something `max_workers` can change.
+    If you don't specify `max_workers`, all available CPUs are used. Under MPI it instead means the workers the job was launched with, which is not something `max_workers` can change. But note the remark above about threading being different.
 
 #### `parallel.imap` -- preserving input order (generator)
 
