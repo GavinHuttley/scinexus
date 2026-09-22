@@ -39,9 +39,9 @@ scinexus.set_parallel_backend("loky")
 
 ### If you do not choose, one is chosen for you
 
-With no call to `set_parallel_backend`, the backend is `"threads"` when the GIL is not in force **and** the caller is not itself a pool worker, and `"multiprocess"` in every other case. On a standard CPython build you therefore get processes, and on a free-threaded (no-GIL) build you get threads in.
+With no call to `set_parallel_backend`, the backend is `"threads"` when the GIL is not in force **and** the caller is not itself a pool worker, and `"multiprocess"` in every other case. On a standard CPython build you therefore get processes, and on a free-threaded (no-GIL) build you get threads.
 
-Two things besides the build can put the GIL back in force: setting `PYTHON_GIL=1`, and importing an extension module that does not declare free-threading support. The second can happen partway through a run, so the choice is revisited on every call to `imap`, `map` or `as_completed` for as long as it stays automatic. A backend you pass to `set_parallel_backend` is not revisited, so pinning one is how you opt out of threads on a free-threaded build.
+Two things besides the build can put the GIL back in force: setting `PYTHON_GIL=1`, and importing an extension module that does not declare free-threading support. The second can happen partway through a run, so the choice is revisited on every call to `imap`, `map` or `as_completed`. Specifying the backend using `set_parallel_backend` is how you opt out of threads on a free-threaded build.
 
 ```python { notest }
 import scinexus
@@ -60,12 +60,6 @@ The process backends — `"multiprocess"`, `"loky"` and `"mpi"` — pickle the f
 [^1]: `"loky"` is the most forgiving, since it pickles via `cloudpickle`
 
 The `"threads"` backend sends nothing. Workers share the app instance and everything reachable from it, so closures and lambdas are accepted, but a `main()` that mutates `self` or writes module-level state — the `numpy.random` global generator, say — is a data race here where it was harmless under the process backends.
-
-Because there is nothing to send, there is also no per-item transport cost to amortise, so `"threads"` checks `chunksize` and then ignores it. Only `imap` on the process and MPI backends chunks the work.
-
-!!! warning
-
-    Which of the two you get reflects the interpreter. An app written for processes alone can be correct on CPython 3.14 and racy on 3.14t. Code that keeps `main()` free of mutable shared state is correct under both.
 
 ### Getting a specific backend without changing the default
 
@@ -113,7 +107,7 @@ The first argument is the function to call, the second is the iterable of inputs
 
 !!! note
 
-    If you don't specify `max_workers`, all available CPUs are used. Under MPI it instead means the workers the job was launched with, which is not something `max_workers` can change. But note the remark above about threading being different.
+    If you don't specify `max_workers`, all available CPUs are used. Under MPI it instead means the workers the job was launched with, which is not something `max_workers` can change. `"threads"`  `chunksize` but ignores it.
 
 #### `parallel.imap` -- preserving input order (generator)
 
