@@ -89,6 +89,12 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
     "N802",
     "N803",
 ]
+"skills/conftest.py" = [
+    "INP001", # pytest conftest, not an importable package
+]
+"scripts/publish_skills.py" = [
+    "INP001", # a script, not an importable package
+]
 "src/scinexus/composable.py" = [
     "ANN401", # Allow use of Any
 ]

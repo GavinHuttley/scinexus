@@ -201,3 +201,16 @@ def test_docs(session):
         "scripts",
         *session.posargs,
     )
+    # the skill's runnable markdown examples, which nothing else runs. The
+    # blocks marked notest are fragments and stay unrun, and llms.txt is not
+    # collected at all: pytest-markdown-docs takes .md only. posargs are not
+    # passed on, they name paths relative to docs/
+    session.chdir("..")
+    session.run(
+        "pytest",
+        "--markdown-docs",
+        "-m",
+        "markdown-docs",
+        "-x",
+        "skills",
+    )

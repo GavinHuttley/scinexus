@@ -71,6 +71,7 @@ nav = [
         "howto/log-and-cite.md",
         "howto/customise-display-and-ids.md",
         "howto/extend-type-checking.md",
+        "howto/use-with-coding-agents.md",
         "howto/migrate-from-cogent3.md",
     ] },
     { "Tutorials" = [
