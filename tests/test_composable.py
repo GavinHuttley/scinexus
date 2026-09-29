@@ -2739,6 +2739,156 @@ def test_writer_explicit_identifier_beats_supplied_id_from_source(tmp_path):
     assert [m.unique_id for m in out_dstore.completed] == ["explicit.txt"]
 
 
+@define_app
+class _reject:
+    """fails every input, so as_completed yields a NotCompleted to inspect"""
+
+    def main(self, text: str) -> str:
+        return NotCompleted("FAIL", self, "not wanted")
+
+
+@define_app(app_type=WRITER)
+class _tolerant_writer:
+    """writes whatever it is handed, so a failing pipeline can still be applied"""
+
+    def __init__(self, data_store):
+        self.data_store = data_store
+
+    def main(self, data: str, identifier: str = "") -> DataMember:
+        return self.data_store.write(unique_id=identifier, data=str(data))
+
+
+def _failing_pipeline(tmp_path):
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    return _reader() + _reject() + _tolerant_writer(out_dstore)
+
+
+def test_as_completed_explicit_id_from_source_beats_a_stored_one(tmp_path):
+    """an explicit argument is not overruled by what an earlier apply_to stored"""
+    dstore = _one_member_store(tmp_path)
+    app = _failing_pipeline(tmp_path)
+
+    app.apply_to(
+        dstore, id_from_source=_prefixed("first"), logger=False, show_progress=False
+    )
+    got = list(
+        app.as_completed(
+            dstore, id_from_source=_prefixed("second"), show_progress=False
+        )
+    )
+    assert [r.source for r in got] == ["second_item_0"]
+
+
+def test_apply_to_id_from_source_holds_for_later_calls(tmp_path):
+    """the argument is a setting on the app, not a one-off"""
+    dstore = _one_member_store(tmp_path)
+    app = _failing_pipeline(tmp_path)
+
+    app.apply_to(
+        dstore, id_from_source=_prefixed("first"), logger=False, show_progress=False
+    )
+    got = list(app.as_completed(dstore, show_progress=False))
+    assert [r.source for r in got] == ["first_item_0"]
+
+
+def test_as_completed_id_from_source_holds_for_later_calls(tmp_path):
+    """as_completed records its argument exactly as apply_to does"""
+    dstore = _one_member_store(tmp_path)
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    app = _reader() + _tolerant_writer(out_dstore)
+
+    list(
+        app.as_completed(dstore, id_from_source=_prefixed("first"), show_progress=False)
+    )
+    app.apply_to(dstore, logger=False, show_progress=False)
+    assert [m.unique_id for m in out_dstore.completed] == ["first_item_0.txt"]
+
+
+def test_as_completed_records_id_from_source_before_iteration(tmp_path):
+    """the setting is stored when as_completed is called, not when it is consumed"""
+    dstore = _one_member_store(tmp_path)
+    app = _failing_pipeline(tmp_path)
+
+    app.as_completed(dstore, id_from_source=_prefixed("first"), show_progress=False)
+    got = list(app.as_completed(dstore, show_progress=False))
+    assert [r.source for r in got] == ["first_item_0"]
+
+
+def test_as_completed_id_from_source_applies_to_a_non_writer(tmp_path):
+    """unlike a constructor argument, this one is the framework's on any app type"""
+    dstore = _one_member_store(tmp_path)
+    app = _reader() + _reject()
+
+    list(
+        app.as_completed(dstore, id_from_source=_prefixed("first"), show_progress=False)
+    )
+    got = list(app.as_completed(dstore, show_progress=False))
+    assert [r.source for r in got] == ["first_item_0"]
+
+
+def test_recomposing_an_applied_writer_still_runs(tmp_path):
+    """composition copies the writer, so nothing stale may survive into the copy"""
+    dstore = _one_member_store(tmp_path)
+    app = _failing_pipeline(tmp_path)
+    app.apply_to(dstore, logger=False, show_progress=False)
+
+    recomposed = _reader() + _reject() + app
+    got = list(recomposed.as_completed(dstore, show_progress=False))
+    assert [r.source for r in got] == ["item_0"]
+
+
+def test_as_completed_id_from_source_beats_the_constructor_argument(tmp_path):
+    """the argument outranks the extractor the writer was built with"""
+    dstore = _one_member_store(tmp_path)
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    app = (
+        _reader()
+        + _reject()
+        + _named_writer(out_dstore, id_from_source=_prefixed("ctor"))
+    )
+
+    got = list(
+        app.as_completed(dstore, id_from_source=_prefixed("arg"), show_progress=False)
+    )
+    assert [r.source for r in got] == ["arg_item_0"]
+
+
+def test_apply_to_without_input_does_not_store_id_from_source(tmp_path):
+    """a refused apply_to must not leave the app renamed"""
+    dstore = _one_member_store(tmp_path)
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    writer = _tolerant_writer(out_dstore)
+
+    with pytest.raises(RuntimeError):
+        writer.apply_to(
+            dstore, id_from_source=_prefixed("first"), logger=False, show_progress=False
+        )
+
+    got = list(
+        (_reader() + _reject() + writer).as_completed(dstore, show_progress=False)
+    )
+    assert [r.source for r in got] == ["item_0"]
+
+
+def test_apply_to_on_colliding_names_does_not_store_id_from_source(tmp_path):
+    """the same holds for a refusal that only shows up part way through"""
+    src = tmp_path / "src"
+    src.mkdir()
+    for i in range(2):
+        (src / f"item_{i}.txt").write_text(f"data {i}")
+    dstore = DataStoreDirectory(src, suffix="txt")
+    app = _failing_pipeline(tmp_path)
+
+    def collides(obj: object) -> str:
+        return "same"
+
+    with pytest.raises(ValueError, match="non-unique identifier"):
+        app.apply_to(dstore, id_from_source=collides, logger=False, show_progress=False)
+
+    got = list(app.as_completed(dstore, show_progress=False))
+    assert [r.source for r in got] == ["item_0", "item_1"]
+
+
 def test_apply_to_with_logging(tmp_path):
     from scinexus.data_store import DataMember
 
