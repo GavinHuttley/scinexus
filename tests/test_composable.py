@@ -265,6 +265,97 @@ def test_composable_variable_positional_args_and_kwargs():
     assert instance._init_vals == {"a": 2, "args": (3, 4, 5, 6), "c": True}
 
 
+def test_supplied_args_distinguishes_default_from_passed():
+    """an argument equal to its own default is still recorded as supplied"""
+    sentinel = object()
+
+    @define_app
+    class takes_default:
+        def __init__(self, a, b=sentinel):
+            self.a = a
+            self.b = b
+
+        def main(self, val: int) -> int:
+            return val
+
+    assert takes_default(1)._supplied_args == {"a": 1}
+    assert takes_default(1, b=sentinel)._supplied_args == {"a": 1, "b": sentinel}
+    assert takes_default(1, 2)._supplied_args == {"a": 1, "b": 2}
+
+
+def test_supplied_args_for_function_app():
+    """a decorated function records supplied arguments the same way"""
+
+    @define_app
+    def scaled(val: int, factor: int = 2) -> int:
+        return val * factor
+
+    assert scaled()._supplied_args == {}
+    assert scaled(3)._supplied_args == {"factor": 3}
+
+
+def test_supplied_args_unpacks_var_keyword():
+    """a name absorbed by **kwargs is reported under that name, not as 'kwargs'"""
+
+    @define_app
+    class absorbs:
+        def __init__(self, a=1, **kwargs):
+            self.a = a
+            self.kwargs = kwargs
+
+        def main(self, val: int) -> int:
+            return val
+
+    assert absorbs()._supplied_args == {}
+    assert absorbs(id_from_source=len)._supplied_args == {"id_from_source": len}
+    assert absorbs(2, b=3)._supplied_args == {"a": 2, "b": 3}
+
+
+def test_supplied_args_var_positional():
+    @define_app
+    class variadic:
+        def __init__(self, a, *args):
+            self.a = a
+            self.args = args
+
+        def main(self, val: int) -> int:
+            return val
+
+    assert variadic(1)._supplied_args == {"a": 1}
+    assert variadic(1, 2)._supplied_args == {"a": 1, "args": (2,)}
+
+
+def test_supplied_args_first_parameter_not_named_self():
+    """the parameter that took cls is excluded whatever the app named it"""
+
+    @define_app
+    class renamed:
+        def __init__(this, x=1):
+            this.x = x
+
+        def main(this, val: int) -> int:
+            return val
+
+    assert renamed()._supplied_args == {}
+    assert renamed(2)._supplied_args == {"x": 2}
+
+
+def test_supplied_args_function_app_parameter_named_self():
+    """a function app binds no cls, so a parameter called self is a real argument"""
+
+    @define_app
+    def selfish(val: int, self: int = 1) -> int:
+        return val + self
+
+    assert selfish()._supplied_args == {}
+    assert selfish(5)._supplied_args == {"self": 5}
+
+
+def test_supplied_args_survives_pickling():
+    """__new__ runs with no arguments on unpickling, so the record must be state"""
+    assert loads(dumps(func2app(2)))._supplied_args == {"exponent": 2}
+
+
 def test_app_decoration_fails_with_slots():
     with pytest.raises(NotImplementedError):
 

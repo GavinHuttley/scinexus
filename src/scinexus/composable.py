@@ -477,6 +477,7 @@ class AppBase(Generic[T, R]):
     _input_type: type
     _return_type: type
     _init_vals: dict[str, Any]
+    _supplied_args: dict[str, Any]
     app_type: AppType
     input: Any
     main: Callable[..., Any]
@@ -505,14 +506,29 @@ class AppBase(Generic[T, R]):
             params = cls._func_sig.parameters  # type: ignore[attr-defined]
             init_sig = inspect.Signature(parameters=list(params.values())[1:])
             bargs = init_sig.bind_partial(*args, **kwargs)
+            bound_self = None
         else:
             init_sig = inspect.signature(cls.__init__)
             bargs = init_sig.bind_partial(cls, *args, **kwargs)
+            # the first parameter took cls above and is not an argument the
+            # caller gave, whatever the app chose to name it
+            bound_self = next(iter(init_sig.parameters), None)
+        # apply_defaults below makes a defaulted argument indistinguishable
+        # from a supplied one, so record what the call bound first
+        supplied = {
+            name: value for name, value in bargs.arguments.items() if name != bound_self
+        }
+        for name, param in init_sig.parameters.items():
+            # a name absorbed by **kwargs is nested one level down, and it is
+            # the nested name a caller means when asking what was supplied
+            if param.kind is inspect.Parameter.VAR_KEYWORD and name in supplied:
+                supplied.update(supplied.pop(name))
         bargs.apply_defaults()
         init_vals = bargs.arguments
         init_vals.pop("self", None)
 
         obj._init_vals = init_vals
+        obj._supplied_args = supplied
         return obj
 
     def __copy__(self) -> Self:
