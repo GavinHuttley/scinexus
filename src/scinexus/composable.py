@@ -443,7 +443,7 @@ def _init_subclass_setup(
     )
     cls._check_data_type = True
     cls._cite = cite
-    cls._source_wrapped = None
+    cls._id_from_source_override = None
 
     if app_type is not LOADER:
         cls.input = None
@@ -472,11 +472,12 @@ class AppBase(Generic[T, R]):
     _skip_not_completed: bool
     _main_takes_identifier: bool
     _check_data_type: bool
-    _source_wrapped: propagate_source | None
+    _id_from_source_override: GetIdFuncType | None
     _cite: Citation | None
     _input_type: type
     _return_type: type
     _init_vals: dict[str, Any]
+    _supplied_args: dict[str, Any]
     app_type: AppType
     input: Any
     main: Callable[..., Any]
@@ -505,14 +506,29 @@ class AppBase(Generic[T, R]):
             params = cls._func_sig.parameters  # type: ignore[attr-defined]
             init_sig = inspect.Signature(parameters=list(params.values())[1:])
             bargs = init_sig.bind_partial(*args, **kwargs)
+            bound_self = None
         else:
             init_sig = inspect.signature(cls.__init__)
             bargs = init_sig.bind_partial(cls, *args, **kwargs)
+            # the first parameter took cls above and is not an argument the
+            # caller gave, whatever the app chose to name it
+            bound_self = next(iter(init_sig.parameters), None)
+        # apply_defaults below makes a defaulted argument indistinguishable
+        # from a supplied one, so record what the call bound first
+        supplied = {
+            name: value for name, value in bargs.arguments.items() if name != bound_self
+        }
+        for name, param in init_sig.parameters.items():
+            # a name absorbed by **kwargs is nested one level down, and it is
+            # the nested name a caller means when asking what was supplied
+            if param.kind is inspect.Parameter.VAR_KEYWORD and name in supplied:
+                supplied.update(supplied.pop(name))
         bargs.apply_defaults()
         init_vals = bargs.arguments
         init_vals.pop("self", None)
 
         obj._init_vals = init_vals
+        obj._supplied_args = supplied
         return obj
 
     def __copy__(self) -> Self:
@@ -549,6 +565,24 @@ class AppBase(Generic[T, R]):
             head._check_data_type = value
             head = getattr(head, "input", None)
 
+    def _resolve_id_from_source(self) -> Callable[..., Any]:
+        """the extractor this app names records with
+
+        An ``id_from_source`` given to ``as_completed`` or ``apply_to`` becomes
+        the app's setting and outranks everything else. A writer's constructor
+        argument comes next, and only a writer's, since ``id_from_source``
+        means whatever its author chose on any other app. That one has to be
+        supplied: a parameter left at its default does not count, or an app
+        declaring ``id_from_source=get_unique_id`` would always outrank
+        ``set_id_from_source``.
+        """
+        if self._id_from_source_override is not None:
+            return self._id_from_source_override
+        supplied = self._supplied_args.get("id_from_source")
+        if self.app_type is WRITER and callable(supplied):
+            return supplied
+        return get_id_from_source()
+
     def __call__(self, val: T, *args: Any, **kwargs: Any) -> R | NotCompleted:
         if val is None:
             return NotCompleted(
@@ -580,7 +614,7 @@ class AppBase(Generic[T, R]):
             # mirrors apply_to, which names a record after the result when the
             # result knows its own origin and after the input when it does not
             named = val if _has_source(val) else source
-            unique_id = get_id_from_source()(named)
+            unique_id = self._resolve_id_from_source()(named)
             if not unique_id:
                 msg = (
                     f"{self.__class__.__name__!r} cannot name a record: "
@@ -674,10 +708,12 @@ class AppBase(Generic[T, R]):
         par_kw
             dict of values for configuring parallel execution.
         id_from_source
-            extracts a unique identifier from each input. If not provided,
-            defaults to the function registered via
-            ``scinexus.data_store.set_id_from_source``, falling back to
-            ``scinexus.data_store.get_unique_id``.
+            extracts a unique identifier from each input. Becomes this app's
+            setting, applying to later calls until another is given. If not
+            provided, defaults to the setting left by an earlier call, then to
+            the ``id_from_source`` this app was constructed with, then to the
+            function registered via ``scinexus.data_store.set_id_from_source``,
+            falling back to ``scinexus.data_store.get_unique_id``.
         show_progress
             controls progress bar display. Pass ``True`` for the default
             progress bar, ``False`` to disable, or a ``Progress`` instance
@@ -689,18 +725,12 @@ class AppBase(Generic[T, R]):
         aggregates results. If run in serial, results are returned in the
         same order as provided.
         """
-        if id_from_source is None:
-            id_from_source = get_id_from_source()
-        if self._source_wrapped is None:
-            app = propagate_source(
-                self.input if self.app_type is WRITER else self, id_from_source
-            )
-        else:
-            app = (
-                self.input._source_wrapped
-                if self.app_type is WRITER
-                else self._source_wrapped
-            )
+        if id_from_source is not None:
+            self._id_from_source_override = id_from_source
+        app = propagate_source(
+            self.input if self.app_type is WRITER else self,
+            self._resolve_id_from_source(),
+        )
 
         if isinstance(dstore, str):
             dstore = [dstore]
@@ -708,8 +738,7 @@ class AppBase(Generic[T, R]):
             dstore = dstore.completed
         mapped = _proxy_input(dstore)
         if not mapped:
-            yield from iter(())
-            return
+            return iter(())
 
         if parallel:
             from scinexus import parallel as snxpar
@@ -720,11 +749,19 @@ class AppBase(Generic[T, R]):
             to_do = map(app, mapped)
 
         progress = get_progress(show_progress)
-        for obj in progress(to_do, total=len(mapped)):
-            if not isinstance(obj, source_proxy):
-                yield obj
-                continue
-            yield obj.obj if _has_source(obj.obj) else obj
+
+        # the results are yielded from a nested generator so that this method
+        # is an ordinary function, recording the setting above when the caller
+        # asks rather than when it starts consuming. A progress bar displays
+        # as soon as it is built, so it stays inside the generator
+        def results() -> Iterator[Any]:
+            for obj in progress(to_do, total=len(mapped)):
+                if not isinstance(obj, source_proxy):
+                    yield obj
+                    continue
+                yield obj.obj if _has_source(obj.obj) else obj
+
+        return results()
 
     def _get_citations(self) -> tuple[Citation, ...]:
         """Return citations for this app and all composed input apps."""
@@ -848,9 +885,11 @@ class WriterApp(ComposableApp[T, R]):
             applied.
         id_from_source
             makes the unique identifier from elements of dstore that will be
-            used for writing results. If not provided, defaults to the
-            function registered via
-            ``scinexus.data_store.set_id_from_source``, falling back to
+            used for writing results. Becomes this writer's setting, applying
+            to later calls until another is given. If not provided, defaults to
+            the setting left by an earlier call, then to the ``id_from_source``
+            this writer was constructed with, then to the function registered
+            via ``scinexus.data_store.set_id_from_source``, falling back to
             ``scinexus.data_store.get_unique_id``.
         parallel
             run in parallel, according to arguments in par_kwargs. If True,
@@ -880,14 +919,13 @@ class WriterApp(ComposableApp[T, R]):
 
         If run in parallel, this instance spawns workers and aggregates results.
         """
-        if id_from_source is None:
-            id_from_source = get_id_from_source()
-        if self.app_type is WRITER:
-            if self.input is None:
-                msg = "writer app has no composed input"
-                raise RuntimeError(msg)
-            self.input._source_wrapped = propagate_source(self.input, id_from_source)
-            self._source_wrapped = propagate_source(self, id_from_source)
+        if self.input is None:
+            msg = "writer app has no composed input"
+            raise RuntimeError(msg)
+        override = id_from_source
+        id_from_source = (
+            override if override is not None else self._resolve_id_from_source()
+        )
 
         if isinstance(dstore, str | Path):  # one filename
             dstore = [dstore]
@@ -913,6 +951,11 @@ class WriterApp(ComposableApp[T, R]):
         ):  # this should just return datastore, because if all jobs are done!
             msg = "dstore is empty"
             raise ValueError(msg)
+
+        # recorded once the run is certain to start, so a refused call leaves
+        # the app named as it was
+        if override is not None:
+            self._id_from_source_override = override
 
         self.set_logger(logger)
         active_logger: CachingLogger | None = self.logger
@@ -1043,7 +1086,6 @@ def _class_from_func(func: Callable[..., Any]) -> type[Any]:
     def _init(self: Any, *args: Any, **kwargs: Any) -> None:
         self._args = args
         self._kwargs = kwargs
-        self._source_wrapped = None
 
     def _main(self: Any, arg: Any, *args: Any, **kwargs: Any) -> Any:
         kw_args = deepcopy(self._kwargs)
