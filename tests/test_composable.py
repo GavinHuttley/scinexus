@@ -2573,6 +2573,172 @@ def test_writer_direct_call_explicit_identifier_wins(tmp_path):
     ]
 
 
+def _prefixed(prefix: str):
+    def extract(obj: object) -> str | None:
+        unique_id = get_unique_id(obj)
+        return None if unique_id is None else f"{prefix}_{unique_id}"
+
+    return extract
+
+
+def _one_member_store(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "item_0.txt").write_text("data 0")
+    return DataStoreDirectory(src, suffix="txt")
+
+
+@define_app(app_type=LOADER)
+class _reader:
+    def main(self, val: DataMember) -> str:
+        return val.read()
+
+
+@define_app(app_type=WRITER)
+class _named_writer:
+    """a writer that names records itself, as cogent3's writers do"""
+
+    def __init__(self, data_store, id_from_source=get_unique_id):
+        self.data_store = data_store
+        self._id_from_source = id_from_source
+
+    def main(self, data: str, identifier: str = "") -> DataMember:
+        identifier = identifier or self._id_from_source(data)
+        return self.data_store.write(unique_id=identifier, data=data)
+
+
+def test_writer_supplied_id_from_source_names_the_record(tmp_path):
+    """the extractor a writer was built with wins over the registered default"""
+    dstore = _one_member_store(tmp_path)
+
+    direct = DataStoreDirectory(tmp_path / "direct", mode=Mode.w, suffix="txt")
+    (_reader() + _named_writer(direct, id_from_source=_prefixed("pre")))(
+        next(iter(dstore))
+    )
+
+    batched = DataStoreDirectory(tmp_path / "batched", mode=Mode.w, suffix="txt")
+    (_reader() + _named_writer(batched, id_from_source=_prefixed("pre"))).apply_to(
+        dstore, logger=False, show_progress=False
+    )
+
+    assert [m.unique_id for m in direct.completed] == ["pre_item_0.txt"]
+    assert [m.unique_id for m in batched.completed] == ["pre_item_0.txt"]
+
+
+def test_writer_supplied_id_from_source_names_a_failure(tmp_path):
+    """a NotCompleted record is named the same way as a completed one"""
+    dstore = _one_member_store(tmp_path)
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    seen: list[str] = []
+
+    @define_app
+    class reject:
+        def main(self, text: str) -> str:
+            return NotCompleted("FAIL", self, "not wanted")
+
+    @define_app(app_type=WRITER)
+    class recording_writer:
+        def __init__(self, data_store, id_from_source=get_unique_id):
+            self.data_store = data_store
+            self._id_from_source = id_from_source
+
+        def main(self, data: str, identifier: str = "") -> DataMember | None:
+            seen.append(identifier or self._id_from_source(data))
+            return None
+
+    app = (
+        _reader()
+        + reject()
+        + recording_writer(out_dstore, id_from_source=_prefixed("pre"))
+    )
+    app(next(iter(dstore)))
+    assert seen == ["pre_item_0"]
+
+
+def test_writer_default_id_from_source_does_not_beat_registered(
+    tmp_path,
+    reset_id_from_source: None,
+) -> None:
+    """an extractor left at its default must not demote set_id_from_source"""
+    set_id_from_source(_prefixed("glob"))
+    dstore = _one_member_store(tmp_path)
+
+    direct = DataStoreDirectory(tmp_path / "direct", mode=Mode.w, suffix="txt")
+    (_reader() + _named_writer(direct))(next(iter(dstore)))
+
+    batched = DataStoreDirectory(tmp_path / "batched", mode=Mode.w, suffix="txt")
+    (_reader() + _named_writer(batched)).apply_to(
+        dstore, logger=False, show_progress=False
+    )
+
+    assert [m.unique_id for m in direct.completed] == ["glob_item_0.txt"]
+    assert [m.unique_id for m in batched.completed] == ["glob_item_0.txt"]
+
+
+def test_apply_to_explicit_id_from_source_beats_supplied(tmp_path):
+    """an explicit apply_to argument outranks the writer's own extractor"""
+    dstore = _one_member_store(tmp_path)
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    (_reader() + _named_writer(out_dstore, id_from_source=_prefixed("pre"))).apply_to(
+        dstore,
+        id_from_source=_prefixed("arg"),
+        logger=False,
+        show_progress=False,
+    )
+    assert [m.unique_id for m in out_dstore.completed] == ["arg_item_0.txt"]
+
+
+def test_as_completed_uses_supplied_id_from_source(tmp_path):
+    """as_completed attributes a failure with the writer's own extractor"""
+    dstore = _one_member_store(tmp_path)
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+
+    @define_app
+    class reject:
+        def main(self, text: str) -> str:
+            return NotCompleted("FAIL", self, "not wanted")
+
+    app = (
+        _reader()
+        + reject()
+        + _named_writer(out_dstore, id_from_source=_prefixed("pre"))
+    )
+    got = list(app.as_completed(dstore, show_progress=False))
+    assert [r.source for r in got] == ["pre_item_0"]
+
+
+def test_as_completed_ignores_id_from_source_on_a_non_writer(tmp_path):
+    """id_from_source means whatever its author chose on a non-writer app"""
+    dstore = _one_member_store(tmp_path)
+    seen: list[object] = []
+
+    @define_app
+    class rejecting:
+        def __init__(self, id_from_source=None):
+            self.keep = id_from_source
+
+        def main(self, text: str) -> str:
+            return NotCompleted("FAIL", self, "not wanted")
+
+    def unrelated(obj: object) -> str:
+        seen.append(obj)
+        return "wrong"
+
+    app = _reader() + rejecting(id_from_source=unrelated)
+    got = list(app.as_completed(dstore, show_progress=False))
+    assert not seen
+    assert [r.source for r in got] == ["item_0"]
+
+
+def test_writer_explicit_identifier_beats_supplied_id_from_source(tmp_path):
+    """a caller supplied identifier outranks the writer's own extractor"""
+    out_dstore = DataStoreDirectory(tmp_path / "out", mode=Mode.w, suffix="txt")
+    app = _named_writer(out_dstore, id_from_source=_prefixed("pre"))
+    app("payload", identifier="explicit")
+    assert [m.unique_id for m in out_dstore.completed] == ["explicit.txt"]
+
+
 def test_apply_to_with_logging(tmp_path):
     from scinexus.data_store import DataMember
 

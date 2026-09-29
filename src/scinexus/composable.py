@@ -565,6 +565,20 @@ class AppBase(Generic[T, R]):
             head._check_data_type = value
             head = getattr(head, "input", None)
 
+    def _resolve_id_from_source(self) -> Callable[..., Any]:
+        """the extractor this writer was constructed with, else the registered one
+
+        Only a writer is consulted, since naming records is a writer's job and
+        ``id_from_source`` means whatever its author chose on any other app. A
+        parameter left at its default does not count as constructed with, or an
+        app declaring ``id_from_source=get_unique_id`` would always outrank
+        ``set_id_from_source``.
+        """
+        supplied = self._supplied_args.get("id_from_source")
+        if self.app_type is WRITER and callable(supplied):
+            return supplied
+        return get_id_from_source()
+
     def __call__(self, val: T, *args: Any, **kwargs: Any) -> R | NotCompleted:
         if val is None:
             return NotCompleted(
@@ -596,7 +610,7 @@ class AppBase(Generic[T, R]):
             # mirrors apply_to, which names a record after the result when the
             # result knows its own origin and after the input when it does not
             named = val if _has_source(val) else source
-            unique_id = get_id_from_source()(named)
+            unique_id = self._resolve_id_from_source()(named)
             if not unique_id:
                 msg = (
                     f"{self.__class__.__name__!r} cannot name a record: "
@@ -691,7 +705,8 @@ class AppBase(Generic[T, R]):
             dict of values for configuring parallel execution.
         id_from_source
             extracts a unique identifier from each input. If not provided,
-            defaults to the function registered via
+            defaults to the ``id_from_source`` this app was constructed with,
+            then to the function registered via
             ``scinexus.data_store.set_id_from_source``, falling back to
             ``scinexus.data_store.get_unique_id``.
         show_progress
@@ -706,7 +721,7 @@ class AppBase(Generic[T, R]):
         same order as provided.
         """
         if id_from_source is None:
-            id_from_source = get_id_from_source()
+            id_from_source = self._resolve_id_from_source()
         if self._source_wrapped is None:
             app = propagate_source(
                 self.input if self.app_type is WRITER else self, id_from_source
@@ -865,6 +880,7 @@ class WriterApp(ComposableApp[T, R]):
         id_from_source
             makes the unique identifier from elements of dstore that will be
             used for writing results. If not provided, defaults to the
+            ``id_from_source`` this writer was constructed with, then to the
             function registered via
             ``scinexus.data_store.set_id_from_source``, falling back to
             ``scinexus.data_store.get_unique_id``.
@@ -897,7 +913,7 @@ class WriterApp(ComposableApp[T, R]):
         If run in parallel, this instance spawns workers and aggregates results.
         """
         if id_from_source is None:
-            id_from_source = get_id_from_source()
+            id_from_source = self._resolve_id_from_source()
         if self.app_type is WRITER:
             if self.input is None:
                 msg = "writer app has no composed input"
