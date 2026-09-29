@@ -2886,7 +2886,7 @@ def test_apply_to_on_colliding_names_does_not_store_id_from_source(tmp_path):
         app.apply_to(dstore, id_from_source=collides, logger=False, show_progress=False)
 
     got = list(app.as_completed(dstore, show_progress=False))
-    assert [r.source for r in got] == ["item_0", "item_1"]
+    assert {r.source for r in got} == {"item_0", "item_1"}
 
 
 def test_apply_to_with_logging(tmp_path):
