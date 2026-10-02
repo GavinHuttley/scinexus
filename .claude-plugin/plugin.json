@@ -1,7 +1,7 @@
 {
   "name": "scinexus",
   "displayName": "scinexus",
-  "version": "2026.9.21",
+  "version": "2026.10.2",
   "description": "Writing composable, type-checked data pipelines with scinexus: define_app, NotCompleted, data stores, apply_to, parallel backends",
   "author": {
     "name": "The scinexus authors",
@@ -10,6 +10,12 @@
   "homepage": "https://scinexus.readthedocs.io",
   "repository": "https://github.com/cogent3/scinexus",
   "license": "BSD-3-Clause",
-  "keywords": ["scinexus", "pipelines", "scientific-computing"],
-  "skills": ["./skills/"]
+  "keywords": [
+    "scinexus",
+    "pipelines",
+    "scientific-computing"
+  ],
+  "skills": [
+    "./skills/"
+  ]
 }
