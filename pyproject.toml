@@ -49,6 +49,7 @@ dev = [
     "numpy",
     "rich",
     "ruff",
+    "scriv",
 ]
 doc = [
     "cogent3[extra]>=2026.4.20a0",
@@ -81,6 +82,23 @@ testpaths = ["tests"]
 
 [tool.mypy]
 plugins = ["scinexus._mypy_plugin"]
+
+[tool.scriv]
+format = "md"
+categories = [
+    "API",
+    "Contributors",
+    "Enhancements",
+    "Bug fixes",
+    "Documentation",
+    "Deprecations",
+    "Discontinued",
+]
+output_file = "changelog.md"
+version = "literal: src/scinexus/_version.py: __version__"
+skip_fragments = "README.*"
+new_fragment_template = "file: changelog.d/templates/new.md.j2"
+entry_title_template = "file: changelog.d/templates/title.md.j2"
 
 [tool.uv.pip]
 exclude-newer = "7 days"
