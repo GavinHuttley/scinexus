@@ -651,9 +651,30 @@ class DataStoreSqlite(DataStoreABC):
             if locked is not None:
                 msg = (
                     f"You are trying to open {str(self.source)!r} for writing but "
-                    f"it is locked by {locked}. Call unlock(force=True) on a "
-                    "writable store to release it."
+                    f"it is locked by {locked}. "
                 )
+                # process and thread ids are both recycled, so a lock left
+                # by an owner that is gone can carry a live one's token. the
+                # advice for a lock this process holds covers that case too
+                if locked == _owner_token():
+                    msg += (
+                        "That is this process, so another store in this "
+                        "process has it open for writing. Reuse that store, "
+                        "or close() it before opening a new one. If no such "
+                        "store is open, the lock is stale: call "
+                        "unlock(force=True) on a writable store to release it."
+                    )
+                elif isinstance(locked, str) and locked.startswith(f"{os.getpid()}:"):
+                    msg += (
+                        "That is another thread of this process, which has a "
+                        "store open for writing. Write through that store, or "
+                        "close() it in that thread before opening a new one. "
+                        "If that thread has finished without closing it, the "
+                        "lock is stale: call unlock(force=True) on a writable "
+                        "store to release it."
+                    )
+                else:
+                    msg += "Call unlock(force=True) on a writable store to release it."
                 raise OSError(
                     msg,
                 )
