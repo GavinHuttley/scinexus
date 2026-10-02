@@ -976,6 +976,19 @@ def test_lock_unlock(tmp_dir):
     dstore.close()
 
 
+def test_lock_on_a_store_holding_its_lock_does_nothing(tmp_dir):
+    """a store is not refused the lock it already holds"""
+    path = tmp_dir / "relock.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+
+    dstore.lock()
+
+    assert dstore._lock_id == _owner_token()
+    dstore.write(unique_id="r2", data="d2")
+    dstore.close()
+
+
 def test_lock_firsttime(tmp_dir):
     path = tmp_dir / "test_lockfirst.sqlitedb"
     dstore = DataStoreSqlite(path, mode=OVERWRITE)

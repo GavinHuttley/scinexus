@@ -629,7 +629,16 @@ class DataStoreSqlite(DataStoreABC):
         return self._lock_id is not None
 
     def lock(self) -> None:
-        """if writable, and not locked, locks the database to this session"""
+        """if writable, locks the database to this store's session
+
+        Does nothing if the store is read only or already holds the lock.
+
+        Raises
+        ------
+        OSError
+            if the store is closed, or a lock is recorded that this store
+            did not take
+        """
         with self._cache_lock:
             self._check_open()
             if self.mode is READONLY:
@@ -642,6 +651,10 @@ class DataStoreSqlite(DataStoreABC):
             # straight there would make a refusal wait out the busy timeout
             # behind any writer and then fail as OperationalError
             locked = self._lock_id
+            # the flag alone is not trusted: the lock row it refers to can
+            # have been cleared since, and then has to be claimed again
+            if self._holds_lock and locked == _owner_token():
+                return
             if locked is None:
                 locked = self._claim()
 
