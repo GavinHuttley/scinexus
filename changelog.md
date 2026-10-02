@@ -1,8 +1,14 @@
 # Changelog
 
+<!-- scriv-insert-here -->
+
+<!-- scriv-end-here -->
+
+## Differences from cogent3
+
 Changes from the original cogent3 app infrastructure.
 
-## New Features
+### New Features
 
 - Standalone package extracted from `cogent3.app` — no cogent3 dependency required.
 - Generic base classes `AppBase[T, R]`, `ComposableApp[T, R]`, and `WriterApp[T, R]` that apps can inherit from directly as an alternative to the `@define_app` decorator. Type checkers can resolve types through class inheritance without a plugin.
@@ -16,7 +22,7 @@ Changes from the original cogent3 app infrastructure.
 - `set_id_from_source()` / `get_id_from_source()` -- register a custom function for extracting storage identifiers from data.
 - `apply_to()` accepts `logger=False` to disable log file creation.
 
-## Enhancements
+### Enhancements
 
 - App composition (`+`) now makes shallow copies of the right-hand operand. Composed pipelines no longer share mutable state.
 - Composition-time type compatibility checking via `check_type_compatibility()` — catches type mismatches when apps are composed with `+`, before any data is processed.
@@ -32,6 +38,6 @@ Changes from the original cogent3 app infrastructure.
 - A writer constructed with an `id_from_source` argument now names records with it. Calling the app, `apply_to()` and `as_completed()` all consult it before the function registered through `set_id_from_source()`, so a writer that takes its own callable is no longer overruled by the framework. Passing `id_from_source=` to `apply_to()` or `as_completed()`, or `identifier=` to the call, still wins over both. Only a writer is consulted, since `id_from_source` means whatever its author chose on any other app type. The user provided function must be picklable to run under `parallel=True`.
 - `id_from_source` passed to `apply_to()` or `as_completed()` is a setting on the app rather than a one-off. It applies to later calls of either method until another is given, and on a writer to calling the app as well, and it outranks the `id_from_source` a writer was constructed with.
 
-## Deprecated
+### Deprecated
 
 - `ComposableApp.disconnect()` — discontinued, will be removed in version 2026.9. No longer required since composition uses shallow copies.

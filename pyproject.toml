@@ -85,6 +85,7 @@ plugins = ["scinexus._mypy_plugin"]
 
 [tool.scriv]
 format = "md"
+md_header_level = "2"
 categories = [
     "API",
     "Contributors",
