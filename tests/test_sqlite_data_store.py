@@ -768,6 +768,62 @@ def test_unlock_declines_a_lock_in_the_older_format(tmp_dir):
     dstore.close()
 
 
+def test_a_lock_this_session_holds_points_at_the_open_store(tmp_dir):
+    """the refusal names the store this session left open as the likely cause"""
+    path = tmp_dir / "reopened.sqlitedb"
+    first = DataStoreSqlite(path, mode=APPEND)
+    first.write(unique_id="r1", data="d1")
+
+    second = DataStoreSqlite(path, mode=APPEND)
+    with pytest.raises(OSError, match="another store in this process") as refused:
+        second.write(unique_id="r2", data="d2")
+
+    message = str(refused.value)
+    assert "another thread" not in message
+    assert "close()" in message
+    assert "unlock(force=True)" in message
+    first.close()
+
+
+def test_a_lock_another_thread_holds_points_at_that_thread(tmp_dir):
+    """the refusal names the thread of this process that holds the lock"""
+    path = tmp_dir / "otherthread_reopen.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+    foreign = f"{os.getpid()}:{threading.get_native_id() + 1}"
+    dstore._db.execute("UPDATE state SET lock_pid=?", (foreign,))
+
+    second = DataStoreSqlite(path, mode=APPEND)
+    with pytest.raises(OSError, match="another thread of this process") as refused:
+        second.write(unique_id="r2", data="d2")
+
+    message = str(refused.value)
+    assert "another store in this process" not in message
+    assert "close()" in message
+    assert "unlock(force=True)" in message
+    dstore.unlock(force=True)
+    dstore.close()
+
+
+def test_a_lock_another_session_holds_does_not_blame_this_one(tmp_dir):
+    """a lock from another process is not reported as this process's"""
+    path = tmp_dir / "foreign.sqlitedb"
+    abandoned = DataStoreSqlite(path, mode=OVERWRITE)
+    abandoned.write(unique_id="r1", data="d1")
+    abandoned._db.execute("UPDATE state SET lock_pid=?", (os.getpid() + 1,))
+    abandoned._db.close()
+    abandoned._db = None
+    abandoned._closed = True
+
+    dstore = DataStoreSqlite(path, mode=APPEND)
+    with pytest.raises(OSError, match="locked by") as refused:
+        dstore.write(unique_id="r2", data="d2")
+
+    assert "this process" not in str(refused.value)
+    dstore.unlock(force=True)
+    dstore.close()
+
+
 _LOCK_RACERS = 8
 _LOCK_ROUNDS = 5
 _LOCK_TIMEOUT = 30
@@ -917,6 +973,19 @@ def test_lock_unlock(tmp_dir):
     assert dstore.locked
     dstore.unlock()
     assert not dstore.locked
+    dstore.close()
+
+
+def test_lock_on_a_store_holding_its_lock_does_nothing(tmp_dir):
+    """a store is not refused the lock it already holds"""
+    path = tmp_dir / "relock.sqlitedb"
+    dstore = DataStoreSqlite(path, mode=OVERWRITE)
+    dstore.write(unique_id="r1", data="d1")
+
+    dstore.lock()
+
+    assert dstore._lock_id == _owner_token()
+    dstore.write(unique_id="r2", data="d2")
     dstore.close()
 
 

@@ -629,7 +629,16 @@ class DataStoreSqlite(DataStoreABC):
         return self._lock_id is not None
 
     def lock(self) -> None:
-        """if writable, and not locked, locks the database to this session"""
+        """if writable, locks the database to this store's session
+
+        Does nothing if the store is read only or already holds the lock.
+
+        Raises
+        ------
+        OSError
+            if the store is closed, or a lock is recorded that this store
+            did not take
+        """
         with self._cache_lock:
             self._check_open()
             if self.mode is READONLY:
@@ -642,6 +651,10 @@ class DataStoreSqlite(DataStoreABC):
             # straight there would make a refusal wait out the busy timeout
             # behind any writer and then fail as OperationalError
             locked = self._lock_id
+            # the flag alone is not trusted: the lock row it refers to can
+            # have been cleared since, and then has to be claimed again
+            if self._holds_lock and locked == _owner_token():
+                return
             if locked is None:
                 locked = self._claim()
 
@@ -651,9 +664,30 @@ class DataStoreSqlite(DataStoreABC):
             if locked is not None:
                 msg = (
                     f"You are trying to open {str(self.source)!r} for writing but "
-                    f"it is locked by {locked}. Call unlock(force=True) on a "
-                    "writable store to release it."
+                    f"it is locked by {locked}. "
                 )
+                # process and thread ids are both recycled, so a lock left
+                # by an owner that is gone can carry a live one's token. the
+                # advice for a lock this process holds covers that case too
+                if locked == _owner_token():
+                    msg += (
+                        "That is this process, so another store in this "
+                        "process has it open for writing. Reuse that store, "
+                        "or close() it before opening a new one. If no such "
+                        "store is open, the lock is stale: call "
+                        "unlock(force=True) on a writable store to release it."
+                    )
+                elif isinstance(locked, str) and locked.startswith(f"{os.getpid()}:"):
+                    msg += (
+                        "That is another thread of this process, which has a "
+                        "store open for writing. Write through that store, or "
+                        "close() it in that thread before opening a new one. "
+                        "If that thread has finished without closing it, the "
+                        "lock is stale: call unlock(force=True) on a writable "
+                        "store to release it."
+                    )
+                else:
+                    msg += "Call unlock(force=True) on a writable store to release it."
                 raise OSError(
                     msg,
                 )

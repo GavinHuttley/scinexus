@@ -1,0 +1,62 @@
+# Using `scriv`
+
+## Adding changelog entries
+
+This directory is used to store changelog fragments for the next release
+of the project.  Each file should contain a small changelog fragment
+that will be added to the full changelog when the release is made.
+The file is created using 
+```
+scriv create --edit
+``` 
+to create a change entry 
+
+This will create a file with the correct name and format and commented out sample categories, and load it into your `git` editor (the one specified by ```git config --global core.editor``` )
+
+Uncomment the category of change you are making and add a short description of the
+change as a markdown bullet point.  For example:
+
+Contributors
+
+* khiron
+
+Enhancements
+
+* Added a new feature that allows users to do Y
+
+Deprecations
+
+* Removed deprecated feature Z
+
+Bug fixes
+
+* Fixed a bug that caused the project to crash when a user did X by doing Y instead
+
+Documentation
+
+* Documented feature Z
+
+Check the file in with your changes.  
+
+---
+
+## Building a changelog
+
+To build the changelog for the next release, run 
+
+```
+scriv collect 
+```
+
+This will create a file called `CHANGELOG.md` in the root of the project.  This file will contain the full changelog for the project, including all the fragments that have been added to the changelog.d directory and remove those fragments. Note this requires that the `__init__.py` file's `__version__` variable is updated from the last time you ran collect, otherwise you will get a warning  
+
+```
+Entry 'Changes since release 0.0.1' already uses version '0.0.1'.
+```
+... and the fragments will not be collected. When the `__version__` variable in the project is updated the next time you run collect, the fragments will be collected and the changelog will be updated.
+
+You can override this to create a new collection of all available fragments that are not aligned with a `__version__` with 
+
+```
+scriv collect  --version "description of a milestone not yet used"
+```
