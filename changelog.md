@@ -2,6 +2,47 @@
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-2026.10.2'></a>
+## Changes in release "2026.10.2"
+
+### API
+
+- A writer's own `id_from_source` now names the records it writes. Before,
+  `__call__`, `apply_to` and `as_completed` always used the global
+  `get_id_from_source()` and ignored the writer's own setting. A custom
+  extractor must be picklable under `parallel=True`, and `apply_to` uses it
+  to work out which records are already done.
+
+### Contributors
+
+- @GavinHuttley
+
+### Enhancements
+
+- Apps now record which constructor arguments were passed explicitly,
+  separately from the ones that took their defaults.
+- When a SQLite store's lock is refused, the message now says who holds it:
+  this thread, another thread in this process, or another process. For the
+  first two, it suggests reusing or closing the open store instead of
+  `unlock(force=True)`.
+
+### Bug fixes
+
+- Member ids are spelled with `/` on every platform, including Windows. This
+  covers SQLite log ids too.
+- Passing `id_from_source` to `as_completed` or `apply_to` no longer leaks
+  into later calls. Re-composing an applied writer no longer raises
+  `TypeError`.
+- Calling `lock()` on a store that already holds its lock no longer fails.
+
+### Documentation
+
+- Added a vendor-neutral scinexus agent skill (`skills/scinexus/SKILL.md`)
+  with reference files on pipelines, IO and extending.
+- The docs site now publishes the skill at the standard
+  `.well-known/agent-skills/` paths.
+- Improved the wording of the parallel-usage docs and the developer docs.
+
 <!-- scriv-end-here -->
 
 ## Differences from cogent3
