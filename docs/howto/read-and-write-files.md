@@ -112,7 +112,7 @@ Reading an entire large file into memory or iterating line by line with Python's
 
 ### `iter_splitlines`
 
-`iter_splitlines(path, chunk_size=1_000_000, *, as_bytes=False)` reads a file in chunks (default 1 MB) and yields individual lines. It correctly handles lines that span chunk boundaries. An empty last line is never yielded, so a file ending on a newline gives the same lines as one that does not.
+`iter_splitlines(path, chunk_size=1_000_000, *, as_bytes=False, encoding=None)` reads a file in chunks (default 1 MB) and yields individual lines. It correctly handles lines that span chunk boundaries. An empty last line is never yielded, so a file ending on a newline gives the same lines as one that does not.
 
 ```python { notest }
 from scinexus.io_util import iter_splitlines
@@ -121,7 +121,9 @@ for line in iter_splitlines("large_file.txt"):
     process(line)
 ```
 
-Pass `as_bytes=True` to open the file in binary mode and get `bytes` lines, skipping the decoding step. The argument is keyword-only.
+Pass `encoding=` when you know the file's encoding. Without it, the encoding is detected the way `open_` detects it.
+
+Pass `as_bytes=True` to open the file in binary mode and get `bytes` lines, skipping the decoding step. The argument is keyword-only. Bytes mode suits ASCII-compatible encodings such as UTF-8 and Latin-1, so read UTF-16 or UTF-32 as text.
 
 ```python { notest }
 from scinexus.io_util import iter_splitlines
@@ -130,7 +132,7 @@ for line in iter_splitlines("large_file.txt", as_bytes=True):
     process(line)  # line is bytes, e.g. b"first line"
 ```
 
-The two modes do not always split a file into the same number of lines. In text mode the file is read with universal newlines, so `\r`, `\n` and `\r\n` all become line breaks, and `str.splitlines()` breaks on a further eight characters including vertical tab and form feed. In binary mode there is no translation and `bytes.splitlines()` breaks only on `\r`, `\n` and `\r\n`:
+The two modes do not always split a file into the same number of lines. In text mode `str.splitlines()` breaks on `\r`, `\n` and `\r\n` and on a further eight characters including vertical tab and form feed. In binary mode `bytes.splitlines()` breaks only on `\r`, `\n` and `\r\n`:
 
 ```python { notest }
 from pathlib import Path
@@ -147,7 +149,7 @@ For compressed files `as_bytes=True` gives the decompressed bytes, not the raw c
 
 ### `iter_line_blocks`
 
-`iter_line_blocks(path, num_lines=1000, chunk_size=5_000_000, *, as_bytes=False)` builds on `iter_splitlines` — it accumulates lines into lists of `num_lines` and yields each list. This is useful when downstream processing works on batches (e.g. FASTA records where each record spans a fixed number of lines).
+`iter_line_blocks(path, num_lines=1000, chunk_size=5_000_000, *, as_bytes=False, encoding=None)` builds on `iter_splitlines` — it accumulates lines into lists of `num_lines` and yields each list. This is useful when downstream processing works on batches (e.g. FASTA records where each record spans a fixed number of lines).
 
 ```python { notest }
 from scinexus.io_util import iter_line_blocks

@@ -9,7 +9,7 @@ These are usable on their own, with no app and no data store. Import them from `
 Two things differ from what the standard library does:
 
 - a bare `"r"` or `"w"` means **text**, for a compressed file as much as for a plain one. `gzip`, `bz2` and `lzma` take a bare mode as binary, and `open_` does not. Use `"rb"` / `"wb"` for bytes. This applies to `"r"` and `"w"` alone: `"a"` is still binary for the compressed formats, and neither `"a"` nor `"x"` works on a zip at all
-- on a text read with no `encoding=` given, the encoding is sniffed from the first hundred bytes with `charset_normalizer` rather than assumed to be the locale default
+- on a text read with no `encoding=` given, the encoding comes from the first hundred bytes. A byte order mark names it. Otherwise the file is utf-8 if those bytes decode as utf-8 and hold no zero byte. Otherwise `charset_normalizer` is asked, and if it names nothing the locale default is used, or `latin-1` for a zip
 
 ```python
 import gzip
@@ -59,8 +59,8 @@ Three functions, all reading in bounded chunks rather than loading the file.
 
 | function | yields | default chunk |
 | --- | --- | --- |
-| `iter_splitlines(path, chunk_size, *, as_bytes=False)` | one line at a time | 1 MB |
-| `iter_line_blocks(path, num_lines=1000, chunk_size, *, as_bytes=False)` | lists of `num_lines` lines | 5 MB |
+| `iter_splitlines(path, chunk_size, *, as_bytes=False, encoding=None)` | one line at a time | 1 MB |
+| `iter_line_blocks(path, num_lines=1000, chunk_size, *, as_bytes=False, encoding=None)` | lists of `num_lines` lines | 5 MB |
 | `iter_record_chunks(*, path, delimiter, chunk_size)` | bytes between delimiters | 5 MB |
 
 `chunk_size` counts bytes read in one go, in both modes, and for a compressed file it counts bytes coming out of the decompression - the memory the read costs, not the size on disk. A trailing empty line is never yielded, so a file ending in a newline gives the same lines as one that does not.
