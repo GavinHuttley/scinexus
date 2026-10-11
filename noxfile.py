@@ -10,18 +10,15 @@ import nox
 if sys.version_info >= (3, 12):
     os.environ["COVERAGE_CORE"] = "sysmon"
 
-# "3.14t" is the free-threaded (no-GIL) build; uv can fetch it as
-# cpython-3.14.x+freethreaded. It is exploratory here, not yet a support claim.
+# A "t" suffix is the free-threaded (no-GIL) build; uv can fetch it as
+# cpython-3.x.y+freethreaded. It is exploratory here, not yet a support claim.
 #
-# 3.14t is the only free-threaded build the dev group installs into. The group
-# pins cogent3, which requires numba on every version it supports, and numba
-# requires llvmlite. Both publish free-threaded wheels for 3.14t alone, so on
-# 3.13t uv falls back to building llvmlite from source and that needs an LLVM
-# toolchain. The 3.13t interpreter itself installs fine, and test_types would
-# run there because it installs mypy alone. Adding a free-threaded version
-# once its wheels exist means this list and the matrices named in the note at
-# the top of ci.yml.
-_py_versions = [f"3.{v}" for v in range(11, 15)] + ["3.14t"]
+# The dev group needs numba, through cogent3, and numba needs llvmlite. On
+# 3.13t neither has a free-threaded wheel and llvmlite cannot build without an
+# LLVM toolchain, so 3.13t is left out. On 3.15t llvmlite has a wheel and numba
+# builds from source. Adding a version means this list and the matrices named
+# in the note at the top of ci.yml.
+_py_versions = [f"3.{v}" for v in range(11, 16)] + ["3.14t", "3.15t"]
 
 nox.options.default_venv_backend = "uv"
 

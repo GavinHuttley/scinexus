@@ -41,6 +41,9 @@ rich = ["rich"]
 [dependency-groups]
 dev = [
     "cogent3>=2026.4.20a0",
+    # cogent3 caps python below 3.15, so declares no numba there. uv installs
+    # it on 3.15 anyway, and it imports numba
+    "numba>=0.68 ; python_version >= '3.15'",
     "pytest",
     "pytest-cov",
     "pytest-xdist",
