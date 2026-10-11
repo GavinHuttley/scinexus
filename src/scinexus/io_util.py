@@ -130,6 +130,11 @@ def _detect_encoding(path: PathType) -> str | None:
     data = data[:sample_size]
     if data.startswith(codecs.BOM_UTF8):
         return "utf-8-sig"
+    # the utf-32-le mark begins with the utf-16-le one, so is tested first
+    if data.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+        return "utf-32"
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return "utf-16"
 
     # ascii text in utf-16 or utf-32 without a byte order mark is also
     # valid utf-8, and a zero byte is the sign of it

@@ -1,4 +1,5 @@
 import bz2
+import codecs
 import copy
 import email.message
 import gc
@@ -1726,13 +1727,63 @@ def _agrees_with_open(path, **kwargs):
     return _outcome(lambda: list(iter_splitlines(path, **kwargs))) == _outcome(via_open)
 
 
+UTF_MARKED = [
+    (codecs.BOM_UTF16_LE, "utf-16-le"),
+    (codecs.BOM_UTF16_BE, "utf-16-be"),
+    (codecs.BOM_UTF32_LE, "utf-32-le"),
+    (codecs.BOM_UTF32_BE, "utf-32-be"),
+]
+# the first line fills the 100 byte sample with CJK, which
+# charset_normalizer misreads in utf-16 of either byte order
+UTF_MARKED_LINES = [
+    "\N{CJK UNIFIED IDEOGRAPH-6F22}\N{CJK UNIFIED IDEOGRAPH-5B57}" * 30,
+    "ab",
+    "cd",
+]
+
+
+def _write_marked(path, bom, codec):
+    with open_(path, mode="wb") as outfile:
+        outfile.write(bom + "\r\n".join(UTF_MARKED_LINES).encode(codec))
+
+
+@pytest.mark.parametrize("chunk_size", [1, 3, None])
+@pytest.mark.parametrize("suffix", ["txt", "gz", "zip"])
+@pytest.mark.parametrize(("bom", "codec"), UTF_MARKED)
+def test_iter_splitlines_reads_utf16_and_utf32_with_a_bom(
+    tmp_path, bom, codec, suffix, chunk_size
+):
+    """the mark names the encoding and byte order, and is not yielded
+
+    The line endings are \\r\\n, which is 4 or 8 bytes here, so the small
+    chunk sizes split both a character and a line ending.
+    """
+    path = tmp_path / f"marked.{suffix}"
+    _write_marked(path, bom, codec)
+
+    assert list(iter_splitlines(path, chunk_size=chunk_size)) == UTF_MARKED_LINES
+    assert _agrees_with_open(path, chunk_size=chunk_size)
+
+
+@pytest.mark.parametrize(("bom", "codec"), UTF_MARKED)
+def test_bom_does_not_consult_charset_normalizer(tmp_path, monkeypatch, bom, codec):
+    monkeypatch.setattr(scinexus.io_util, "detect", _detect_must_not_run)
+    path = tmp_path / "marked.txt"
+    _write_marked(path, bom, codec)
+
+    assert list(iter_splitlines(path)) == UTF_MARKED_LINES
+
+
 @pytest.mark.parametrize("suffix", ["bin", "gz", "bz2", "xz", "lzma", "zip"])
-def test_iter_splitlines_unsniffable_file_behaves_like_open(tmp_path, suffix):
+def test_iter_splitlines_unsniffable_file_behaves_like_open(
+    tmp_path, monkeypatch, suffix
+):
     """bytes no sniff can name are handled the way open_ handles them
 
-    charset_normalizer answers None for these, and a None handed to
-    codecs.getincrementaldecoder is a TypeError, where open_ passes it
-    on to the opener. Which fallback that means depends on the suffix:
+    charset_normalizer is made to answer None, which it does for some
+    content, and a None handed to codecs.getincrementaldecoder is a
+    TypeError, where open_ passes it on to the opener. Which fallback
+    that means depends on the suffix:
     every opener but one takes None as the locale default, and open_zip
     substitutes latin-1, which decodes any byte. So a zip of these
     bytes reads as text where the others raise, and this has to follow
@@ -1740,9 +1791,10 @@ def test_iter_splitlines_unsniffable_file_behaves_like_open(tmp_path, suffix):
     outcomes happens, so a locale that decodes these bytes rather than
     raising on them still exercises the same thing.
     """
+    monkeypatch.setattr(scinexus.io_util, "detect", lambda _: {"encoding": None})
     path = tmp_path / f"raw.{suffix}"
     with open_(path, mode="wb") as outfile:
-        outfile.write(b"\xff\xfe\x00\x80 raw \r\n bytes")
+        outfile.write(b"\x00\x80 raw \r\n bytes")
 
     assert _agrees_with_open(path)
 
