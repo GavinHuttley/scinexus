@@ -1126,7 +1126,7 @@ def iter_splitlines(
     as_bytes: bool = False,
     encoding: str | None = None,
 ) -> Iterator[Any]:
-    """yields line from file
+    """yields per line from file
 
     Parameters
     ----------
@@ -1152,26 +1152,6 @@ def iter_splitlines(
         Raised on the first iteration, as any error inside a generator
         function is, and before path is looked at, so a bad argument is
         reported as one rather than as a missing file
-
-    Notes
-    -----
-    Loads chunks of data from the file, yields one line at a time.
-
-    An empty last line is not yielded, so a file ending on a line
-    terminator gives the same lines as one that does not.
-
-    chunk_size counts bytes read in one go, in both modes and whether
-    or not the file is compressed. Text is read as bytes and decoded on
-    the way past, rather than read through a text file object, whose
-    read(n) returns n characters and so takes several times n bytes of
-    a file in a multi-byte encoding. For a compressed file the count is
-    of the bytes coming out of the decompression, which is the memory
-    the read costs, rather than of the bytes on disk.
-
-    The two modes do not always split a file into the same number of
-    lines. str.splitlines() breaks on "\\r", "\\n" and "\\r\\n" and on a
-    further eight characters including vertical tab and form feed.
-    bytes.splitlines() breaks only on "\\r", "\\n" and "\\r\\n".
     """
     _check_chunk_size(chunk_size)
     if as_bytes:
