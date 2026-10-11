@@ -1648,6 +1648,51 @@ def test_truncated_utf8_at_end_of_file_is_not_utf8(tmp_path, monkeypatch, data):
     assert consulted
 
 
+def _detect_encoding_must_not_run(path):
+    msg = f"encoding detected for {path}"
+    raise AssertionError(msg)
+
+
+KOI8_R_LINES = ["привет", "мир"]
+
+
+@pytest.fixture
+def koi8_r_file(tmp_path):
+    """bytes that neither utf-8 nor cp1252, the usual locale defaults, read right"""
+    path = tmp_path / "koi8_r.txt"
+    path.write_bytes("\n".join(KOI8_R_LINES).encode("koi8-r"))
+    return path
+
+
+def test_iter_splitlines_uses_named_encoding(koi8_r_file, monkeypatch):
+    """a named encoding is used as is, without reading a sample"""
+    monkeypatch.setattr(
+        scinexus.io_util, "_detect_encoding", _detect_encoding_must_not_run
+    )
+    got = list(iter_splitlines(koi8_r_file, encoding="koi8-r"))
+    assert got == KOI8_R_LINES
+
+
+def test_iter_splitlines_url_uses_named_encoding(koi8_r_file):
+    got = list(iter_splitlines(koi8_r_file.as_uri(), encoding="koi8-r"))
+    assert got == KOI8_R_LINES
+
+
+def test_iter_line_blocks_uses_named_encoding(koi8_r_file, monkeypatch):
+    monkeypatch.setattr(
+        scinexus.io_util, "_detect_encoding", _detect_encoding_must_not_run
+    )
+    got = list(iter_line_blocks(koi8_r_file, encoding="koi8-r"))
+    assert got == [KOI8_R_LINES]
+
+
+def test_iter_splitlines_encoding_with_as_bytes_raises(tmp_path):
+    """the error is about the arguments, not the missing file"""
+    path = tmp_path / "missing.txt"
+    with pytest.raises(ValueError, match="encoding"):
+        next(iter_splitlines(path, as_bytes=True, encoding="utf-8"))
+
+
 def test_utf16_without_bom_is_not_read_as_utf8(tmp_path):
     """utf-16 ascii text is valid utf-8, its zero bytes give it away"""
     expect = ["id\tname", "seq1\tACGT"]

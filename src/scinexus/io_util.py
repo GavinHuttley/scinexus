@@ -1090,6 +1090,7 @@ def iter_splitlines(
     chunk_size: int | None = ...,
     *,
     as_bytes: Literal[False] = ...,
+    encoding: str | None = ...,
 ) -> Iterator[str]: ...
 
 
@@ -1099,6 +1100,7 @@ def iter_splitlines(
     chunk_size: int | None = ...,
     *,
     as_bytes: Literal[True],
+    encoding: str | None = ...,
 ) -> Iterator[bytes]: ...
 
 
@@ -1108,6 +1110,7 @@ def iter_splitlines(
     chunk_size: int | None = ...,
     *,
     as_bytes: bool,
+    encoding: str | None = ...,
 ) -> Iterator[str | bytes]: ...
 
 
@@ -1116,6 +1119,7 @@ def iter_splitlines(
     chunk_size: int | None = 1_000_000,
     *,
     as_bytes: bool = False,
+    encoding: str | None = None,
 ) -> Iterator[Any]:
     """yields line from file
 
@@ -1128,11 +1132,16 @@ def iter_splitlines(
     as_bytes
         if True, lines are returned as bytes and path is opened in
         binary mode, otherwise lines are returned as str
+    encoding
+        text encoding of path. If None, it is chosen as open_ chooses
+        it, detected from the start of a file or taken from the
+        charset of a url response
 
     Raises
     ------
     ValueError
-        if chunk_size is not a positive whole number, None excepted.
+        if encoding is given with as_bytes=True, or if chunk_size is
+        not a positive whole number, None excepted.
         Raised on the first iteration, as any error inside a generator
         function is, and before path is looked at, so a bad argument is
         reported as one rather than as a missing file
@@ -1158,6 +1167,8 @@ def iter_splitlines(
     bytes.splitlines() breaks only on "\\r", "\\n" and "\\r\\n".
     """
     _check_chunk_size(chunk_size)
+    if as_bytes:
+        _check_binary_mode_args(encoding, {})
 
     url = is_url(path)
     if url:
@@ -1176,12 +1187,13 @@ def iter_splitlines(
         # a url is read whole, so there is no budget to keep to, and the
         # charset from the response headers that open_url uses is better
         # evidence than a sniff of the content
-        with open_(path) as infile:
+        with open_(path, encoding=encoding) as infile:
             yield from _splitlines(
                 cast("IO[str]", infile), chunk_size, _TEXT_SEPARATORS
             )
     else:
-        encoding = _detect_encoding(path)
+        if encoding is None:
+            encoding = _detect_encoding(path)
         with open_(path, mode="rb") as infile:
             reader = _DecodedReader(cast("IO[bytes]", infile), encoding)
             yield from _splitlines(
@@ -1198,6 +1210,7 @@ def iter_line_blocks(
     chunk_size: int | None = ...,
     *,
     as_bytes: Literal[False] = ...,
+    encoding: str | None = ...,
 ) -> Iterator[list[str]]: ...
 
 
@@ -1208,6 +1221,7 @@ def iter_line_blocks(
     chunk_size: int | None = ...,
     *,
     as_bytes: Literal[True],
+    encoding: str | None = ...,
 ) -> Iterator[list[bytes]]: ...
 
 
@@ -1218,6 +1232,7 @@ def iter_line_blocks(
     chunk_size: int | None = ...,
     *,
     as_bytes: bool,
+    encoding: str | None = ...,
 ) -> Iterator[list[str] | list[bytes]]: ...
 
 
@@ -1227,6 +1242,7 @@ def iter_line_blocks(
     chunk_size: int | None = 5_000_000,
     *,
     as_bytes: bool = False,
+    encoding: str | None = None,
 ) -> Iterator[list[Any]]:
     """yields list of num_lines lines from path
 
@@ -1241,13 +1257,16 @@ def iter_line_blocks(
     as_bytes
         if True, lines are returned as bytes and path is opened in
         binary mode, otherwise lines are returned as str
+    encoding
+        text encoding of path, see iter_splitlines
 
     Raises
     ------
     ValueError
         if num_lines or chunk_size is not a positive whole number,
-        None excepted. Raised on the first iteration, as any error
-        inside a generator function is
+        None excepted, or if encoding is given with as_bytes=True.
+        Raised on the first iteration, as any error inside a generator
+        function is
 
     Notes
     -----
@@ -1265,7 +1284,9 @@ def iter_line_blocks(
         raise ValueError(msg)
 
     lines = []
-    for line in iter_splitlines(path, chunk_size=chunk_size, as_bytes=as_bytes):
+    for line in iter_splitlines(
+        path, chunk_size=chunk_size, as_bytes=as_bytes, encoding=encoding
+    ):
         lines.append(line)
         if len(lines) == num_lines:
             yield lines
