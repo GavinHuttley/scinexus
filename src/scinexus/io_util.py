@@ -118,23 +118,32 @@ def _detect_encoding(path: PathType) -> str | None:
 
     Returns
     -------
-    the name of the encoding, or None where the content identifies none
-    and the opener would take that as the locale default
-
-    Notes
-    -----
-    The name is sniffed from the first hundred bytes. Where that
-    identifies nothing the answer is whatever the opener for the path
-    would then do, which is the locale default for every suffix but
-    zip. open_zip substitutes latin-1, which decodes any byte, so a
-    caller reading the bytes itself has to substitute it too rather
-    than decode the same archive differently from open_.
+    the encoding the first hundred bytes identify, latin-1 for a zip
+    they do not, otherwise None, meaning the locale default
     """
+    sample_size = 100
     op = _get_compression_open(path) or open
     with op(path, mode="rb") as infile:
-        data = infile.read(100)
+        data = infile.read(sample_size + 1)
+
+    at_end = len(data) <= sample_size
+    data = data[:sample_size]
+    if data.startswith(codecs.BOM_UTF8):
+        return "utf-8-sig"
+
+    # ascii text in utf-16 or utf-32 without a byte order mark is also
+    # valid utf-8, and a zero byte is the sign of it
+    if b"\x00" not in data:
+        try:
+            codecs.getincrementaldecoder("utf-8")().decode(data, final=at_end)
+        except UnicodeDecodeError:
+            pass
+        else:
+            return "utf-8"
 
     encoding = cast("str | None", detect(data)["encoding"])
+    # open_zip decodes with latin-1 when given no encoding, and a caller
+    # decoding the bytes itself must match it
     if encoding is None and get_format_suffixes(path)[1] == "zip":
         return "latin-1"
 

@@ -1516,10 +1516,7 @@ def bytes_taken(monkeypatch):
     return taken
 
 
-# ascii mixed with CJK, at 1.8 bytes per character. Plain CJK would be
-# 3 bytes per character, but charset_normalizer reads the first 100
-# bytes of it as cp874, a single byte encoding, and then a read of n
-# characters costs n bytes and there is no overshoot left to measure
+# ascii mixed with CJK, at 1.8 bytes per character
 MIXED_LINE = "id\t\N{CJK UNIFIED IDEOGRAPH-6F22}\N{CJK UNIFIED IDEOGRAPH-5B57}" * 30
 
 
@@ -1592,13 +1589,72 @@ def test_iter_splitlines_multi_byte_across_a_chunk_boundary(tmp_path, chunk_size
 def test_iter_splitlines_strips_a_byte_order_mark(tmp_path):
     """a BOM is consumed by the codec, not yielded as part of the line
 
-    charset_normalizer answers UTF-8-SIG for a file with one, and it is
-    that codec rather than plain utf-8 that takes the mark off.
+    A file with one is read as utf-8-sig, and it is that codec rather
+    than plain utf-8 that takes the mark off.
     """
     path = tmp_path / "bom.txt"
     path.write_text("first\nsecond", encoding="utf-8-sig")
 
     assert list(iter_splitlines(path, chunk_size=4)) == ["first", "second"]
+
+
+def _detect_must_not_run(data):
+    msg = f"charset_normalizer consulted for {data!r}"
+    raise AssertionError(msg)
+
+
+def test_valid_utf8_does_not_consult_charset_normalizer(tmp_path, monkeypatch):
+    """a sample that decodes as utf-8 is read as utf-8 without a guess"""
+    monkeypatch.setattr(scinexus.io_util, "detect", _detect_must_not_run)
+    path = tmp_path / "mixed.txt"
+    path.write_text("\n".join([MIXED_LINE] * 3), encoding="utf-8")
+
+    assert list(iter_splitlines(path)) == [MIXED_LINE] * 3
+    with open_(path) as infile:
+        assert infile.read().splitlines() == [MIXED_LINE] * 3
+
+
+def test_utf8_sample_cut_mid_character_is_utf8(tmp_path):
+    """the 100 byte sample may end part way through a character
+
+    Each character here is 3 bytes, so the sample holds 33 of them and
+    the first byte of the 34th.
+    """
+    line = "\N{CJK UNIFIED IDEOGRAPH-6F22}\N{CJK UNIFIED IDEOGRAPH-5B57}" * 50
+    path = tmp_path / "cjk.txt"
+    path.write_text("\n".join([line] * 3), encoding="utf-8")
+
+    assert list(iter_splitlines(path)) == [line] * 3
+
+
+@pytest.mark.parametrize("data", [b"caf\xe9", b"x" * 99 + b"\xe9"])
+def test_truncated_utf8_at_end_of_file_is_not_utf8(tmp_path, monkeypatch, data):
+    """a file that ends part way through a character is not utf-8
+
+    The 100 byte case is the whole file, so its last byte cannot be
+    completed by bytes past the sample.
+    """
+    consulted = []
+
+    def latin_1_detect(sample):
+        consulted.append(sample)
+        return {"encoding": "latin-1"}
+
+    monkeypatch.setattr(scinexus.io_util, "detect", latin_1_detect)
+    path = tmp_path / "latin1.txt"
+    path.write_bytes(data)
+
+    assert list(iter_splitlines(path)) == [data.decode("latin-1")]
+    assert consulted
+
+
+def test_utf16_without_bom_is_not_read_as_utf8(tmp_path):
+    """utf-16 ascii text is valid utf-8, its zero bytes give it away"""
+    expect = ["id\tname", "seq1\tACGT"]
+    path = tmp_path / "utf16.txt"
+    path.write_bytes("\n".join(expect).encode("utf-16-le"))
+
+    assert list(iter_splitlines(path)) == expect
 
 
 def _outcome(read):
