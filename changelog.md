@@ -2,6 +2,21 @@
 
 <!-- scriv-insert-here -->
 
+<a id='changelog-2026.10.12'></a>
+## Changes in release "2026.10.12"
+
+Minor bug fix and including py 3.15.
+
+### API
+
+- `iter_splitlines` and `iter_line_blocks` take an `encoding` argument. When it is given the file is decoded with it, instead of the encoding `open_` would choose.
+
+### Bug fixes
+
+- `open_` and `iter_splitlines` read a file whose start is valid UTF-8 as UTF-8. They no longer depend on charset-normalizer's guess, which from 3.5.2 misread some CJK text.
+
+- `open_` and `iter_splitlines` read a local file that starts with a UTF-16 or UTF-32 byte order mark in the encoding the mark names. charset-normalizer misread UTF-16 CJK text with a mark. A text file that starts with these bytes but is not UTF-16 or UTF-32 is now decoded as one, giving wrong text or a decoding error, so pass `encoding=` for such a file.
+
 <a id='changelog-2026.10.2'></a>
 ## Changes in release "2026.10.2"
 
