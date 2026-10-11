@@ -25,6 +25,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: Free Threading :: 3 - Stable",
 ]
 
@@ -41,6 +42,9 @@ rich = ["rich"]
 [dependency-groups]
 dev = [
     "cogent3>=2026.4.20a0",
+    # cogent3 caps python below 3.15, so declares no numba there. uv installs
+    # it on 3.15 anyway, and it imports numba
+    "numba>=0.68 ; python_version >= '3.15'",
     "pytest",
     "pytest-cov",
     "pytest-xdist",
@@ -101,9 +105,9 @@ skip_fragments = "README.*"
 new_fragment_template = "file: changelog.d/templates/new.md.j2"
 entry_title_template = "file: changelog.d/templates/title.md.j2"
 
-[tool.uv.pip]
+[tool.uv]
 exclude-newer = "7 days"
 
-[tool.uv.pip.exclude-newer-package]
+[tool.uv.exclude-newer-package]
 # but we allow other cogent3 packages to be more recent
 citeable = false
