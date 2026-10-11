@@ -1136,7 +1136,9 @@ def iter_splitlines(
         number of bytes to load in one go from path
     as_bytes
         if True, lines are returned as bytes and path is opened in
-        binary mode, otherwise lines are returned as str
+        binary mode, otherwise lines are returned as str. DO NOT
+        use with utf-16 or utf-32 due to line-ending differences
+        Read those as text.
     encoding
         text encoding of path. If None, it is chosen as open_ chooses
         it, detected from the start of a file or taken from the
