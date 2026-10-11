@@ -118,23 +118,37 @@ def _detect_encoding(path: PathType) -> str | None:
 
     Returns
     -------
-    the name of the encoding, or None where the content identifies none
-    and the opener would take that as the locale default
-
-    Notes
-    -----
-    The name is sniffed from the first hundred bytes. Where that
-    identifies nothing the answer is whatever the opener for the path
-    would then do, which is the locale default for every suffix but
-    zip. open_zip substitutes latin-1, which decodes any byte, so a
-    caller reading the bytes itself has to substitute it too rather
-    than decode the same archive differently from open_.
+    the encoding the first hundred bytes identify, latin-1 for a zip
+    they do not, otherwise None, meaning the locale default
     """
+    sample_size = 100
     op = _get_compression_open(path) or open
     with op(path, mode="rb") as infile:
-        data = infile.read(100)
+        data = infile.read(sample_size + 1)
+
+    at_end = len(data) <= sample_size
+    data = data[:sample_size]
+    if data.startswith(codecs.BOM_UTF8):
+        return "utf-8-sig"
+    # the utf-32-le mark begins with the utf-16-le one, so is tested first
+    if data.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+        return "utf-32"
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return "utf-16"
+
+    # ascii text in utf-16 or utf-32 without a byte order mark is also
+    # valid utf-8, and a zero byte is the sign of it
+    if b"\x00" not in data:
+        try:
+            codecs.getincrementaldecoder("utf-8")().decode(data, final=at_end)
+        except UnicodeDecodeError:
+            pass
+        else:
+            return "utf-8"
 
     encoding = cast("str | None", detect(data)["encoding"])
+    # open_zip decodes with latin-1 when given no encoding, and a caller
+    # decoding the bytes itself must match it
     if encoding is None and get_format_suffixes(path)[1] == "zip":
         return "latin-1"
 
@@ -1081,6 +1095,7 @@ def iter_splitlines(
     chunk_size: int | None = ...,
     *,
     as_bytes: Literal[False] = ...,
+    encoding: str | None = ...,
 ) -> Iterator[str]: ...
 
 
@@ -1090,6 +1105,7 @@ def iter_splitlines(
     chunk_size: int | None = ...,
     *,
     as_bytes: Literal[True],
+    encoding: str | None = ...,
 ) -> Iterator[bytes]: ...
 
 
@@ -1099,6 +1115,7 @@ def iter_splitlines(
     chunk_size: int | None = ...,
     *,
     as_bytes: bool,
+    encoding: str | None = ...,
 ) -> Iterator[str | bytes]: ...
 
 
@@ -1107,8 +1124,9 @@ def iter_splitlines(
     chunk_size: int | None = 1_000_000,
     *,
     as_bytes: bool = False,
+    encoding: str | None = None,
 ) -> Iterator[Any]:
-    """yields line from file
+    """yields per line from file
 
     Parameters
     ----------
@@ -1118,37 +1136,26 @@ def iter_splitlines(
         number of bytes to load in one go from path
     as_bytes
         if True, lines are returned as bytes and path is opened in
-        binary mode, otherwise lines are returned as str
+        binary mode, otherwise lines are returned as str. DO NOT
+        use with utf-16 or utf-32 due to line-ending differences
+        Read those as text.
+    encoding
+        text encoding of path. If None, it is chosen as open_ chooses
+        it, detected from the start of a file or taken from the
+        charset of a url response
 
     Raises
     ------
     ValueError
-        if chunk_size is not a positive whole number, None excepted.
+        if encoding is given with as_bytes=True, or if chunk_size is
+        not a positive whole number, None excepted.
         Raised on the first iteration, as any error inside a generator
         function is, and before path is looked at, so a bad argument is
         reported as one rather than as a missing file
-
-    Notes
-    -----
-    Loads chunks of data from the file, yields one line at a time.
-
-    An empty last line is not yielded, so a file ending on a line
-    terminator gives the same lines as one that does not.
-
-    chunk_size counts bytes read in one go, in both modes and whether
-    or not the file is compressed. Text is read as bytes and decoded on
-    the way past, rather than read through a text file object, whose
-    read(n) returns n characters and so takes several times n bytes of
-    a file in a multi-byte encoding. For a compressed file the count is
-    of the bytes coming out of the decompression, which is the memory
-    the read costs, rather than of the bytes on disk.
-
-    The two modes do not always split a file into the same number of
-    lines. str.splitlines() breaks on "\\r", "\\n" and "\\r\\n" and on a
-    further eight characters including vertical tab and form feed.
-    bytes.splitlines() breaks only on "\\r", "\\n" and "\\r\\n".
     """
     _check_chunk_size(chunk_size)
+    if as_bytes:
+        _check_binary_mode_args(encoding, {})
 
     url = is_url(path)
     if url:
@@ -1167,12 +1174,13 @@ def iter_splitlines(
         # a url is read whole, so there is no budget to keep to, and the
         # charset from the response headers that open_url uses is better
         # evidence than a sniff of the content
-        with open_(path) as infile:
+        with open_(path, encoding=encoding) as infile:
             yield from _splitlines(
                 cast("IO[str]", infile), chunk_size, _TEXT_SEPARATORS
             )
     else:
-        encoding = _detect_encoding(path)
+        if encoding is None:
+            encoding = _detect_encoding(path)
         with open_(path, mode="rb") as infile:
             reader = _DecodedReader(cast("IO[bytes]", infile), encoding)
             yield from _splitlines(
@@ -1189,6 +1197,7 @@ def iter_line_blocks(
     chunk_size: int | None = ...,
     *,
     as_bytes: Literal[False] = ...,
+    encoding: str | None = ...,
 ) -> Iterator[list[str]]: ...
 
 
@@ -1199,6 +1208,7 @@ def iter_line_blocks(
     chunk_size: int | None = ...,
     *,
     as_bytes: Literal[True],
+    encoding: str | None = ...,
 ) -> Iterator[list[bytes]]: ...
 
 
@@ -1209,6 +1219,7 @@ def iter_line_blocks(
     chunk_size: int | None = ...,
     *,
     as_bytes: bool,
+    encoding: str | None = ...,
 ) -> Iterator[list[str] | list[bytes]]: ...
 
 
@@ -1218,6 +1229,7 @@ def iter_line_blocks(
     chunk_size: int | None = 5_000_000,
     *,
     as_bytes: bool = False,
+    encoding: str | None = None,
 ) -> Iterator[list[Any]]:
     """yields list of num_lines lines from path
 
@@ -1232,13 +1244,16 @@ def iter_line_blocks(
     as_bytes
         if True, lines are returned as bytes and path is opened in
         binary mode, otherwise lines are returned as str
+    encoding
+        text encoding of path, see iter_splitlines
 
     Raises
     ------
     ValueError
         if num_lines or chunk_size is not a positive whole number,
-        None excepted. Raised on the first iteration, as any error
-        inside a generator function is
+        None excepted, or if encoding is given with as_bytes=True.
+        Raised on the first iteration, as any error inside a generator
+        function is
 
     Notes
     -----
@@ -1256,7 +1271,9 @@ def iter_line_blocks(
         raise ValueError(msg)
 
     lines = []
-    for line in iter_splitlines(path, chunk_size=chunk_size, as_bytes=as_bytes):
+    for line in iter_splitlines(
+        path, chunk_size=chunk_size, as_bytes=as_bytes, encoding=encoding
+    ):
         lines.append(line)
         if len(lines) == num_lines:
             yield lines
