@@ -105,9 +105,9 @@ skip_fragments = "README.*"
 new_fragment_template = "file: changelog.d/templates/new.md.j2"
 entry_title_template = "file: changelog.d/templates/title.md.j2"
 
-[tool.uv.pip]
+[tool.uv]
 exclude-newer = "7 days"
 
-[tool.uv.pip.exclude-newer-package]
+[tool.uv.exclude-newer-package]
 # but we allow other cogent3 packages to be more recent
 citeable = false
