@@ -2,6 +2,20 @@
 
 <!-- scriv-insert-here -->
 
+Minor testing issue used by Debian distribution fixed.
+
+<a id='changelog-2026.10.26'></a>
+## Changes in release "2026.10.26"
+
+### Contributors
+
+- @GavinHuttley
+- Thanks to @sanvila for reporting the test failures on single-CPU machines, and for the patch that fixed them.
+
+### Bug fixes
+
+- Threading backend tests that ask for two workers are now skipped on single-CPU machines.
+
 <a id='changelog-2026.10.12'></a>
 ## Changes in release "2026.10.12"
 
