@@ -375,6 +375,9 @@ def test_resolve_max_workers_mpi_accepts_a_numpy_count():
 
 
 @pytest.mark.free_threaded
+@pytest.mark.skipif(
+    multiprocessing.cpu_count() < 2, reason="requires at least 2 CPU cores"
+)
 def test_thread_imap():
     """ThreadBackend.imap returns ordered results"""
     backend = ThreadBackend()
@@ -393,6 +396,9 @@ def test_thread_as_completed():
 
 
 @pytest.mark.free_threaded
+@pytest.mark.skipif(
+    multiprocessing.cpu_count() < 2, reason="requires at least 2 CPU cores"
+)
 def test_thread_accepts_closure():
     """a closure is callable on threads, where pickling would refuse it"""
     factor = 3
@@ -456,6 +462,9 @@ def test_thread_max_workers_limits_the_pool():
 
 
 @pytest.mark.free_threaded
+@pytest.mark.skipif(
+    multiprocessing.cpu_count() < 2, reason="requires at least 2 CPU cores"
+)
 def test_thread_non_sized_iterable():
     """a generator input works, having no length to chunk by"""
     backend = ThreadBackend()
